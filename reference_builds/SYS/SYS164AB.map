@@ -1,0 +1,1752 @@
+Archive member included to satisfy reference by file (symbol)
+
+c:/users/alesb/appdata/local/programs/gcc-arm-none-eabi-9-2019-q4-major/bin/../lib/gcc/arm-none-eabi/9.2.1/../../../../arm-none-eabi/lib/thumb/v7/nofp\libc.a(lib_a-memcmp.o)
+                              build/Main.o (memcmp)
+
+Discarded input sections
+
+ .text          0x00000000        0x0 build/Main.o
+ .data          0x00000000        0x0 build/Main.o
+ .text          0x00000000        0x0 build/Ident.o
+ .data          0x00000000        0x0 build/Ident.o
+ .bss           0x00000000        0x0 build/Ident.o
+ .text.Chk_DemoCnt
+                0x00000000       0x14 build/Ident.o
+ .text.Get_Cnt  0x00000000       0x34 build/Ident.o
+ .text.Seek_Proj
+                0x00000000       0x20 build/Ident.o
+ .text.Seek_Blank
+                0x00000000       0x40 build/Ident.o
+ .text.Add_Proj
+                0x00000000       0x34 build/Ident.o
+ .text.Add_Str  0x00000000       0x40 build/Ident.o
+ .text.Add_Cnt  0x00000000       0x98 build/Ident.o
+ .text          0x00000000        0x0 build/BIOS.o
+ .text          0x00000000        0x0 build/Config.o
+ .data          0x00000000        0x0 build/Config.o
+ .text.GPIO_Config2
+                0x00000000       0x18 build/Config.o
+ .text          0x00000000        0x0 build/Ext_Flash.o
+ .data          0x00000000        0x0 build/Ext_Flash.o
+ .text.ExtFlash_ReadByte
+                0x00000000        0x6 build/Ext_Flash.o
+ .text          0x00000000        0x0 build/Interrupt.o
+ .data          0x00000000        0x0 build/Interrupt.o
+ .text          0x00000000        0x0 build/FAT12.o
+ .data          0x00000000        0x0 build/FAT12.o
+ .text.NextCluster
+                0x00000000       0x4c build/FAT12.o
+ .text.ReadFileSec
+                0x00000000       0x30 build/FAT12.o
+ .text.SeekBlank
+                0x00000000       0x60 build/FAT12.o
+ .text.SetCluster
+                0x00000000       0x8c build/FAT12.o
+ .text.ProgFileSec
+                0x00000000       0x78 build/FAT12.o
+ .text.OpenFileRd
+                0x00000000       0x78 build/FAT12.o
+ .text.OpenFileWr
+                0x00000000       0x7c build/FAT12.o
+ .text.CloseFile
+                0x00000000       0xd4 build/FAT12.o
+ .text          0x00000000        0x0 build/Function.o
+ .data          0x00000000        0x0 build/Function.o
+ .bss           0x00000000        0x0 build/Function.o
+ .rodata.str1.1
+                0x00000000       0x11 build/Function.o
+ .text.Str2Byte
+                0x00000000       0x84 build/Function.o
+ .text.u8ToDec3
+                0x00000000       0x2e build/Function.o
+ .text.u8ToDec2
+                0x00000000       0x28 build/Function.o
+ .text.Char2Hex
+                0x00000000       0x20 build/Function.o
+ .text.Int_sqrt
+                0x00000000       0x1c build/Function.o
+ .text.Beep     0x00000000       0x10 build/Function.o
+ .text          0x00000000        0x0 build/startup.o
+ .data          0x00000000        0x0 build/startup.o
+ .bss           0x00000000        0x0 build/startup.o
+ .text.Default_Handler
+                0x00000000        0x2 build/startup.o
+ .text          0x00000000        0x0 build/LCD.o
+ .data          0x00000000        0x0 build/LCD.o
+ .text.LCD_EnterSleep_ILI9327
+                0x00000000        0x6 build/LCD.o
+ .text.LCD_ExitSleep_ILI9327
+                0x00000000        0x6 build/LCD.o
+ .text          0x00000000        0x0 build/stm32f10x_lib.o
+ .data          0x00000000        0x0 build/stm32f10x_lib.o
+ .bss           0x00000000        0x0 build/stm32f10x_lib.o
+ .comment       0x00000000       0x7a build/stm32f10x_lib.o
+ .ARM.attributes
+                0x00000000       0x33 build/stm32f10x_lib.o
+ .text          0x00000000        0x0 build/stm32f10x_spi.o
+ .data          0x00000000        0x0 build/stm32f10x_spi.o
+ .bss           0x00000000        0x0 build/stm32f10x_spi.o
+ .text.SPI_DeInit
+                0x00000000       0x48 build/stm32f10x_spi.o
+ .text.SPI_StructInit
+                0x00000000       0x18 build/stm32f10x_spi.o
+ .text.SPI_ITConfig
+                0x00000000       0x1a build/stm32f10x_spi.o
+ .text.SPI_DMACmd
+                0x00000000       0x12 build/stm32f10x_spi.o
+ .text.SPI_NSSInternalSoftwareConfig
+                0x00000000       0x1e build/stm32f10x_spi.o
+ .text.SPI_SSOutputCmd
+                0x00000000       0x18 build/stm32f10x_spi.o
+ .text.SPI_DataSizeConfig
+                0x00000000       0x16 build/stm32f10x_spi.o
+ .text.SPI_TransmitCRC
+                0x00000000        0xc build/stm32f10x_spi.o
+ .text.SPI_CalculateCRC
+                0x00000000       0x18 build/stm32f10x_spi.o
+ .text.SPI_GetCRC
+                0x00000000        0xc build/stm32f10x_spi.o
+ .text.SPI_GetCRCPolynomial
+                0x00000000        0x6 build/stm32f10x_spi.o
+ .text.SPI_BiDirectionalLineConfig
+                0x00000000       0x1c build/stm32f10x_spi.o
+ .text.SPI_ClearFlag
+                0x00000000       0x20 build/stm32f10x_spi.o
+ .text.SPI_GetITStatus
+                0x00000000       0x28 build/stm32f10x_spi.o
+ .text.SPI_ClearITPendingBit
+                0x00000000       0x2c build/stm32f10x_spi.o
+ .text          0x00000000        0x0 build/stm32f10x_flash.o
+ .data          0x00000000        0x0 build/stm32f10x_flash.o
+ .bss           0x00000000        0x0 build/stm32f10x_flash.o
+ .text.FLASH_HalfCycleAccessCmd
+                0x00000000       0x18 build/stm32f10x_flash.o
+ .text.FLASH_GetUserOptionByte
+                0x00000000        0xc build/stm32f10x_flash.o
+ .text.FLASH_GetWriteProtectionOptionByte
+                0x00000000        0xc build/stm32f10x_flash.o
+ .text.FLASH_GetReadOutProtectionStatus
+                0x00000000       0x10 build/stm32f10x_flash.o
+ .text.FLASH_GetPrefetchBufferStatus
+                0x00000000       0x10 build/stm32f10x_flash.o
+ .text.FLASH_ITConfig
+                0x00000000       0x18 build/stm32f10x_flash.o
+ .text.FLASH_GetFlagStatus
+                0x00000000       0x20 build/stm32f10x_flash.o
+ .text.FLASH_EraseAllPages
+                0x00000000       0x40 build/stm32f10x_flash.o
+ .text.FLASH_EraseOptionBytes
+                0x00000000       0x74 build/stm32f10x_flash.o
+ .text.FLASH_ProgramWord
+                0x00000000       0x48 build/stm32f10x_flash.o
+ .text.FLASH_ProgramOptionByteData
+                0x00000000       0x48 build/stm32f10x_flash.o
+ .text.FLASH_EnableWriteProtection
+                0x00000000       0x9c build/stm32f10x_flash.o
+ .text.FLASH_ReadOutProtection
+                0x00000000       0x94 build/stm32f10x_flash.o
+ .text.FLASH_UserOptionByteConfig
+                0x00000000       0x58 build/stm32f10x_flash.o
+ .text          0x00000000        0x0 build/stm32f10x_nvic.o
+ .data          0x00000000        0x0 build/stm32f10x_nvic.o
+ .bss           0x00000000        0x0 build/stm32f10x_nvic.o
+ .text.NVIC_DeInit
+                0x00000000       0x34 build/stm32f10x_nvic.o
+ .text.NVIC_SCBDeInit
+                0x00000000       0x30 build/stm32f10x_nvic.o
+ .text.NVIC_StructInit
+                0x00000000        0xc build/stm32f10x_nvic.o
+ .text.NVIC_SETPRIMASK
+                0x00000000        0x4 build/stm32f10x_nvic.o
+ .text.NVIC_RESETPRIMASK
+                0x00000000        0x4 build/stm32f10x_nvic.o
+ .text.NVIC_SETFAULTMASK
+                0x00000000        0x4 build/stm32f10x_nvic.o
+ .text.NVIC_RESETFAULTMASK
+                0x00000000        0x4 build/stm32f10x_nvic.o
+ .text.NVIC_BASEPRICONFIG
+                0x00000000        0x6 build/stm32f10x_nvic.o
+ .text.NVIC_GetBASEPRI
+                0x00000000        0x4 build/stm32f10x_nvic.o
+ .text.NVIC_GetCurrentPendingIRQChannel
+                0x00000000       0x10 build/stm32f10x_nvic.o
+ .text.NVIC_GetIRQChannelPendingBitStatus
+                0x00000000       0x20 build/stm32f10x_nvic.o
+ .text.NVIC_SetIRQChannelPendingBit
+                0x00000000        0xc build/stm32f10x_nvic.o
+ .text.NVIC_ClearIRQChannelPendingBit
+                0x00000000       0x1c build/stm32f10x_nvic.o
+ .text.NVIC_GetCurrentActiveHandler
+                0x00000000       0x10 build/stm32f10x_nvic.o
+ .text.NVIC_GetIRQChannelActiveBitStatus
+                0x00000000       0x20 build/stm32f10x_nvic.o
+ .text.NVIC_GetCPUID
+                0x00000000        0xc build/stm32f10x_nvic.o
+ .text.NVIC_GenerateSystemReset
+                0x00000000       0x10 build/stm32f10x_nvic.o
+ .text.NVIC_GenerateCoreReset
+                0x00000000       0x10 build/stm32f10x_nvic.o
+ .text.NVIC_SystemLPConfig
+                0x00000000       0x18 build/stm32f10x_nvic.o
+ .text.NVIC_SystemHandlerConfig
+                0x00000000       0x20 build/stm32f10x_nvic.o
+ .text.NVIC_SystemHandlerPriorityConfig
+                0x00000000       0x4c build/stm32f10x_nvic.o
+ .text.NVIC_GetSystemHandlerPendingBitStatus
+                0x00000000       0x1c build/stm32f10x_nvic.o
+ .text.NVIC_SetSystemHandlerPendingBit
+                0x00000000       0x18 build/stm32f10x_nvic.o
+ .text.NVIC_ClearSystemHandlerPendingBit
+                0x00000000       0x18 build/stm32f10x_nvic.o
+ .text.NVIC_GetSystemHandlerActiveBitStatus
+                0x00000000       0x1c build/stm32f10x_nvic.o
+ .text.NVIC_GetFaultHandlerSources
+                0x00000000       0x34 build/stm32f10x_nvic.o
+ .text.NVIC_GetFaultAddress
+                0x00000000       0x14 build/stm32f10x_nvic.o
+ .text          0x00000000        0x0 build/stm32f10x_dma.o
+ .data          0x00000000        0x0 build/stm32f10x_dma.o
+ .bss           0x00000000        0x0 build/stm32f10x_dma.o
+ .text.DMA_DeInit
+                0x00000000       0xf0 build/stm32f10x_dma.o
+ .text.DMA_Init
+                0x00000000       0x3c build/stm32f10x_dma.o
+ .text.DMA_StructInit
+                0x00000000       0x1a build/stm32f10x_dma.o
+ .text.DMA_Cmd  0x00000000       0x12 build/stm32f10x_dma.o
+ .text.DMA_ITConfig
+                0x00000000       0x10 build/stm32f10x_dma.o
+ .text.DMA_GetCurrDataCounter
+                0x00000000        0x6 build/stm32f10x_dma.o
+ .text.DMA_GetFlagStatus
+                0x00000000       0x1c build/stm32f10x_dma.o
+ .text.DMA_ClearFlag
+                0x00000000       0x14 build/stm32f10x_dma.o
+ .text.DMA_GetITStatus
+                0x00000000        0x4 build/stm32f10x_dma.o
+ .text.DMA_ClearITPendingBit
+                0x00000000        0x4 build/stm32f10x_dma.o
+ .comment       0x00000000       0x7a build/stm32f10x_dma.o
+ .ARM.attributes
+                0x00000000       0x2d build/stm32f10x_dma.o
+ .text          0x00000000        0x0 build/stm32f10x_fsmc.o
+ .data          0x00000000        0x0 build/stm32f10x_fsmc.o
+ .bss           0x00000000        0x0 build/stm32f10x_fsmc.o
+ .text.FSMC_NORSRAMDeInit
+                0x00000000       0x28 build/stm32f10x_fsmc.o
+ .text.FSMC_NANDDeInit
+                0x00000000       0x24 build/stm32f10x_fsmc.o
+ .text.FSMC_PCCARDDeInit
+                0x00000000       0x1c build/stm32f10x_fsmc.o
+ .text.FSMC_NORSRAMInit
+                0x00000000       0xae build/stm32f10x_fsmc.o
+ .text.FSMC_NANDInit
+                0x00000000       0x6c build/stm32f10x_fsmc.o
+ .text.FSMC_PCCARDInit
+                0x00000000       0x6c build/stm32f10x_fsmc.o
+ .text.FSMC_NORSRAMStructInit
+                0x00000000       0x4c build/stm32f10x_fsmc.o
+ .text.FSMC_NANDStructInit
+                0x00000000       0x2c build/stm32f10x_fsmc.o
+ .text.FSMC_PCCARDStructInit
+                0x00000000       0x2c build/stm32f10x_fsmc.o
+ .text.FSMC_NORSRAMCmd
+                0x00000000       0x20 build/stm32f10x_fsmc.o
+ .text.FSMC_NANDCmd
+                0x00000000       0x30 build/stm32f10x_fsmc.o
+ .text.FSMC_PCCARDCmd
+                0x00000000       0x20 build/stm32f10x_fsmc.o
+ .text.FSMC_NANDECCCmd
+                0x00000000       0x30 build/stm32f10x_fsmc.o
+ .text.FSMC_GetECC
+                0x00000000       0x14 build/stm32f10x_fsmc.o
+ .text.FSMC_ITConfig
+                0x00000000       0x44 build/stm32f10x_fsmc.o
+ .text.FSMC_GetFlagStatus
+                0x00000000       0x2c build/stm32f10x_fsmc.o
+ .text.FSMC_ClearFlag
+                0x00000000       0x2c build/stm32f10x_fsmc.o
+ .text.FSMC_GetITStatus
+                0x00000000       0x34 build/stm32f10x_fsmc.o
+ .text.FSMC_ClearITPendingBit
+                0x00000000       0x2c build/stm32f10x_fsmc.o
+ .comment       0x00000000       0x7a build/stm32f10x_fsmc.o
+ .ARM.attributes
+                0x00000000       0x2d build/stm32f10x_fsmc.o
+ .text          0x00000000        0x0 build/stm32f10x_rcc.o
+ .data          0x00000000        0x0 build/stm32f10x_rcc.o
+ .bss           0x00000000        0x0 build/stm32f10x_rcc.o
+ .text.RCC_AdjustHSICalibrationValue
+                0x00000000       0x14 build/stm32f10x_rcc.o
+ .text.RCC_HSICmd
+                0x00000000        0xc build/stm32f10x_rcc.o
+ .text.RCC_PLLConfig
+                0x00000000       0x14 build/stm32f10x_rcc.o
+ .text.RCC_HCLKConfig
+                0x00000000       0x14 build/stm32f10x_rcc.o
+ .text.RCC_PCLK1Config
+                0x00000000       0x14 build/stm32f10x_rcc.o
+ .text.RCC_PCLK2Config
+                0x00000000       0x14 build/stm32f10x_rcc.o
+ .text.RCC_ITConfig
+                0x00000000       0x18 build/stm32f10x_rcc.o
+ .text.RCC_ADCCLKConfig
+                0x00000000       0x14 build/stm32f10x_rcc.o
+ .text.RCC_LSEConfig
+                0x00000000       0x20 build/stm32f10x_rcc.o
+ .text.RCC_LSICmd
+                0x00000000        0xc build/stm32f10x_rcc.o
+ .text.RCC_RTCCLKConfig
+                0x00000000       0x10 build/stm32f10x_rcc.o
+ .text.RCC_RTCCLKCmd
+                0x00000000        0xc build/stm32f10x_rcc.o
+ .text.RCC_GetClocksFreq
+                0x00000000       0x80 build/stm32f10x_rcc.o
+ .text.RCC_AHBPeriphClockCmd
+                0x00000000       0x18 build/stm32f10x_rcc.o
+ .text.RCC_APB2PeriphClockCmd
+                0x00000000       0x18 build/stm32f10x_rcc.o
+ .text.RCC_APB1PeriphClockCmd
+                0x00000000       0x18 build/stm32f10x_rcc.o
+ .text.RCC_APB2PeriphResetCmd
+                0x00000000       0x18 build/stm32f10x_rcc.o
+ .text.RCC_APB1PeriphResetCmd
+                0x00000000       0x18 build/stm32f10x_rcc.o
+ .text.RCC_BackupResetCmd
+                0x00000000        0xc build/stm32f10x_rcc.o
+ .text.RCC_ClockSecuritySystemCmd
+                0x00000000        0xc build/stm32f10x_rcc.o
+ .text.RCC_MCOConfig
+                0x00000000        0xc build/stm32f10x_rcc.o
+ .text.RCC_ClearFlag
+                0x00000000       0x10 build/stm32f10x_rcc.o
+ .text.RCC_GetITStatus
+                0x00000000       0x14 build/stm32f10x_rcc.o
+ .text.RCC_ClearITPendingBit
+                0x00000000        0xc build/stm32f10x_rcc.o
+ .rodata        0x00000000       0x14 build/stm32f10x_rcc.o
+ .text          0x00000000        0x0 build/stm32f10x_gpio.o
+ .data          0x00000000        0x0 build/stm32f10x_gpio.o
+ .bss           0x00000000        0x0 build/stm32f10x_gpio.o
+ .text.GPIO_DeInit
+                0x00000000       0xb8 build/stm32f10x_gpio.o
+ .text.GPIO_AFIODeInit
+                0x00000000       0x16 build/stm32f10x_gpio.o
+ .text.GPIO_Init
+                0x00000000       0xa0 build/stm32f10x_gpio.o
+ .text.GPIO_StructInit
+                0x00000000        0xe build/stm32f10x_gpio.o
+ .text.GPIO_ReadInputDataBit
+                0x00000000        0xc build/stm32f10x_gpio.o
+ .text.GPIO_ReadInputData
+                0x00000000        0x6 build/stm32f10x_gpio.o
+ .text.GPIO_ReadOutputDataBit
+                0x00000000        0xc build/stm32f10x_gpio.o
+ .text.GPIO_ReadOutputData
+                0x00000000        0x6 build/stm32f10x_gpio.o
+ .text.GPIO_WriteBit
+                0x00000000        0xa build/stm32f10x_gpio.o
+ .text.GPIO_Write
+                0x00000000        0x4 build/stm32f10x_gpio.o
+ .text.GPIO_PinLockConfig
+                0x00000000       0x10 build/stm32f10x_gpio.o
+ .text.GPIO_EventOutputConfig
+                0x00000000       0x1c build/stm32f10x_gpio.o
+ .text.GPIO_EventOutputCmd
+                0x00000000        0xc build/stm32f10x_gpio.o
+ .text.GPIO_PinRemapConfig
+                0x00000000       0x54 build/stm32f10x_gpio.o
+ .text.GPIO_EXTILineConfig
+                0x00000000       0x2a build/stm32f10x_gpio.o
+ .text          0x00000000        0x0 build/Memory.o
+ .data          0x00000000        0x0 build/Memory.o
+ .text          0x00000000        0x0 build/USB_scsi.o
+ .data          0x00000000        0x0 build/USB_scsi.o
+ .bss           0x00000000        0x0 build/USB_scsi.o
+ .text.SCSI_Valid_Cmd
+                0x00000000       0x30 build/USB_scsi.o
+ .text          0x00000000        0x0 build/usb_int.o
+ .data          0x00000000        0x0 build/usb_int.o
+ .text          0x00000000        0x0 build/USB_pwr.o
+ .data          0x00000000        0x1 build/USB_pwr.o
+ .text.PowerOff
+                0x00000000       0x1c build/USB_pwr.o
+ .text.Suspend  0x00000000       0x1c build/USB_pwr.o
+ .text.Resume_Init
+                0x00000000       0x18 build/USB_pwr.o
+ .text.Resume   0x00000000       0x80 build/USB_pwr.o
+ .text          0x00000000        0x0 build/usb_init.o
+ .data          0x00000000        0x0 build/usb_init.o
+ .text          0x00000000        0x0 build/USB_endp.o
+ .data          0x00000000        0x0 build/USB_endp.o
+ .bss           0x00000000        0x0 build/USB_endp.o
+ .text          0x00000000        0x0 build/USB_istr.o
+ .text          0x00000000        0x0 build/usb_core.o
+ .data          0x00000000        0x0 build/usb_core.o
+ .text          0x00000000        0x0 build/USB_prop.o
+ .text          0x00000000        0x0 build/usb_mem.o
+ .data          0x00000000        0x0 build/usb_mem.o
+ .bss           0x00000000        0x0 build/usb_mem.o
+ .text          0x00000000        0x0 build/scsi_data.o
+ .text          0x00000000        0x0 build/USB_regs.o
+ .data          0x00000000        0x0 build/USB_regs.o
+ .bss           0x00000000        0x0 build/USB_regs.o
+ .text.SetCNTR  0x00000000        0xc build/USB_regs.o
+ .text.GetCNTR  0x00000000        0xc build/USB_regs.o
+ .text.SetISTR  0x00000000        0xc build/USB_regs.o
+ .text.GetISTR  0x00000000        0xc build/USB_regs.o
+ .text.GetFNR   0x00000000        0xc build/USB_regs.o
+ .text.SetDADDR
+                0x00000000        0xc build/USB_regs.o
+ .text.GetDADDR
+                0x00000000        0xc build/USB_regs.o
+ .text.GetBTABLE
+                0x00000000        0xc build/USB_regs.o
+ .text.SetENDPOINT
+                0x00000000        0xe build/USB_regs.o
+ .text.GetENDPOINT
+                0x00000000       0x10 build/USB_regs.o
+ .text.GetEPType
+                0x00000000       0x12 build/USB_regs.o
+ .text.SetDouBleBuffEPStall
+                0x00000000       0x26 build/USB_regs.o
+ .text.GetEPTxStatus
+                0x00000000       0x12 build/USB_regs.o
+ .text.GetEPRxStatus
+                0x00000000       0x12 build/USB_regs.o
+ .text.SetEPTxValid
+                0x00000000       0x1e build/USB_regs.o
+ .text.SetEP_KIND
+                0x00000000       0x1e build/USB_regs.o
+ .text.Set_Status_Out
+                0x00000000        0x4 build/USB_regs.o
+ .text.SetEPDoubleBuff
+                0x00000000        0x4 build/USB_regs.o
+ .text.ClearEPDoubleBuff
+                0x00000000        0x4 build/USB_regs.o
+ .text.GetTxStallStatus
+                0x00000000       0x1a build/USB_regs.o
+ .text.GetRxStallStatus
+                0x00000000       0x1a build/USB_regs.o
+ .text.ClearEP_CTR_RX
+                0x00000000       0x18 build/USB_regs.o
+ .text.ClearEP_CTR_TX
+                0x00000000       0x1c build/USB_regs.o
+ .text.ToggleDTOG_RX
+                0x00000000       0x1a build/USB_regs.o
+ .text.ToggleDTOG_TX
+                0x00000000        0x4 build/USB_regs.o
+ .text.SetEPAddress
+                0x00000000       0x1e build/USB_regs.o
+ .text.GetEPAddress
+                0x00000000       0x12 build/USB_regs.o
+ .text.SetEPCountRxReg
+                0x00000000       0x26 build/USB_regs.o
+ .text.GetEPTxCount
+                0x00000000       0x20 build/USB_regs.o
+ .text.SetEPDblBuffAddr
+                0x00000000       0x3c build/USB_regs.o
+ .text.SetEPDblBuf0Addr
+                0x00000000        0x4 build/USB_regs.o
+ .text.SetEPDblBuf1Addr
+                0x00000000        0x4 build/USB_regs.o
+ .text.GetEPDblBuf0Addr
+                0x00000000        0x4 build/USB_regs.o
+ .text.GetEPDblBuf1Addr
+                0x00000000        0x4 build/USB_regs.o
+ .text.SetEPDblBuffCount
+                0x00000000       0xa8 build/USB_regs.o
+ .text.SetEPDblBuf0Count
+                0x00000000       0x5c build/USB_regs.o
+ .text.SetEPDblBuf1Count
+                0x00000000       0x5c build/USB_regs.o
+ .text.GetEPDblBuf0Count
+                0x00000000        0x4 build/USB_regs.o
+ .text.GetEPDblBuf1Count
+                0x00000000        0x4 build/USB_regs.o
+ .text.GetEPDblBufDir
+                0x00000000       0x48 build/USB_regs.o
+ .text.FreeUserBuffer
+                0x00000000       0x24 build/USB_regs.o
+ .text.ToWord   0x00000000        0x6 build/USB_regs.o
+ .text          0x00000000        0x0 build/USB_desc.o
+ .bss           0x00000000        0x0 build/USB_desc.o
+ .text          0x00000000        0x0 build/USB_bot.o
+ .data          0x00000000        0x0 build/USB_bot.o
+ .text          0x00000000        0x0 build/__alterbios.o
+ .data          0x00000000        0x0 build/__alterbios.o
+ .text.Alt__Init_Data
+                0x00000000       0x40 build/__alterbios.o
+ .text          0x00000000        0x0 build/fatfs_glue.o
+ .text          0x00000000        0x0 build/ff.o
+ .data          0x00000000        0x0 build/ff.o
+ .data          0x00000000        0x0 build/ASM.o
+ .bss           0x00000000        0x0 build/ASM.o
+ .data          0x00000000        0x0 build/cortexm3_macro.o
+ .bss           0x00000000        0x0 build/cortexm3_macro.o
+ .data          0x00000000        0x0 build/alterbios.o
+ .bss           0x00000000        0x0 build/alterbios.o
+ .text          0x00000000        0x0 c:/users/alesb/appdata/local/programs/gcc-arm-none-eabi-9-2019-q4-major/bin/../lib/gcc/arm-none-eabi/9.2.1/../../../../arm-none-eabi/lib/thumb/v7/nofp\libc.a(lib_a-memcmp.o)
+ .data          0x00000000        0x0 c:/users/alesb/appdata/local/programs/gcc-arm-none-eabi-9-2019-q4-major/bin/../lib/gcc/arm-none-eabi/9.2.1/../../../../arm-none-eabi/lib/thumb/v7/nofp\libc.a(lib_a-memcmp.o)
+ .bss           0x00000000        0x0 c:/users/alesb/appdata/local/programs/gcc-arm-none-eabi-9-2019-q4-major/bin/../lib/gcc/arm-none-eabi/9.2.1/../../../../arm-none-eabi/lib/thumb/v7/nofp\libc.a(lib_a-memcmp.o)
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+rom              0x08004000         0x00008000         xr
+ram              0x20000000         0x00003000         xrw
+*default*        0x00000000         0xffffffff
+
+Linker script and memory map
+
+LOAD build/Main.o
+LOAD build/Ident.o
+LOAD build/BIOS.o
+LOAD build/Config.o
+LOAD build/Ext_Flash.o
+LOAD build/Interrupt.o
+LOAD build/FAT12.o
+LOAD build/Function.o
+LOAD build/startup.o
+LOAD build/LCD.o
+LOAD build/stm32f10x_lib.o
+LOAD build/stm32f10x_spi.o
+LOAD build/stm32f10x_flash.o
+LOAD build/stm32f10x_nvic.o
+LOAD build/stm32f10x_dma.o
+LOAD build/stm32f10x_fsmc.o
+LOAD build/stm32f10x_rcc.o
+LOAD build/stm32f10x_gpio.o
+LOAD build/Memory.o
+LOAD build/USB_scsi.o
+LOAD build/usb_int.o
+LOAD build/USB_pwr.o
+LOAD build/usb_init.o
+LOAD build/USB_endp.o
+LOAD build/USB_istr.o
+LOAD build/usb_core.o
+LOAD build/USB_prop.o
+LOAD build/usb_mem.o
+LOAD build/scsi_data.o
+LOAD build/USB_regs.o
+LOAD build/USB_desc.o
+LOAD build/USB_bot.o
+LOAD build/__alterbios.o
+LOAD build/fatfs_glue.o
+LOAD build/ff.o
+LOAD build/ASM.o
+LOAD build/cortexm3_macro.o
+LOAD build/alterbios.o
+START GROUP
+LOAD c:/users/alesb/appdata/local/programs/gcc-arm-none-eabi-9-2019-q4-major/bin/../lib/gcc/arm-none-eabi/9.2.1/thumb/v7/nofp\libgcc.a
+LOAD c:/users/alesb/appdata/local/programs/gcc-arm-none-eabi-9-2019-q4-major/bin/../lib/gcc/arm-none-eabi/9.2.1/../../../../arm-none-eabi/lib/thumb/v7/nofp\libc.a
+END GROUP
+                0x2000c000                _estack = 0x2000c000
+                0x00000000                . = 0x0
+
+.isr_vectors    0x08004000      0x47f
+                0x08004000                . = ALIGN (0x4)
+                0x08004000                _isr_vectors_offs = .
+ *(.isr_vectors)
+ .isr_vectors   0x08004000      0x130 build/startup.o
+                0x08004000                g_pfnVectors
+                0x00000200                . = 0x200
+ *fill*         0x08004130       0xd0 
+ build/ASM.o()
+ .text          0x08004200      0x1c0 build/ASM.o
+                0x08004200                __CTR_HP
+                0x08004204                __USB_Istr
+                0x08004208                __LCD_Initial
+                0x0800420c                __Point_SCR
+                0x08004210                __LCD_SetPixl
+                0x08004214                __Clear_Screen
+                0x08004218                __Get_TAB_8x14
+                0x0800421c                __LCD_Set_Block
+                0x08004220                __LCD_DMA_Ready
+                0x08004224                __LCD_Copy
+                0x08004228                __LCD_Fill
+                0x0800422c                __Row_DMA_Ready
+                0x08004230                __Row_Copy
+                0x08004234                __Read_FIFO
+                0x0800423c                __Dev_SN
+                0x08004240                __Chk_SYS
+                0x08004248                __Display_Str
+                0x0800424c                __Set
+                0x08004250                __Set_Param
+                0x08004254                __Get
+                0x08004258                __ExtFlash_PageWR
+                0x0800425c                __ExtFlash_PageRD
+                0x08004260                __ReadDiskData
+                0x08004264                __ProgDiskPage
+                0x08004268                __LCD_GetPixl
+                0x0800426c                __USB_Init
+                0x08004270                __FLASH_Erase
+                0x08004274                __FLASH_Prog
+                0x08004278                __FLASH_Unlock
+                0x0800427c                __FLASH_Lock
+                0x08004280                __Chk_DFU
+                0x08004284                __Chk_HDW
+                0x08004288                __OpenFileWr
+                0x0800428c                __OpenFileRd
+                0x08004290                __ReadFileSec
+                0x08004294                __ProgFileSec
+                0x08004298                __CloseFile
+                0x0800439a                __DeviceVersion
+ .ARM.attributes
+                0x080043c0       0x1b build/ASM.o
+                0x00000400                . = 0x400
+ *fill*         0x080043db       0x25 
+ build/alterbios.o()
+ .text          0x08004400       0x64 build/alterbios.o
+                0x08004400                alterbios_version_tag
+                0x08004404                alterbios_init
+                0x08004408                patch_GetDev_SN
+                0x0800440c                patch_OpenFileWr
+                0x08004410                patch_OpenFileRd
+                0x08004414                patch_ReadFileSec
+                0x08004418                patch_ProgFileSec
+                0x0800441c                patch_CloseFile
+                0x08004420                f_open
+                0x08004424                f_read
+                0x08004428                f_lseek
+                0x0800442c                f_close
+                0x08004430                f_opendir
+                0x08004434                f_readdir
+                0x08004438                f_stat
+                0x0800443c                f_write
+                0x08004440                f_getfree
+                0x08004444                f_truncate
+                0x08004448                f_sync
+                0x0800444c                f_unlink
+                0x08004450                f_mkdir
+                0x08004454                f_chmod
+                0x08004458                f_utime
+                0x0800445c                f_rename
+                0x08004460                f_flush
+ .ARM.attributes
+                0x08004464       0x1b build/alterbios.o
+
+.text           0x08004480     0x6102
+ *(.text*)
+ .text.startup.main
+                0x08004480      0x244 build/Main.o
+                0x08004480                main
+ .text.Get_Lic  0x080046c4        0xc build/Ident.o
+                0x080046c4                Get_Lic
+ .text.Input_Lic
+                0x080046d0      0x118 build/Ident.o
+                0x080046d0                Input_Lic
+ .text.FLASH_Prog
+                0x080047e8       0x2c build/Ident.o
+                0x080047e8                FLASH_Prog
+ .text.Add_Lic  0x08004814       0x34 build/Ident.o
+                0x08004814                Add_Lic
+ .text.FLASH_Erase
+                0x08004848       0x30 build/Ident.o
+                0x08004848                FLASH_Erase
+ .text.SendByte
+                0x08004878       0x3c build/BIOS.o
+                0x08004878                SendByte
+ .text.Set_Param
+                0x080048b4       0x28 build/BIOS.o
+                0x080048b4                Set_Param
+ .text.Set      0x080048dc      0x488 build/BIOS.o
+                0x080048dc                Set
+ .text.Get      0x08004d64      0x1f0 build/BIOS.o
+                0x08004d64                Get
+ .text.Set_System
+                0x08004f54       0x80 build/Config.o
+                0x08004f54                Set_System
+ .text.NVIC_Config
+                0x08004fd4       0x48 build/Config.o
+                0x08004fd4                NVIC_Config
+ .text.GPIO_Config
+                0x0800501c       0xac build/Config.o
+                0x0800501c                GPIO_Config
+ .text.FSMC_Config
+                0x080050c8       0x38 build/Config.o
+                0x080050c8                FSMC_Config
+ .text.SPI_Config
+                0x08005100       0x3c build/Config.o
+                0x08005100                SPI_Config
+ .text.DMA_Config
+                0x0800513c       0x70 build/Config.o
+                0x0800513c                DMA_Config
+ .text.DAC_Config
+                0x080051ac       0x14 build/Config.o
+                0x080051ac                DAC_Config
+ .text.ADC_Config
+                0x080051c0       0xf0 build/Config.o
+                0x080051c0                ADC_Config
+ .text.Timer_Config
+                0x080052b0      0x100 build/Config.o
+                0x080052b0                Timer_Config
+ .text.Get_SerialNum
+                0x080053b0       0x44 build/Config.o
+                0x080053b0                Get_SerialNum
+ .text.ExtFlash_SendByte
+                0x080053f4       0x64 build/Ext_Flash.o
+                0x080053f4                ExtFlash_SendByte
+ .text.ExtFlash_WriteEnable
+                0x08005458       0x24 build/Ext_Flash.o
+                0x08005458                ExtFlash_WriteEnable
+ .text.ExtFlash_WaitForWriteEnd
+                0x0800547c       0x48 build/Ext_Flash.o
+                0x0800547c                ExtFlash_WaitForWriteEnd
+ .text.ExtFLASH_SectorErase
+                0x080054c4       0x44 build/Ext_Flash.o
+                0x080054c4                ExtFLASH_SectorErase
+ .text.ExtFlash_PageProg
+                0x08005508       0x64 build/Ext_Flash.o
+                0x08005508                ExtFlash_PageProg
+ .text.ExtFlash_PageRD
+                0x0800556c       0x5c build/Ext_Flash.o
+                0x0800556c                ExtFlash_PageRD
+ .text.ExtFlash_PageWR
+                0x080055c8       0xa8 build/Ext_Flash.o
+                0x080055c8                ExtFlash_PageWR
+ .text.MAL_GetStatus
+                0x08005670       0x30 build/Ext_Flash.o
+                0x08005670                MAL_GetStatus
+ .text.NMIException
+                0x080056a0        0x2 build/Interrupt.o
+                0x080056a0                NMIException
+ .text.HardFaultException
+                0x080056a2        0x2 build/Interrupt.o
+                0x080056a2                HardFaultException
+ .text.MemManageException
+                0x080056a4        0x2 build/Interrupt.o
+                0x080056a4                MemManageException
+ .text.BusFaultException
+                0x080056a6        0x2 build/Interrupt.o
+                0x080056a6                BusFaultException
+ .text.UsageFaultException
+                0x080056a8        0x2 build/Interrupt.o
+                0x080056a8                UsageFaultException
+ .text.DebugMonitor
+                0x080056aa        0x2 build/Interrupt.o
+                0x080056aa                DebugMonitor
+ .text.SVCHandler
+                0x080056ac        0x2 build/Interrupt.o
+                0x080056ac                SVCHandler
+ .text.PendSVC  0x080056ae        0x2 build/Interrupt.o
+                0x080056ae                PendSVC
+ .text.SysTickHandler
+                0x080056b0        0x2 build/Interrupt.o
+                0x080056b0                SysTickHandler
+ .text.WWDG_IRQHandler
+                0x080056b2        0x2 build/Interrupt.o
+                0x080056b2                WWDG_IRQHandler
+ .text.PVD_IRQHandler
+                0x080056b4        0x2 build/Interrupt.o
+                0x080056b4                PVD_IRQHandler
+ .text.TAMPER_IRQHandler
+                0x080056b6        0x2 build/Interrupt.o
+                0x080056b6                TAMPER_IRQHandler
+ .text.RTC_IRQHandler
+                0x080056b8        0x2 build/Interrupt.o
+                0x080056b8                RTC_IRQHandler
+ .text.FLASH_IRQHandler
+                0x080056ba        0x2 build/Interrupt.o
+                0x080056ba                FLASH_IRQHandler
+ .text.RCC_IRQHandler
+                0x080056bc        0x2 build/Interrupt.o
+                0x080056bc                RCC_IRQHandler
+ .text.EXTI0_IRQHandler
+                0x080056be        0x2 build/Interrupt.o
+                0x080056be                EXTI0_IRQHandler
+ .text.EXTI1_IRQHandler
+                0x080056c0        0x2 build/Interrupt.o
+                0x080056c0                EXTI1_IRQHandler
+ .text.EXTI2_IRQHandler
+                0x080056c2        0x2 build/Interrupt.o
+                0x080056c2                EXTI2_IRQHandler
+ .text.EXTI3_IRQHandler
+                0x080056c4        0x2 build/Interrupt.o
+                0x080056c4                EXTI3_IRQHandler
+ .text.EXTI4_IRQHandler
+                0x080056c6        0x2 build/Interrupt.o
+                0x080056c6                EXTI4_IRQHandler
+ .text.DMA1_Channel1_IRQHandler
+                0x080056c8        0x2 build/Interrupt.o
+                0x080056c8                DMA1_Channel1_IRQHandler
+ .text.DMA1_Channel2_IRQHandler
+                0x080056ca        0x2 build/Interrupt.o
+                0x080056ca                DMA1_Channel2_IRQHandler
+ .text.DMA1_Channel3_IRQHandler
+                0x080056cc        0x2 build/Interrupt.o
+                0x080056cc                DMA1_Channel3_IRQHandler
+ .text.DMA1_Channel4_IRQHandler
+                0x080056ce        0x2 build/Interrupt.o
+                0x080056ce                DMA1_Channel4_IRQHandler
+ .text.DMA1_Channel5_IRQHandler
+                0x080056d0        0x2 build/Interrupt.o
+                0x080056d0                DMA1_Channel5_IRQHandler
+ .text.DMA1_Channel6_IRQHandler
+                0x080056d2        0x2 build/Interrupt.o
+                0x080056d2                DMA1_Channel6_IRQHandler
+ .text.DMA1_Channel7_IRQHandler
+                0x080056d4        0x2 build/Interrupt.o
+                0x080056d4                DMA1_Channel7_IRQHandler
+ .text.ADC1_2_IRQHandler
+                0x080056d6        0x2 build/Interrupt.o
+                0x080056d6                ADC1_2_IRQHandler
+ .text.USB_HP_CAN1_TX_IRQHandler
+                0x080056d8        0x4 build/Interrupt.o
+                0x080056d8                USB_HP_CAN1_TX_IRQHandler
+ .text.USB_LP_CAN1_RX0_IRQHandler
+                0x080056dc        0x4 build/Interrupt.o
+                0x080056dc                USB_LP_CAN1_RX0_IRQHandler
+ .text.CAN_RX1_IRQHandler
+                0x080056e0        0x2 build/Interrupt.o
+                0x080056e0                CAN_RX1_IRQHandler
+ .text.CAN_SCE_IRQHandler
+                0x080056e2        0x2 build/Interrupt.o
+                0x080056e2                CAN_SCE_IRQHandler
+ .text.EXTI9_5_IRQHandler
+                0x080056e4        0x2 build/Interrupt.o
+                0x080056e4                EXTI9_5_IRQHandler
+ .text.TIM1_BRK_IRQHandler
+                0x080056e6        0x2 build/Interrupt.o
+                0x080056e6                TIM1_BRK_IRQHandler
+ .text.TIM1_UP_IRQHandler
+                0x080056e8        0x2 build/Interrupt.o
+                0x080056e8                TIM1_UP_IRQHandler
+ .text.TIM1_TRG_COM_IRQHandler
+                0x080056ea        0x2 build/Interrupt.o
+                0x080056ea                TIM1_TRG_COM_IRQHandler
+ .text.TIM1_CC_IRQHandler
+                0x080056ec        0x2 build/Interrupt.o
+                0x080056ec                TIM1_CC_IRQHandler
+ .text.TIM2_IRQHandler
+                0x080056ee        0x2 build/Interrupt.o
+                0x080056ee                TIM2_IRQHandler
+ .text.TIM3_IRQHandler
+                0x080056f0       0xdc build/Interrupt.o
+                0x080056f0                TIM3_IRQHandler
+ .text.TIM4_IRQHandler
+                0x080057cc        0x2 build/Interrupt.o
+                0x080057cc                TIM4_IRQHandler
+ .text.I2C1_EV_IRQHandler
+                0x080057ce        0x2 build/Interrupt.o
+                0x080057ce                I2C1_EV_IRQHandler
+ .text.I2C1_ER_IRQHandler
+                0x080057d0        0x2 build/Interrupt.o
+                0x080057d0                I2C1_ER_IRQHandler
+ .text.I2C2_EV_IRQHandler
+                0x080057d2        0x2 build/Interrupt.o
+                0x080057d2                I2C2_EV_IRQHandler
+ .text.I2C2_ER_IRQHandler
+                0x080057d4        0x2 build/Interrupt.o
+                0x080057d4                I2C2_ER_IRQHandler
+ .text.SPI1_IRQHandler
+                0x080057d6        0x2 build/Interrupt.o
+                0x080057d6                SPI1_IRQHandler
+ .text.SPI2_IRQHandler
+                0x080057d8        0x2 build/Interrupt.o
+                0x080057d8                SPI2_IRQHandler
+ .text.USART1_IRQHandler
+                0x080057da        0x2 build/Interrupt.o
+                0x080057da                USART1_IRQHandler
+ .text.USART2_IRQHandler
+                0x080057dc        0x2 build/Interrupt.o
+                0x080057dc                USART2_IRQHandler
+ .text.USART3_IRQHandler
+                0x080057de        0x2 build/Interrupt.o
+                0x080057de                USART3_IRQHandler
+ .text.EXTI15_10_IRQHandler
+                0x080057e0        0x2 build/Interrupt.o
+                0x080057e0                EXTI15_10_IRQHandler
+ .text.RTCAlarm_IRQHandler
+                0x080057e2        0x2 build/Interrupt.o
+                0x080057e2                RTCAlarm_IRQHandler
+ .text.USBWakeUp_IRQHandler
+                0x080057e4        0x2 build/Interrupt.o
+                0x080057e4                USBWakeUp_IRQHandler
+ .text.TIM8_BRK_IRQHandler
+                0x080057e6        0x2 build/Interrupt.o
+                0x080057e6                TIM8_BRK_IRQHandler
+ .text.TIM8_UP_IRQHandler
+                0x080057e8        0x2 build/Interrupt.o
+                0x080057e8                TIM8_UP_IRQHandler
+ .text.TIM8_TRG_COM_IRQHandler
+                0x080057ea        0x2 build/Interrupt.o
+                0x080057ea                TIM8_TRG_COM_IRQHandler
+ .text.TIM8_CC_IRQHandler
+                0x080057ec        0x2 build/Interrupt.o
+                0x080057ec                TIM8_CC_IRQHandler
+ .text.ADC3_IRQHandler
+                0x080057ee        0x2 build/Interrupt.o
+                0x080057ee                ADC3_IRQHandler
+ .text.FSMC_IRQHandler
+                0x080057f0        0x2 build/Interrupt.o
+                0x080057f0                FSMC_IRQHandler
+ .text.SDIO_IRQHandler
+                0x080057f2        0x2 build/Interrupt.o
+                0x080057f2                SDIO_IRQHandler
+ .text.TIM5_IRQHandler
+                0x080057f4        0x2 build/Interrupt.o
+                0x080057f4                TIM5_IRQHandler
+ .text.SPI3_IRQHandler
+                0x080057f6        0x2 build/Interrupt.o
+                0x080057f6                SPI3_IRQHandler
+ .text.UART4_IRQHandler
+                0x080057f8        0x2 build/Interrupt.o
+                0x080057f8                UART4_IRQHandler
+ .text.UART5_IRQHandler
+                0x080057fa        0x2 build/Interrupt.o
+                0x080057fa                UART5_IRQHandler
+ .text.TIM6_IRQHandler
+                0x080057fc        0x2 build/Interrupt.o
+                0x080057fc                TIM6_IRQHandler
+ .text.TIM7_IRQHandler
+                0x080057fe        0x2 build/Interrupt.o
+                0x080057fe                TIM7_IRQHandler
+ .text.DMA2_Channel1_IRQHandler
+                0x08005800        0x2 build/Interrupt.o
+                0x08005800                DMA2_Channel1_IRQHandler
+ .text.DMA2_Channel2_IRQHandler
+                0x08005802        0x2 build/Interrupt.o
+                0x08005802                DMA2_Channel2_IRQHandler
+ .text.DMA2_Channel3_IRQHandler
+                0x08005804        0x2 build/Interrupt.o
+                0x08005804                DMA2_Channel3_IRQHandler
+ .text.DMA2_Channel4_5_IRQHandler
+                0x08005806        0x2 build/Interrupt.o
+                0x08005806                DMA2_Channel4_5_IRQHandler
+ .text.Init_Fat_Value
+                0x08005808       0xbc build/FAT12.o
+                0x08005808                Init_Fat_Value
+ .text.ReadDiskData
+                0x080058c4       0x40 build/FAT12.o
+                0x080058c4                ReadDiskData
+ .text.ProgDiskPage
+                0x08005904       0x38 build/FAT12.o
+                0x08005904                ProgDiskPage
+ .text.u16ToDec5
+                0x0800593c       0x56 build/Function.o
+                0x0800593c                u16ToDec5
+ .text.Word2Hex
+                0x08005992       0x98 build/Function.o
+                0x08005992                Word2Hex
+ *fill*         0x08005a2a        0x2 
+ .text.Read_Keys
+                0x08005a2c       0xc8 build/Function.o
+                0x08005a2c                Read_Keys
+ .text.__Init_Data
+                0x08005af4       0x40 build/startup.o
+                0x08005af4                __Init_Data
+ .text.Reset_Handler
+                0x08005b34       0x14 build/startup.o
+                0x08005b34                Reset_Handler
+ .text._init    0x08005b48        0x2 build/startup.o
+                0x08005b48                _init
+ *fill*         0x08005b4a        0x2 
+ .text.LCD_WR_REG
+                0x08005b4c       0x20 build/LCD.o
+                0x08005b4c                LCD_WR_REG
+ .text.LCD_WR_Ctrl
+                0x08005b6c       0x1c build/LCD.o
+                0x08005b6c                LCD_WR_Ctrl
+ .text.LCD_RD_Type
+                0x08005b88       0x38 build/LCD.o
+                0x08005b88                LCD_RD_Type
+ .text.Get_Pixl
+                0x08005bc0       0x38 build/LCD.o
+                0x08005bc0                Get_Pixl
+ .text.Delayms  0x08005bf8       0x14 build/LCD.o
+                0x08005bf8                Delayms
+ .text.LCD_Initial
+                0x08005c0c      0x3f8 build/LCD.o
+                0x08005c0c                LCD_Initial
+ .text.Point_SCR
+                0x08006004       0x88 build/LCD.o
+                0x08006004                Point_SCR
+ .text.Clear_Screen
+                0x0800608c       0x30 build/LCD.o
+                0x0800608c                Clear_Screen
+ .text.Get_TAB_8x14
+                0x080060bc       0x14 build/LCD.o
+                0x080060bc                Get_TAB_8x14
+ .text.Display_Str
+                0x080060d0       0xc8 build/LCD.o
+                0x080060d0                Display_Str
+ .text.Display_Logo
+                0x08006198       0xbc build/LCD.o
+                0x08006198                Display_Logo
+ .text.LCD_Set_Block
+                0x08006254       0xb0 build/LCD.o
+                0x08006254                LCD_Set_Block
+ .text.SPI_Init
+                0x08006304       0x32 build/stm32f10x_spi.o
+                0x08006304                SPI_Init
+ .text.SPI_Cmd  0x08006336       0x18 build/stm32f10x_spi.o
+                0x08006336                SPI_Cmd
+ .text.SPI_SendData
+                0x0800634e        0x4 build/stm32f10x_spi.o
+                0x0800634e                SPI_SendData
+ .text.SPI_ReceiveData
+                0x08006352        0x6 build/stm32f10x_spi.o
+                0x08006352                SPI_ReceiveData
+ .text.SPI_GetFlagStatus
+                0x08006358        0xc build/stm32f10x_spi.o
+                0x08006358                SPI_GetFlagStatus
+ .text.FLASH_SetLatency
+                0x08006364       0x18 build/stm32f10x_flash.o
+                0x08006364                FLASH_SetLatency
+ .text.FLASH_PrefetchBufferCmd
+                0x0800637c       0x18 build/stm32f10x_flash.o
+                0x0800637c                FLASH_PrefetchBufferCmd
+ .text.FLASH_Unlock
+                0x08006394       0x18 build/stm32f10x_flash.o
+                0x08006394                FLASH_Unlock
+ .text.FLASH_Lock
+                0x080063ac       0x10 build/stm32f10x_flash.o
+                0x080063ac                FLASH_Lock
+ .text.FLASH_ClearFlag
+                0x080063bc        0xc build/stm32f10x_flash.o
+                0x080063bc                FLASH_ClearFlag
+ .text.FLASH_GetStatus
+                0x080063c8       0x28 build/stm32f10x_flash.o
+                0x080063c8                FLASH_GetStatus
+ .text.FLASH_WaitForLastOperation
+                0x080063f0       0x38 build/stm32f10x_flash.o
+                0x080063f0                FLASH_WaitForLastOperation
+ .text.FLASH_ErasePage
+                0x08006428       0x44 build/stm32f10x_flash.o
+                0x08006428                FLASH_ErasePage
+ .text.FLASH_ProgramHalfWord
+                0x0800646c       0x38 build/stm32f10x_flash.o
+                0x0800646c                FLASH_ProgramHalfWord
+ .text.NVIC_PriorityGroupConfig
+                0x080064a4       0x14 build/stm32f10x_nvic.o
+                0x080064a4                NVIC_PriorityGroupConfig
+ .text.NVIC_Init
+                0x080064b8       0x70 build/stm32f10x_nvic.o
+                0x080064b8                NVIC_Init
+ .text.NVIC_SetVectorTable
+                0x08006528       0x14 build/stm32f10x_nvic.o
+                0x08006528                NVIC_SetVectorTable
+ .text.RCC_DeInit
+                0x0800653c       0x3c build/stm32f10x_rcc.o
+                0x0800653c                RCC_DeInit
+ .text.RCC_HSEConfig
+                0x08006578       0x38 build/stm32f10x_rcc.o
+                0x08006578                RCC_HSEConfig
+ .text.RCC_PLLCmd
+                0x080065b0        0xc build/stm32f10x_rcc.o
+                0x080065b0                RCC_PLLCmd
+ .text.RCC_SYSCLKConfig
+                0x080065bc       0x14 build/stm32f10x_rcc.o
+                0x080065bc                RCC_SYSCLKConfig
+ .text.RCC_GetSYSCLKSource
+                0x080065d0       0x10 build/stm32f10x_rcc.o
+                0x080065d0                RCC_GetSYSCLKSource
+ .text.RCC_USBCLKConfig
+                0x080065e0        0xc build/stm32f10x_rcc.o
+                0x080065e0                RCC_USBCLKConfig
+ .text.RCC_GetFlagStatus
+                0x080065ec       0x28 build/stm32f10x_rcc.o
+                0x080065ec                RCC_GetFlagStatus
+ .text.RCC_WaitForHSEStartUp
+                0x08006614       0x2e build/stm32f10x_rcc.o
+                0x08006614                RCC_WaitForHSEStartUp
+ .text.GPIO_SetBits
+                0x08006642        0x4 build/stm32f10x_gpio.o
+                0x08006642                GPIO_SetBits
+ .text.GPIO_ResetBits
+                0x08006646        0x4 build/stm32f10x_gpio.o
+                0x08006646                GPIO_ResetBits
+ *fill*         0x0800664a        0x2 
+ .text.Read_Memory
+                0x0800664c       0xb8 build/Memory.o
+                0x0800664c                Read_Memory
+ .text.Write_Memory
+                0x08006704       0xe8 build/Memory.o
+                0x08006704                Write_Memory
+ .text.SCSI_Inquiry_Cmd
+                0x080067ec       0x2c build/USB_scsi.o
+                0x080067ec                SCSI_Inquiry_Cmd
+ .text.SCSI_ReadFormatCapacity_Cmd
+                0x08006818       0x40 build/USB_scsi.o
+                0x08006818                SCSI_ReadFormatCapacity_Cmd
+ .text.SCSI_ReadCapacity10_Cmd
+                0x08006858       0x44 build/USB_scsi.o
+                0x08006858                SCSI_ReadCapacity10_Cmd
+ .text.SCSI_ModeSense6_Cmd
+                0x0800689c        0xc build/USB_scsi.o
+                0x0800689c                SCSI_ModeSense6_Cmd
+ .text.SCSI_ModeSense10_Cmd
+                0x080068a8        0xc build/USB_scsi.o
+                0x080068a8                SCSI_ModeSense10_Cmd
+ .text.SCSI_RequestSense_Cmd
+                0x080068b4       0x18 build/USB_scsi.o
+                0x080068b4                SCSI_RequestSense_Cmd
+ .text.Set_Scsi_Sense_Data
+                0x080068cc        0xc build/USB_scsi.o
+                0x080068cc                Set_Scsi_Sense_Data
+ .text.SCSI_Start_Stop_Unit_Cmd
+                0x080068d8        0x8 build/USB_scsi.o
+                0x080068d8                SCSI_Start_Stop_Unit_Cmd
+ .text.SCSI_Verify10_Cmd
+                0x080068e0       0x38 build/USB_scsi.o
+                0x080068e0                SCSI_Verify10_Cmd
+ .text.SCSI_TestUnitReady_Cmd
+                0x08006918       0x12 build/USB_scsi.o
+                0x08006918                SCSI_TestUnitReady_Cmd
+ .text.SCSI_Format_Cmd
+                0x0800692a        0x4 build/USB_scsi.o
+                0x0800692a                SCSI_Format_Cmd
+ *fill*         0x0800692e        0x2 
+ .text.SCSI_Invalid_Cmd
+                0x08006930       0x38 build/USB_scsi.o
+                0x08006930                SCSI_Invalid_Cmd
+ .text.SCSI_Address_Management
+                0x08006968       0x6c build/USB_scsi.o
+                0x08006968                SCSI_Address_Management
+ .text.SCSI_Read10_Cmd
+                0x080069d4       0x60 build/USB_scsi.o
+                0x080069d4                SCSI_Read10_Cmd
+ .text.SCSI_Write10_Cmd
+                0x08006a34       0x68 build/USB_scsi.o
+                0x08006a34                SCSI_Write10_Cmd
+ .text.CTR_LP   0x08006a9c      0x168 build/usb_int.o
+                0x08006a9c                CTR_LP
+ .text.CTR_HP   0x08006c04       0x78 build/usb_int.o
+                0x08006c04                CTR_HP
+ .text.PowerOn  0x08006c7c       0x28 build/USB_pwr.o
+                0x08006c7c                PowerOn
+ .text.USB_Init
+                0x08006ca4       0x24 build/usb_init.o
+                0x08006ca4                USB_Init
+ .text.EP1_IN_Callback
+                0x08006cc8        0x4 build/USB_endp.o
+                0x08006cc8                EP1_IN_Callback
+ .text.EP2_OUT_Callback
+                0x08006ccc        0x4 build/USB_endp.o
+                0x08006ccc                EP2_OUT_Callback
+ .text.USB_Istr
+                0x08006cd0       0x4c build/USB_istr.o
+                0x08006cd0                USB_Istr
+ .text.Standard_GetConfiguration
+                0x08006d1c       0x24 build/usb_core.o
+                0x08006d1c                Standard_GetConfiguration
+ .text.Standard_GetInterface
+                0x08006d40       0x24 build/usb_core.o
+                0x08006d40                Standard_GetInterface
+ .text.Standard_GetStatus
+                0x08006d64       0x8c build/usb_core.o
+                0x08006d64                Standard_GetStatus
+ .text.DataStageIn
+                0x08006df0       0xac build/usb_core.o
+ .text.Standard_SetConfiguration
+                0x08006e9c       0x38 build/usb_core.o
+                0x08006e9c                Standard_SetConfiguration
+ .text.Standard_SetInterface
+                0x08006ed4       0x48 build/usb_core.o
+                0x08006ed4                Standard_SetInterface
+ .text.Standard_ClearFeature
+                0x08006f1c       0xcc build/usb_core.o
+                0x08006f1c                Standard_ClearFeature
+ .text.Standard_SetEndPointFeature
+                0x08006fe8       0x7c build/usb_core.o
+                0x08006fe8                Standard_SetEndPointFeature
+ .text.Standard_SetDeviceFeature
+                0x08007064       0x24 build/usb_core.o
+                0x08007064                Standard_SetDeviceFeature
+ .text.Standard_GetDescriptorData
+                0x08007088       0x1c build/usb_core.o
+                0x08007088                Standard_GetDescriptorData
+ .text.Post0_Process
+                0x080070a4       0x40 build/usb_core.o
+                0x080070a4                Post0_Process
+ .text.Setup0_Process
+                0x080070e4      0x2c4 build/usb_core.o
+                0x080070e4                Setup0_Process
+ .text.Out0_Process
+                0x080073a8       0xc0 build/usb_core.o
+                0x080073a8                Out0_Process
+ .text.SetDeviceAddress
+                0x08007468       0x38 build/usb_core.o
+                0x08007468                SetDeviceAddress
+ .text.In0_Process
+                0x080074a0       0x5c build/usb_core.o
+                0x080074a0                In0_Process
+ .text.NOP_Process
+                0x080074fc        0x2 build/usb_core.o
+                0x080074fc                NOP_Process
+ *fill*         0x080074fe        0x2 
+ .text.Mass_Storage_SetDeviceAddress
+                0x08007500        0xc build/USB_prop.o
+                0x08007500                Mass_Storage_SetDeviceAddress
+ .text.MASS_Status_In
+                0x0800750c        0x2 build/USB_prop.o
+                0x0800750c                MASS_Status_In
+ .text.MASS_Get_Interface_Setting
+                0x0800750e        0xe build/USB_prop.o
+                0x0800750e                MASS_Get_Interface_Setting
+ .text.Get_Max_Lun
+                0x0800751c       0x18 build/USB_prop.o
+                0x0800751c                Get_Max_Lun
+ .text.MASS_init
+                0x08007534       0x3c build/USB_prop.o
+                0x08007534                MASS_init
+ .text.MASS_Reset
+                0x08007570       0xe8 build/USB_prop.o
+                0x08007570                MASS_Reset
+ .text.Mass_Storage_ClearFeature
+                0x08007658       0x1c build/USB_prop.o
+                0x08007658                Mass_Storage_ClearFeature
+ .text.MASS_GetDeviceDescriptor
+                0x08007674        0xc build/USB_prop.o
+                0x08007674                MASS_GetDeviceDescriptor
+ .text.MASS_GetConfigDescriptor
+                0x08007680        0xc build/USB_prop.o
+                0x08007680                MASS_GetConfigDescriptor
+ .text.MASS_GetStringDescriptor
+                0x0800768c       0x20 build/USB_prop.o
+                0x0800768c                MASS_GetStringDescriptor
+ .text.Mass_Storage_SetConfiguration
+                0x080076ac       0x30 build/USB_prop.o
+                0x080076ac                Mass_Storage_SetConfiguration
+ .text.MASS_NoData_Setup
+                0x080076dc       0x4c build/USB_prop.o
+                0x080076dc                MASS_NoData_Setup
+ .text.MASS_Status_Out
+                0x08007728        0x2 build/USB_prop.o
+                0x08007728                MASS_Status_Out
+ *fill*         0x0800772a        0x2 
+ .text.MASS_Data_Setup
+                0x0800772c       0x34 build/USB_prop.o
+                0x0800772c                MASS_Data_Setup
+ .text.UserToPMABufferCopy
+                0x08007760       0x1e build/usb_mem.o
+                0x08007760                UserToPMABufferCopy
+ .text.PMAToUserBufferCopy
+                0x0800777e       0x24 build/usb_mem.o
+                0x0800777e                PMAToUserBufferCopy
+ *fill*         0x080077a2        0x2 
+ .text.SetBTABLE
+                0x080077a4       0x10 build/USB_regs.o
+                0x080077a4                SetBTABLE
+ .text.SetEPType
+                0x080077b4       0x1c build/USB_regs.o
+                0x080077b4                SetEPType
+ .text.SetEPTxStatus
+                0x080077d0       0x2a build/USB_regs.o
+                0x080077d0                SetEPTxStatus
+ .text.SetEPRxStatus
+                0x080077fa       0x2a build/USB_regs.o
+                0x080077fa                SetEPRxStatus
+ .text.SetEPRxValid
+                0x08007824       0x1e build/USB_regs.o
+                0x08007824                SetEPRxValid
+ .text.ClearEP_KIND
+                0x08007842       0x1c build/USB_regs.o
+                0x08007842                ClearEP_KIND
+ .text.Clear_Status_Out
+                0x0800785e        0x4 build/USB_regs.o
+                0x0800785e                Clear_Status_Out
+ .text.ClearDTOG_RX
+                0x08007862       0x20 build/USB_regs.o
+                0x08007862                ClearDTOG_RX
+ .text.ClearDTOG_TX
+                0x08007882       0x20 build/USB_regs.o
+                0x08007882                ClearDTOG_TX
+ *fill*         0x080078a2        0x2 
+ .text.SetEPTxAddr
+                0x080078a4       0x20 build/USB_regs.o
+                0x080078a4                SetEPTxAddr
+ .text.SetEPRxAddr
+                0x080078c4       0x20 build/USB_regs.o
+                0x080078c4                SetEPRxAddr
+ .text.GetEPTxAddr
+                0x080078e4       0x1c build/USB_regs.o
+                0x080078e4                GetEPTxAddr
+ .text.GetEPRxAddr
+                0x08007900       0x1c build/USB_regs.o
+                0x08007900                GetEPRxAddr
+ .text.SetEPTxCount
+                0x0800791c       0x1c build/USB_regs.o
+                0x0800791c                SetEPTxCount
+ .text.SetEPRxCount
+                0x08007938       0x40 build/USB_regs.o
+                0x08007938                SetEPRxCount
+ .text.GetEPRxCount
+                0x08007978       0x20 build/USB_regs.o
+                0x08007978                GetEPRxCount
+ .text.ByteSwap
+                0x08007998        0xa build/USB_regs.o
+                0x08007998                ByteSwap
+ .text.Bot_Abort.part.0
+                0x080079a2       0x18 build/USB_bot.o
+ *fill*         0x080079ba        0x2 
+ .text.Transfer_Data_Request
+                0x080079bc       0x34 build/USB_bot.o
+                0x080079bc                Transfer_Data_Request
+ .text.Set_CSW  0x080079f0       0x40 build/USB_bot.o
+                0x080079f0                Set_CSW
+ .text.Mass_Storage_In
+                0x08007a30       0x4c build/USB_bot.o
+                0x08007a30                Mass_Storage_In
+ .text.CBW_Decode
+                0x08007a7c      0x214 build/USB_bot.o
+                0x08007a7c                CBW_Decode
+ .text.Bot_Abort
+                0x08007c90       0x22 build/USB_bot.o
+                0x08007c90                Bot_Abort
+ *fill*         0x08007cb2        0x2 
+ .text.Mass_Storage_Out
+                0x08007cb4       0x60 build/USB_bot.o
+                0x08007cb4                Mass_Storage_Out
+ .text.fix_filename
+                0x08007d14       0x38 build/__alterbios.o
+ .text.__alterbios_init
+                0x08007d4c       0x94 build/__alterbios.o
+                0x08007d4c                __alterbios_init
+ .text.__patch_GetDev_SN
+                0x08007de0       0x2c build/__alterbios.o
+                0x08007de0                __patch_GetDev_SN
+ .text.ERR      0x08007e0c       0x16 build/__alterbios.o
+                0x08007e0c                ERR
+ *fill*         0x08007e22        0x2 
+ .text.__patch_OpenFileWr
+                0x08007e24       0x2c build/__alterbios.o
+                0x08007e24                __patch_OpenFileWr
+ .text.__patch_OpenFileRd
+                0x08007e50       0x2c build/__alterbios.o
+                0x08007e50                __patch_OpenFileRd
+ .text.__patch_ReadFileSec
+                0x08007e7c       0x44 build/__alterbios.o
+                0x08007e7c                __patch_ReadFileSec
+ .text.__patch_ProgFileSec
+                0x08007ec0       0x30 build/__alterbios.o
+                0x08007ec0                __patch_ProgFileSec
+ .text.__patch_CloseFile
+                0x08007ef0       0x20 build/__alterbios.o
+                0x08007ef0                __patch_CloseFile
+ .text.spi_send
+                0x08007f10       0x14 build/fatfs_glue.o
+ .text.spi_recv
+                0x08007f24       0x30 build/fatfs_glue.o
+ .text.spi_recv_block
+                0x08007f54       0x64 build/fatfs_glue.o
+ .text.read_flash
+                0x08007fb8       0x74 build/fatfs_glue.o
+ .text.disk_initialize
+                0x0800802c       0x84 build/fatfs_glue.o
+                0x0800802c                disk_initialize
+ .text.disk_status
+                0x080080b0        0x8 build/fatfs_glue.o
+                0x080080b0                disk_status
+ .text.disk_read
+                0x080080b8       0x34 build/fatfs_glue.o
+                0x080080b8                disk_read
+ .text.disk_write
+                0x080080ec       0x6c build/fatfs_glue.o
+                0x080080ec                disk_write
+ .text.disk_ioctl
+                0x08008158       0x4c build/fatfs_glue.o
+                0x08008158                disk_ioctl
+ .text.get_fattime
+                0x080081a4        0x8 build/fatfs_glue.o
+                0x080081a4                get_fattime
+ .text.mem_cpy  0x080081ac       0x38 build/ff.o
+ .text.get_fileinfo
+                0x080081e4       0x60 build/ff.o
+ .text.validate
+                0x08008244       0x26 build/ff.o
+ .text.move_window
+                0x0800826a       0x6e build/ff.o
+ .text.check_fs
+                0x080082d8       0x4c build/ff.o
+ .text.chk_mounted
+                0x08008324      0x20c build/ff.o
+ .text.sync     0x08008530       0x78 build/ff.o
+ .text.__f_flush
+                0x080085a8       0x14 build/ff.o
+                0x080085a8                __f_flush
+ .text.clust2sect
+                0x080085bc       0x16 build/ff.o
+                0x080085bc                clust2sect
+ .text.get_fat  0x080085d2       0xd0 build/ff.o
+                0x080085d2                get_fat
+ .text.dir_sdi  0x080086a2       0xa2 build/ff.o
+ .text.dir_remove
+                0x08008744       0x24 build/ff.o
+ .text.put_fat  0x08008768      0x102 build/ff.o
+                0x08008768                put_fat
+ .text.create_chain
+                0x0800886a       0x98 build/ff.o
+ .text.dir_next
+                0x08008902      0x106 build/ff.o
+ .text.follow_path
+                0x08008a08      0x18c build/ff.o
+ .text.dir_register
+                0x08008b94       0x60 build/ff.o
+ .text.dir_read
+                0x08008bf4       0x44 build/ff.o
+ .text.remove_chain
+                0x08008c38       0x58 build/ff.o
+ .text.f_mount  0x08008c90       0x1c build/ff.o
+                0x08008c90                f_mount
+ .text.__f_open
+                0x08008cac      0x10e build/ff.o
+                0x08008cac                __f_open
+ .text.__f_read
+                0x08008dba      0x14e build/ff.o
+                0x08008dba                __f_read
+ .text.__f_write
+                0x08008f08      0x1b0 build/ff.o
+                0x08008f08                __f_write
+ .text.__f_sync
+                0x080090b8       0x56 build/ff.o
+                0x080090b8                __f_sync
+ .text.__f_close
+                0x0800910e        0xe build/ff.o
+                0x0800910e                __f_close
+ .text.__f_lseek
+                0x0800911c      0x110 build/ff.o
+                0x0800911c                __f_lseek
+ .text.__f_opendir
+                0x0800922c       0x6a build/ff.o
+                0x0800922c                __f_opendir
+ .text.__f_readdir
+                0x08009296       0x50 build/ff.o
+                0x08009296                __f_readdir
+ .text.__f_stat
+                0x080092e6       0x3c build/ff.o
+                0x080092e6                __f_stat
+ .text.__f_getfree
+                0x08009322       0xc4 build/ff.o
+                0x08009322                __f_getfree
+ .text.__f_truncate
+                0x080093e6       0x8c build/ff.o
+                0x080093e6                __f_truncate
+ .text.__f_unlink
+                0x08009472       0xa0 build/ff.o
+                0x08009472                __f_unlink
+ .text.__f_mkdir
+                0x08009512      0x170 build/ff.o
+                0x08009512                __f_mkdir
+ .text.__f_chmod
+                0x08009682       0x48 build/ff.o
+                0x08009682                __f_chmod
+ .text.__f_utime
+                0x080096ca       0x40 build/ff.o
+                0x080096ca                __f_utime
+ .text.__f_rename
+                0x0800970a       0xf4 build/ff.o
+                0x0800970a                __f_rename
+ .text          0x080097fe       0x7a build/cortexm3_macro.o
+                0x080097fe                __WFI
+                0x08009802                __WFE
+                0x08009806                __SEV
+                0x0800980a                __ISB
+                0x08009810                __DSB
+                0x08009816                __DMB
+                0x0800981c                __SVC
+                0x08009820                __MRS_CONTROL
+                0x08009826                __MSR_CONTROL
+                0x08009830                __MRS_PSP
+                0x08009836                __MSR_PSP
+                0x0800983c                __MRS_MSP
+                0x08009842                __MSR_MSP
+                0x08009848                __RESETPRIMASK
+                0x0800984c                __SETPRIMASK
+                0x08009850                __READ_PRIMASK
+                0x08009856                __RESETFAULTMASK
+                0x0800985a                __SETFAULTMASK
+                0x0800985e                __READ_FAULTMASK
+                0x08009864                __BASEPRICONFIG
+                0x0800986a                __GetBASEPRI
+                0x08009870                __REV_HalfWord
+                0x08009874                __REV_Word
+ .text.memcmp   0x08009878       0x5c c:/users/alesb/appdata/local/programs/gcc-arm-none-eabi-9-2019-q4-major/bin/../lib/gcc/arm-none-eabi/9.2.1/../../../../arm-none-eabi/lib/thumb/v7/nofp\libc.a(lib_a-memcmp.o)
+                0x08009878                memcmp
+ *(.rodata*)
+ .rodata.str1.1
+                0x080098d4      0x10c build/Main.o
+ .rodata        0x080099e0        0x5 build/Main.o
+                0x080099e0                SYS_Ver
+ *fill*         0x080099e5        0x3 
+ .rodata        0x080099e8      0x439 build/BIOS.o
+                0x080099e8                Y_ATTR
+                0x08009a9c                X_ATTR
+                0x08009cb8                G_ATTR
+                0x08009cd4                T_ATTR
+                0x08009e14                DiskDevInfo_2M
+ .rodata        0x08009e21        0xd build/FAT12.o
+                0x08009e21                DiskDevInfo_8M
+ .rodata.str1.1
+                0x08009e2e        0x7 build/LCD.o
+ *fill*         0x08009e35        0x1 
+ .rodata        0x08009e36      0x5d7 build/LCD.o
+                0x08009e36                Char_TAB_8x14
+                0x0800a406                DFU_Vers
+ .rodata        0x0800a40d       0x92 build/USB_desc.o
+                0x0800a40d                MASS_StringInterface
+                0x0800a41d                MASS_StringProduct
+                0x0800a443                MASS_StringVendor
+                0x0800a469                MASS_StringLangID
+                0x0800a46d                MASS_ConfigDescriptor
+                0x0800a48d                MASS_DeviceDescriptor
+ .rodata.str1.1
+                0x0800a49f       0xd4 build/__alterbios.o
+ .rodata.str1.1
+                0x0800a573        0xf build/ff.o
+                0x0800a582                _etext = .
+                0x0800a582                _sidata = _etext
+
+.glue_7         0x0800a584        0x0
+ .glue_7        0x0800a584        0x0 linker stubs
+
+.glue_7t        0x0800a584        0x0
+ .glue_7t       0x0800a584        0x0 linker stubs
+
+.vfp11_veneer   0x0800a584        0x0
+ .vfp11_veneer  0x0800a584        0x0 linker stubs
+
+.v4_bx          0x0800a584        0x0
+ .v4_bx         0x0800a584        0x0 linker stubs
+
+.iplt           0x0800a584        0x0
+ .iplt          0x0800a584        0x0 build/Main.o
+
+.rel.dyn        0x0800a584        0x0
+ .rel.iplt      0x0800a584        0x0 build/Main.o
+                0x20000000                . = 0x20000000
+
+.data           0x20000000      0x13d load address 0x0800a582
+                0x20000000                _sdata = .
+ *(.data)
+ .data          0x20000000        0xc build/BIOS.o
+                0x20000000                DFU_Ver
+                0x20000006                HDW_Ver
+ .data          0x2000000c       0x38 build/USB_istr.o
+                0x2000000c                pEpInt_OUT
+                0x20000028                pEpInt_IN
+ .data          0x20000044       0x8e build/USB_prop.o
+                0x20000044                Device_Property
+                0x20000074                Device_Descriptor
+                0x2000007c                Config_Descriptor
+                0x20000084                String_Descriptor
+                0x200000ac                User_Standard_Requests
+                0x200000d0                Device_Table
+ .data          0x200000d2       0x50 build/scsi_data.o
+                0x200000d2                ReadFormatCapacity_Data
+                0x200000de                Scsi_Sense_Data
+                0x200000f0                Mode_Sense10_data
+                0x200000f8                Mode_Sense6_data
+                0x200000fc                Standard_Inquiry_Data
+ .data          0x20000122       0x1a build/USB_desc.o
+                0x20000122                MASS_StringSerial
+ .data          0x2000013c        0x1 build/fatfs_glue.o
+                0x2000013c                g_invert
+                0x2000013d                _edata = .
+
+.igot.plt       0x20000140        0x0 load address 0x0800a6bf
+ .igot.plt      0x20000140        0x0 build/Main.o
+
+.bss            0x20000140     0x23c2 load address 0x0800a6bf
+                0x20000140                _sbss = .
+ *(.bss)
+ .bss           0x20000140     0x1038 build/Main.o
+                0x20000140                JumpAddr
+                0x20000144                Jump_To_App
+                0x20000148                fatfs
+ .bss           0x20001178        0x9 build/BIOS.o
+                0x20001178                VerStr
+                0x20001180                Clash
+ .bss           0x20001181        0x1 build/Config.o
+                0x20001181                HSEStartUpStatus
+ *fill*         0x20001182        0x2 
+ .bss           0x20001184       0x14 build/Ext_Flash.o
+                0x20001184                Tout
+                0x20001188                flash_mode
+                0x2000118c                Mass_Block_Count
+                0x20001190                Mass_Block_Size
+                0x20001194                Mass_Memory_Size
+ .bss           0x20001198       0x16 build/Interrupt.o
+                0x20001198                Cnt_mS
+                0x2000119a                Delay_Cnt
+                0x2000119c                Beep_mS
+                0x2000119e                Cnt_20mS
+                0x200011a0                Sec_Cnt
+                0x200011a2                Cursor_Cnt
+                0x200011a3                Twink
+                0x200011a4                PD_Cnt
+                0x200011a6                Key_Wait_Cnt
+                0x200011a7                Key_Repeat_Cnt
+                0x200011a8                Key_Buffer
+                0x200011aa                Delay_Counter
+                0x200011ac                Key_Status_Last
+ *fill*         0x200011ae        0x2 
+ .bss           0x200011b0       0x20 build/FAT12.o
+                0x200011b0                FAT_V
+ .bss           0x200011d0        0x6 build/LCD.o
+                0x200011d0                LCD_Type
+                0x200011d4                Fill_Buffer
+ *fill*         0x200011d6        0x2 
+ .bss           0x200011d8     0x1224 build/Memory.o
+                0x200011d8                TransferState
+                0x200011e4                Block_Read_count
+                0x200011e8                Block_offset
+                0x200011ec                Counter
+                0x200011f8                Idx
+                0x200011fc                Data_Buffer
+ .bss           0x200023fc        0x4 build/usb_int.o
+                0x200023fc                SaveRState
+                0x200023fe                SaveTState
+ .bss           0x20002400        0x8 build/USB_pwr.o
+                0x20002400                ResumeS
+                0x20002404                bDeviceState
+ .bss           0x20002408       0x2d build/usb_init.o
+                0x20002408                pInformation
+                0x2000240c                Device_Info
+                0x20002428                pProperty
+                0x2000242c                pUser_Standard_Requests
+                0x20002430                wInterrupt_Mask
+                0x20002432                SaveState
+                0x20002434                EPindex
+ *fill*         0x20002435        0x1 
+ .bss           0x20002436        0x3 build/USB_istr.o
+                0x20002436                wIstr
+                0x20002438                bIntPackSOF
+ *fill*         0x20002439        0x1 
+ .bss           0x2000243a        0x3 build/usb_core.o
+                0x2000243a                StatusInfo
+                0x2000243c                Data_Mul_MaxPacketSize
+ *fill*         0x2000243d        0x3 
+ .bss           0x20002440        0x4 build/USB_prop.o
+                0x20002440                Max_Lun
+ .bss           0x20002444        0xd build/scsi_data.o
+                0x20002444                ReadCapacity10_Data
+                0x2000244c                Page00_Inquiry_Data
+ *fill*         0x20002451        0x3 
+ .bss           0x20002454       0x7e build/USB_bot.o
+                0x20002454                Bot_State
+                0x20002458                CSW
+                0x20002468                CBW
+                0x20002488                SCSI_BlkLen
+                0x2000248c                SCSI_LBA
+                0x20002490                Data_Len
+                0x20002492                Bulk_Data_Buff
+ *fill*         0x200024d2        0x2 
+ .bss           0x200024d4       0x24 build/__alterbios.o
+                0x200024d4                g_file
+ .bss           0x200024f8        0x1 build/fatfs_glue.o
+                0x200024f8                g_flash_type
+ *fill*         0x200024f9        0x3 
+ .bss           0x200024fc        0x6 build/ff.o
+                0x20002502                _ebss = .
+OUTPUT(SYSGCC.elf elf32-littlearm)
+
+.comment        0x00000000       0x79
+ .comment       0x00000000       0x79 build/Main.o
+                                 0x7a (size before relaxing)
+ .comment       0x00000079       0x7a build/Ident.o
+ .comment       0x00000079       0x7a build/BIOS.o
+ .comment       0x00000079       0x7a build/Config.o
+ .comment       0x00000079       0x7a build/Ext_Flash.o
+ .comment       0x00000079       0x7a build/Interrupt.o
+ .comment       0x00000079       0x7a build/FAT12.o
+ .comment       0x00000079       0x7a build/Function.o
+ .comment       0x00000079       0x7a build/startup.o
+ .comment       0x00000079       0x7a build/LCD.o
+ .comment       0x00000079       0x7a build/stm32f10x_spi.o
+ .comment       0x00000079       0x7a build/stm32f10x_flash.o
+ .comment       0x00000079       0x7a build/stm32f10x_nvic.o
+ .comment       0x00000079       0x7a build/stm32f10x_rcc.o
+ .comment       0x00000079       0x7a build/stm32f10x_gpio.o
+ .comment       0x00000079       0x7a build/Memory.o
+ .comment       0x00000079       0x7a build/USB_scsi.o
+ .comment       0x00000079       0x7a build/usb_int.o
+ .comment       0x00000079       0x7a build/USB_pwr.o
+ .comment       0x00000079       0x7a build/usb_init.o
+ .comment       0x00000079       0x7a build/USB_endp.o
+ .comment       0x00000079       0x7a build/USB_istr.o
+ .comment       0x00000079       0x7a build/usb_core.o
+ .comment       0x00000079       0x7a build/USB_prop.o
+ .comment       0x00000079       0x7a build/usb_mem.o
+ .comment       0x00000079       0x7a build/scsi_data.o
+ .comment       0x00000079       0x7a build/USB_regs.o
+ .comment       0x00000079       0x7a build/USB_desc.o
+ .comment       0x00000079       0x7a build/USB_bot.o
+ .comment       0x00000079       0x7a build/__alterbios.o
+ .comment       0x00000079       0x7a build/fatfs_glue.o
+ .comment       0x00000079       0x7a build/ff.o
+
+.ARM.attributes
+                0x00000000       0x2b
+ .ARM.attributes
+                0x00000000       0x2d build/Main.o
+ .ARM.attributes
+                0x0000002d       0x2d build/Ident.o
+ .ARM.attributes
+                0x0000005a       0x2d build/BIOS.o
+ .ARM.attributes
+                0x00000087       0x2d build/Config.o
+ .ARM.attributes
+                0x000000b4       0x2d build/Ext_Flash.o
+ .ARM.attributes
+                0x000000e1       0x2d build/Interrupt.o
+ .ARM.attributes
+                0x0000010e       0x2d build/FAT12.o
+ .ARM.attributes
+                0x0000013b       0x2d build/Function.o
+ .ARM.attributes
+                0x00000168       0x2d build/startup.o
+ .ARM.attributes
+                0x00000195       0x2d build/LCD.o
+ .ARM.attributes
+                0x000001c2       0x2d build/stm32f10x_spi.o
+ .ARM.attributes
+                0x000001ef       0x2d build/stm32f10x_flash.o
+ .ARM.attributes
+                0x0000021c       0x2d build/stm32f10x_nvic.o
+ .ARM.attributes
+                0x00000249       0x2d build/stm32f10x_rcc.o
+ .ARM.attributes
+                0x00000276       0x2d build/stm32f10x_gpio.o
+ .ARM.attributes
+                0x000002a3       0x2d build/Memory.o
+ .ARM.attributes
+                0x000002d0       0x2d build/USB_scsi.o
+ .ARM.attributes
+                0x000002fd       0x2d build/usb_int.o
+ .ARM.attributes
+                0x0000032a       0x2d build/USB_pwr.o
+ .ARM.attributes
+                0x00000357       0x2d build/usb_init.o
+ .ARM.attributes
+                0x00000384       0x2d build/USB_endp.o
+ .ARM.attributes
+                0x000003b1       0x2d build/USB_istr.o
+ .ARM.attributes
+                0x000003de       0x2d build/usb_core.o
+ .ARM.attributes
+                0x0000040b       0x2d build/USB_prop.o
+ .ARM.attributes
+                0x00000438       0x2d build/usb_mem.o
+ .ARM.attributes
+                0x00000465       0x33 build/scsi_data.o
+ .ARM.attributes
+                0x00000498       0x2d build/USB_regs.o
+ .ARM.attributes
+                0x000004c5       0x33 build/USB_desc.o
+ .ARM.attributes
+                0x000004f8       0x2d build/USB_bot.o
+ .ARM.attributes
+                0x00000525       0x2d build/__alterbios.o
+ .ARM.attributes
+                0x00000552       0x2d build/fatfs_glue.o
+ .ARM.attributes
+                0x0000057f       0x2d build/ff.o
+ .ARM.attributes
+                0x000005ac       0x1b build/cortexm3_macro.o
+ .ARM.attributes
+                0x000005c7       0x29 c:/users/alesb/appdata/local/programs/gcc-arm-none-eabi-9-2019-q4-major/bin/../lib/gcc/arm-none-eabi/9.2.1/../../../../arm-none-eabi/lib/thumb/v7/nofp\libc.a(lib_a-memcmp.o)
+
+.debug_frame    0x00000000       0x3c
+ .debug_frame   0x00000000       0x3c c:/users/alesb/appdata/local/programs/gcc-arm-none-eabi-9-2019-q4-major/bin/../lib/gcc/arm-none-eabi/9.2.1/../../../../arm-none-eabi/lib/thumb/v7/nofp\libc.a(lib_a-memcmp.o)

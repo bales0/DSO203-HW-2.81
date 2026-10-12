@@ -1,0 +1,418 @@
+/*
+This is a simple spectrum analyzer application, implemented in PAWN for the
+DSO Quad portable oscilloscope.
+
+It was based on material from a number of example PAWN programs and PAWN interpreter
+
+Petteri Aimonen's example programs
+http://essentialscrap.com/dsoquad/pawn.html
+
+This program was put together largely from these three examples from Petteri's website:
+spectrum.p
+voltmetr.p
+freqresp.p
+
+This code is offered with no warranty, either expressed or implied.
+You may use it, copy it or give it away freely.
+
+If you find something wrong with this program please let me know and if I still can
+remember how to fix and it is not during the semester when I am teaching I will give it a try.
+Also if you can see a better way to do things please let me know.  At a number of points I had
+to guess at how the DSO Quad really works and may have done things less than optimally
+
+David Schwartz
+CSUN
+www.csun.edu/~dms
+dms@csun.edu
+
+Notes:
+The Plots that are generated are scaled so that the peack value
+above dc is set to 0 dB and the noise floor is set to -40 dB.
+
+The Power Spectral Density, PSD, is generated using a simple periodogram approach of averaging
+the |fft|^2 values from a sequence of captured input buffers
+
+One unfortunate feature of the DS0 Quad is that if you save a file from an
+applicaiton you have to turn it off and on or plug and unplug the USB cable
+to be able to see the file on the USB port.
+
+As Petteri has pointed out, it appears that if the DSO Quad
+drive gets fragmented it will no longer work unless you re-format it and then
+reload any PAWN .amx files you want to use.
+
+
+Change Log
+6/6/2012
+Significant changes:
+1. Changed horizontal grid so lines are at -10 dB, -20 dB, ....
+2. Added vertical grid lines
+3. Modified BMP save to preserve status line data
+4. Clarified configure menu labels
+5. Extended signal generator to 10 MHz for square waves
+6. Edited variable names to lower case with "_" separator
+7. Added a continuous signal acquisition mode
+
+Note: Testing indicates that the DSO Quad signal generator square wave is ~OK for <= 1 MHz
+Also this implementation of spec_an is only accurate to ~10% in estimating the location of the spectral peak
+
+5/26/2012
+Significant changes:
+1. Increased the resolution on the noise floor settings and reduced the lowest value
+   from -50 to -40 dB and fixed display calculation to conform to the -40 dB limit
+2. Deleted includes of get/set time.  There are not implemented in for PAWN on the DSO Quad
+   and were left in the code by mistake
+3. Changed initialization of psd_max to psd_max = fix16_min;
+4. Added capability to use DSO Quad signal generator as input to test spec_an
+5. Added call to wavein_autorange before measurements to avoid clipping
+
+05/23/2012
+Significant changes:
+1. Added call to calibration in main
+2. Added control of noise floor
+3. Added display of scales at bottom of plots
+*/
+
+#include <draw>
+#include <fixed>
+#include <fourier>
+#include <menu>
+#include <wavein>
+#include <console>
+#include <config>
+#include <calibration>
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//Define global variables
+#define buff_size  1024
+#define psd_size   512
+
+new waveform_labels[]{} = ["Square","Triangle","Sine"];
+new out_freq_labels[]{} = ["100 Hz", "1 kHz", "10 kHz", "20 kHz", "100 kHz", "1 MHz", "4 MHz"];
+new out_freqs[] = [100, 1000, 10000, 20000, 100000, 1000000, 4000000];
+new waveform_idx;
+new bool: sig_gen_on;
+new bool: continuous_measurement_on;
+new bool: gridOn;
+new out_freq_idx;
+new out_freq;
+
+//These unusal screen bandwidths are driven by the 400 horizontal point limit of
+//the DSO Quad screen
+new freq_range_labels[]{} = ["1.4 kHz", "14 kHz", "140 kHz", "1.4 MHz", "14.0 MHz"];
+
+//This is unusual set of sample rates were selected so that the system
+//could set them very closely.  This appears not to not true for most arbitrary choicers.
+new sample_rate_labels[]{} = ["3.6 kHz", "36 kHz", "360 kHz", "3.6 MHz", "36 MHz"];
+new sample_rates[] =  [3600, 36000, 360000, 3600000, 36000000];
+new sample_rate_idx, sample_rate;
+
+//num_segments is the number of PSD estimates to average over
+new num_segments;
+new segments_labels[]{} = ["1", "10", "20"];
+new segments_values[] = [1, 10, 20];
+new segments_idx;
+
+new noise_floor_idx;
+new noise_floor;
+new noise_floor_labels[]{} = ["-40 dB","-35 dB","-30 dB","-25 dB","-20 dB","-15 dB","-10 dB"];
+new noise_floor_values[] = [40,35,30,25,20,15,10];
+
+new outbuf{buff_size};
+new Fixed: real_fft[buff_size];
+new Fixed: imag_fft[buff_size];
+new Fixed: psd_mag[psd_size];
+new Fixed: psd_max;
+new psd_max_idx;
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+//get input from Configure menus
+configure(bool: load_only = false)
+{
+    start_config("spec_an.ini", load_only);
+    while (do_config())
+    {
+		//General Configuration
+		config_multichoice("sample_rate", "Sample Rate", sample_rate_idx, sample_rate_labels, 1);
+		config_multichoice("noise_floor", "Noise Floor", noise_floor_idx, noise_floor_labels, 1 );
+        config_multichoice("segments", "Num Segments to Avg", segments_idx, segments_labels, 1 );
+		config_boolean("continuous_measure_on","Continuous Measurement", continuous_measurement_on, true);
+		config_boolean("grid_on","Grid On", gridOn, true);
+    	//DSO Quad Signal Generator Configuration
+		config_boolean("sig_gen","Signal Genertor On", sig_gen_on, false);
+		config_multichoice("sig_gem_waveform","Sig Gen Waveform", waveform_idx, waveform_labels, 1);
+		config_multichoice("output_freq","Out Frequency", out_freq_idx, out_freq_labels, 1);
+	}
+	//clamp output waveform frequency to a max of 20kHz
+	if(sig_gen_on)
+		if((waveform_idx != 0)&&(out_freq_idx > 3))
+			out_freq_idx = 3;
+
+	out_freq = out_freqs[out_freq_idx];
+	sample_rate = sample_rates[sample_rate_idx];
+	num_segments = segments_values[segments_idx];
+	noise_floor = noise_floor_values[noise_floor_idx];
+}
+
+//run measurement
+//this routine is much too long and needs to be broken up
+@button1()
+{
+	//If enabled turn on signal generator
+	if(sig_gen_on)
+	{
+		if(waveform_idx == 0)
+			waveout_digital(out_freq);
+		else if(waveform_idx == 1)
+			waveout_triangle(outbuf, out_freq);
+		else
+			waveout_sinewave(outbuf, out_freq);
+
+		delay_ms(100);
+	}
+
+	draw_menubar("Busy", "", "", "Quit");
+
+	//configure input channel
+    config_chA(ADC_DC, ADC_1V);
+	wavein_settrigger(Trig_Always);
+	wavein_samplerate(sample_rate);
+	wavein_start();
+
+	//main loop
+	//if Continuous Measurement is On this runs until Quit is pressed
+	//else it runs once averaging num_segments psd measurements
+	do
+	{
+		//zero out the psd_mag array
+		for (new k = 0; k < psd_size; k++)
+	  		psd_mag[k] = 0;
+		//compute fft num_segments times
+		//and combine |fft|^2 results to give a periodogram estimate of PSD
+		for (new loop_count = 1; loop_count<=num_segments; loop_count++)
+		{
+			//if this is the last pass draw the grid
+			if ( (loop_count == num_segments && gridOn && !continuous_measurement_on ) ||
+				 (loop_count == num_segments && gridOn && continuous_measurement_on && peek_keys(BUTTON4)))
+			{
+				//only clear screen on last pass to minimize blinking
+				clear_screen();
+
+				drawline(0, 200, 400, 200, white, true);
+				new ten_dB_Step = (10*180)/ noise_floor;
+				new h_grid_size = noise_floor/10;
+				for( new grid_count = 1; grid_count <= h_grid_size; grid_count++)
+				{
+					new v_pos = (200) - (grid_count * ten_dB_Step);
+					drawline(0, v_pos, 400, v_pos, cyan, true);
+				}
+
+				//draw vertical grid
+				new h_grid_step = 285714; //this is 10000*400/14
+				for( new grid_count = 0; grid_count <= 14; grid_count++)
+				{
+					new h_pos = (grid_count * h_grid_step)/10000;
+					drawline(h_pos,20,h_pos,200, white, true);
+				}
+			}
+
+			//init clean buffer and set input signal range
+			new inbuf{buff_size};
+			wavein_autorange();
+
+			//fill the input buffer
+    		wavein_read(inbuf);
+
+			//compute fft
+    		fft(inbuf, real_fft, imag_fft, buff_size);
+
+	 		//init max value information
+			psd_max = fix16_min;
+			psd_max_idx = 0;
+
+			//average the PSD estimate
+			//for PSD only need to use 1/2 of buffer size to stay below Nyquist frequency
+			for (new k = 0; k < psd_size; k++)
+			{
+				//save old value to use in recursion
+				new Fixed: fft_old_val = psd_mag[k];
+				//compute the mag squared of the fft
+				psd_mag[k] = real_fft[k]*real_fft[k] + imag_fft[k]*imag_fft[k];
+				//do recursize combine of measurements
+				psd_mag[k] = (psd_mag[k] + (loop_count-1)*fft_old_val)/loop_count;
+
+				//find peak value well above DC
+				if((k>=2) && (psd_mag[k] >psd_max))
+				{
+					psd_max = psd_mag[k];
+					psd_max_idx = k;
+				}
+			}
+
+			//normalize everything to the peak value above DC to scale for plot
+			for (new k = 0; k < psd_size; k++)
+				psd_mag[k] =  psd_mag[k]/psd_max;
+
+			//plot limited by 400 point screen width
+			//so plot only first 400 points on screen of PSD estimate
+
+			for (new k = 0; k < 400; k++)
+			{
+				//set noise floor scasle and plot
+				new Fixed: fft_plot = FIX(0.0001);
+				fft_plot = fft_plot + psd_mag[k];
+				//scale values to force 0 dB point to 180 pixels level on screen
+				new pos = (fround(10 * log10(fft_plot))+noise_floor)*180/noise_floor;
+        		pos = clamp(pos, 0, 180);
+
+
+				//if it is the last segment plot using only drawline so that if
+				//grid is on it will not messed up
+				if( (loop_count == num_segments) && gridOn)
+				{
+					drawline(k, 20, k, pos+20, green);
+				}
+				//if it is an intermediate segments clean out column with putcolumn
+				//before plotting information
+				else
+				{
+					new Color: column[181] = [black];
+					putcolumn(k, 20, column);
+					drawline(k, 20, k, pos+20, green);
+				}
+			}
+
+			new Fixed: psd_maxFreq;
+			new freq_units[]{}=[" Hz", " kHz", " MHz"];
+			new freq_units_idx;
+			new Fixed: freq_step;
+
+			if (sample_rate < 36000)
+			{
+				//units are Hz
+				freq_units_idx = 0;
+				freq_step = sample_rate/buff_size;
+				psd_maxFreq = psd_max_idx*freq_step;
+			}
+			else if(sample_rate < 36000000)
+			{
+				//units are kHz
+				freq_units_idx = 1;
+				freq_step = sample_rate/buff_size;
+				psd_maxFreq = psd_max_idx*(freq_step/1000);
+			}
+			else
+			{
+				//units are MHz
+				freq_units_idx = 2;
+				//make sure frequency step never overflows and flips sign
+				freq_step = sample_rate/(1000*buff_size);
+				psd_maxFreq = psd_max_idx*((freq_step/1000));
+			}
+
+			draw_status(strjoin("MaxPSD:", strf(psd_maxFreq, 1),freq_units[freq_units_idx],
+				"  Scales:[0to", freq_range_labels[sample_rate_idx],"]", " [-",str(noise_floor),"to0 dB]" ));
+    	}
+	}
+	while( (!get_keys(BUTTON4)) && continuous_measurement_on)
+}
+
+@button2()
+{
+    // File saving
+    draw_menubar("BMP", "CSV", "", "Cancel");
+    while (!peek_keys(BUTTON1 | BUTTON2 | BUTTON4)) {}
+
+	//save bit map file
+	if (get_keys(BUTTON1))
+    {
+        new filename{14} = "PSD%03d.BMP";
+        select_filename(filename);
+
+        if (save_bitmap(filename))
+            draw_status(strjoin("Saved ", filename));
+        else
+            draw_status("Bitmap save failed!");
+    }
+	//save text file
+    else if (get_keys(BUTTON2))
+    {
+		new filename{14} = "PSD%03d.CSV";
+        select_filename(filename);
+        draw_status(strjoin("Saving ", filename));
+		new File: f = f_open(filename, FA_WRITE | FA_CREATE_NEW);
+		f_write(f, "index,fft,");
+		f_write(f, strjoin( "Sample Rate:,", str(sample_rate), "," ,"psd_maxAC:,", strf(psd_max),",psd_max_idx:,",str(psd_max_idx),  "\r\n"));
+
+        for (new i = 0; i < psd_size; i++)
+		f_write(f, strjoin(  str(i),",", strf(psd_mag[i]),  "\r\n"));
+
+        if (f_close(f))
+            draw_status(strjoin("Saved ", filename));
+        else
+            draw_status("CSV save failed!");
+    }
+    get_keys(ANY_KEY);
+}
+
+
+@button3()
+{
+    configure();
+}
+
+bool: @idle()
+{
+	draw_menubar("Measure", "Save", "Config", "Quit");
+    get_keys(ANY_KEY);
+    wait_keys(ANY_KEY, 120000);
+    return !get_keys(BUTTON4);
+}
+
+main()
+{
+	//load calibration file if one is available
+	load_calibration();
+	configure(true);
+	draw_text("spec_an last modified on 6/6/2012", 10, 180, cyan);
+	draw_text("Notes:", 10, 140, green)
+	draw_text("Plots are scaled so peak above dc is at 0dB", 10, 120, green);
+	draw_text("Horizontal lines on plots are 10 dB apart", 10, 100, green);
+	draw_text("Max sig gen freq 20 kHz for sine and triangle", 10, 80, green);
+	draw_text("Use configure to set samp rate to avoid aliasing", 10, 60, green);
+	draw_text("Max display freq will be ~40% of sample rate", 10, 40, green);
+	draw_text("Only ~5% accuracy for spectral peak location", 10, 20, green);
+}
+new const program_icon[] = [
+    0b0011111111111111111111111111100,
+    0b0111111110000000000001111111110,
+    0b1111110000000000000000001111111,
+    0b1111100000000000000000000011111,
+    0b1111100000000000000000000011111,
+    0b1110000000000000000000000000111,
+    0b1110011100000000000000000000111,
+    0b1100010000001000000000000000011,
+    0b1100011100010100000000000000011,
+    0b1100000100100010000000000000011,
+    0b1000011100111110000000000000001,
+    0b1000000000100010000100001110001,
+    0b1000000000100010000100001010001,
+    0b1000000000000000000100001010001,
+    0b1000000000000000000100001010001,
+    0b1000000000000000000100101110001,
+    0b1000000000000000000000000000001,
+    0b1100000000000000000000000000011,
+    0b1110000000000000000000000000111,
+    0b1111111111111111111111111111111,
+    0b1111111111111111111111111111111,
+    0b1111111111111111111111111111111,
+    0b0111111111111111111111111111110,
+    0b0011111111111111111111111111100,
+];
+
+//specify display name for program
+new const program_name{} = "spec_an";
+
+//Mark the program icon and name for inclusion in the binary.
+#include <metadata>
+
