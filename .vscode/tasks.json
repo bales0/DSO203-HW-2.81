@@ -1,0 +1,55 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "FPGA W1.2-test: Simulace",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "sim"],
+      "problemMatcher": []
+    },
+    {
+      "label": "FPGA W1.2-test: Lint",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "lint"],
+      "problemMatcher": []
+    },
+    {
+      "label": "FPGA W1.2-test: Syntéza",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "synth"],
+      "problemMatcher": []
+    },
+    {
+      "label": "FPGA W1.2-test: Place & Route",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "pnr"],
+      "problemMatcher": []
+    },
+    {
+      "label": "FPGA W1.2-test: Timing",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "timing"],
+      "problemMatcher": []
+    },
+    {
+      "label": "FPGA W1.2-test: Bitstream",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "bitstream"],
+      "problemMatcher": []
+    },
+    {
+      "label": "FPGA W1.2-test: Vše",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "all"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    }
+  ]
+}

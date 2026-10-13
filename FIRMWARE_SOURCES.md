@@ -51,15 +51,38 @@ před provozem na zařízení stále předmětem kontroly. Oproti W6.5 může zm
 ovlivnit práci s uživatelsky pojmenovanými konfiguracemi; potřebuje praktický
 test. Sestavení Wildcat není test funkce flash ani měření.
 
-QuadPawn obsahuje starší `Runtime/fpga.c`, které očekává obraz FPGA na adrese
-`0x0802C000` a délku 68 088 bajtů. U HW 2.81/2.82 je obraz FPGA jinde a
-má 135 096 bajtů. Funkci obnovy FPGA z QuadPawn proto nelze bez opravy
-použít. Ostatní funkce QuadPawn na HW 2.82 nebyly ověřeny.
+Původní hotový runtime v bin/QuadPawn obnovuje FPGA ze staré adresy
+0x0802C000 s délkou 68 088 bajtů; jeho loader pro HW 2.81/2.82 nepoužívejte.
+Místní zdroje QuadPawn/Runtime nyní obsahují opravu na 0x0805C800,
+135 096 bajtů, kontrolu CRC a obnovu po ukončení aplikace. Oddělené
+sestavení je v bin/QuadPawnTest, s volitelným parametrem VERSION
+(výchozí 2026.10.13). [FPGALOAD](QuadPawn/Programs/FPGALOAD.md) popisuje
+balíček a 16 regresních testů. Uživatel potvrdil na HW 2.82 testy
+FPGAW12 s W1.1, spuštění nového runtime PAWN_TST.HEX ze slotu 4,
+načtení W1.2-test aplikací FPGALOAD, testy ID/FIFO při 1 MHz a 72 MHz
+a návrat k W1.1. Nahrání runtime se podařilo z jiného počítače.
 
 FPGA W1.1 přidává plnorychlostní oversampling a umožňuje opačnou fázi
-hodin ADC B. Ověřená implementace 144 MS/s pro tento pracovní strom
-nalezená nebyla. Prokládaný režim vyžaduje také správné směrování vstupu,
-pořadí vzorků, kalibraci a úpravu aplikace.
+hodin ADC B. SYS a QuadPawn umějí zapnout režim INTERLACE. Uživatel na
+HW 2.82 naměřil INT144 v2 při 1/2/4 MHz vždy S=0, I=−4 a Delta=−4
+v osminách periody 72MHz taktu, bez ořezaných vzorků. Tyto hodnoty
+jsou zachovány v [INT144.md](QuadPawn/Programs/INT144.md), ale dodatečná
+kontrola odhalila chybějící zahození předtriggerové historie. V2 mohla
+měřit i stará data; její DC korekce a pořadí B→A musí potvrdit v3.
+
+INT144 v3 zahodí po nastavení ukazatele 152 dvojic a vyhodnotí dalších
+512 platných dvojic. Překlad prošel bez varování, 40 numerických kontrol
+prošlo v interpretu Pawn na PC. Běh v3 na DS203 zatím neproběhl.
+Absolutní přesnost frekvence, napětí a celková analogová kvalita jsou
+nadále neměřené; relativní DC korekce zůstávají pouze v RAM.
+
+Experimentální [FPGAW1.2-test](FPGAW1.2-test/README.md) má nyní ve třech
+výrazech DP_RAM.v výslovné dvoubitové odečítání kruhového indexu.
+Starší simulace nekontrolovala neznámá data; po její opravě prošly
+čtyři simulace včetně dvou záznamů bez přenosu staré historie po zahození.
+Úplné sestavení a kontrola 72MHz časování prošly. Nový bitstream v build/
+má jiný hash a na zařízení se netestoval; W12TEST.BIN v testovacím balíčku
+a původní W1.1 zůstaly zachované. FPGALOAD samotné INTERLACE nezapíná.
 
 [LA104](https://github.com/gabonator/LA104) je samostatný alternativní systém.
 Jeho aktuální zdroje mají experimentální cíl `DS203HD` pro 4096bajtové

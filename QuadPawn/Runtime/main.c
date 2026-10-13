@@ -46,6 +46,7 @@ int amxinit_fourier(AMX *amx);
 int amxinit_time(AMX *amx);
 int amxinit_device(AMX *amx);
 int amxinit_fpga(AMX *amx);
+int amxcleanup_fpga(void);
 int amx_timer_doevents(AMX *amx);
 void overlay_init(AMX *amx, const char *filename, FIL *file);
 
@@ -165,7 +166,7 @@ int loadprogram(const char *filename, char *error, size_t error_size)
     amxinit_fourier(&amx);
     amxinit_time(&amx);
     amxinit_device(&amx);
-    amxinit_fpga(&amx);
+    AMXERRORS(amxinit_fpga(&amx));
     
     // Check that everything has been registered
     int regstat = amx_Register(&amx, NULL, -1);
@@ -405,6 +406,9 @@ int main(void)
             
             if (status == AMX_ERR_EXIT && ret == 0)
                 status = 0; // Ignore exit(0), but inform about e.g. exit(1)
+            int fpga_status = amxcleanup_fpga();
+            if (fpga_status != AMX_ERR_NONE)
+                status = fpga_status;
             
             if (status != 0)
             {

@@ -8,6 +8,8 @@ APP = 4
 ADR = 0x08024000
 NAME = $(_NAME)$(APP)
 BINDIR = ../../bin/QuadPawn
+# Local runtime version, configurable with make VERSION=1.2
+VERSION ?= 2026.10.13
 
 # Names of the object files (add all .c files you want to include)
 OBJS = main.o ds203_io.o libc_glue.o drawing.o menubar.o buttons.o \
@@ -31,6 +33,7 @@ LIBS = -lm -lgcc baselibc/build/libc.a
 CFLAGS = -I baselibc/include -I stm32_headers -I DS203 \
 	-I amx -I libfixmath -DCOMMITID=\"$(COMMITID)\" \
 	-I alterbios -I alterbios/fatfs
+CFLAGS += -DQUADPAWN_VERSION=\"$(VERSION)\"
 
 # DS203 generic stuff
 OBJS += startup.o BIOS.o Interrupt.o
@@ -73,8 +76,7 @@ clean:
 	make -C baselibc clean
 
 $(BINDIR)/$(NAME).HEX: build/$(NAME).elf | $(BINDIR)
-	$(CP) -O ihex $< build/temp.hex
-	head -n -1 build/temp.hex > $@
+	$(CP) -O ihex $< $@
 
 $(BINDIR)/$(NAME)A.BIN: build/$(NAME).elf | $(BINDIR)
 	$(CP) -O binary $< $@
@@ -129,3 +131,8 @@ deploy: $(BINDIR)/$(NAME).HEX
 	umount /mnt/dso
 
 
+
+# Compiler flags are not normal Make dependencies. Recompile this small unit
+# so a VERSION change is always reflected without cleaning all objects.
+.PHONY: force_version
+build/file_selector.o: force_version

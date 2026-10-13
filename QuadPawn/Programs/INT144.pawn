@@ -1,0 +1,383 @@
+/* DS203 HW 2.81/2.82: transient interlaced ADC diagnostic.
+ * Connect Wave Out (GEN) to channel A. No files or calibration are written.
+ * Requires the W1.1 protocol FPGA and the QuadPawn slot-4 runtime.
+ */
+#include <fpga>
+#include <console>
+#include <wavein>
+#include <waveout>
+
+#define SAMPLE_COUNT 512
+#define DISCARD_PAIRS 152
+#define CAPTURE_TIMEOUT_MS 1000
+#define INPUT_RANGE ADC_1V
+
+new samples[SAMPLE_COUNT];
+#define TEST_REPEATS 3
+#define LAG_SCALE 8
+#define MAX_LAG 16
+#define FIT_COUNT (SAMPLE_COUNT - 5)
+new gain_q10[2] = [1024, 1024], bias_q10[2];
+new errors[2 * MAX_LAG + 1];
+new bool:capture_failed = false;
+
+serial_byte(value)
+{
+    fpga_set_pin(PA6);
+    for (new bit_index = 7; bit_index >= 0; bit_index--)
+    {
+        if (value & (1 << bit_index))
+            fpga_set_pin(PA7);
+        else
+            fpga_clear_pin(PA7);
+        fpga_clear_pin(PA6);
+        fpga_set_pin(PA6);
+    }
+    fpga_clear_pin(PA7);
+    fpga_clear_pin(PA6);
+    fpga_set_pin(PA7);
+    fpga_clear_pin(PA7);
+    fpga_set_pin(PA6);
+}
+
+write_register(address, value)
+{
+    fpga_set_pin(PC5);
+    serial_byte(address & 0x1f);
+    fpga_clear_pin(PC5);
+    serial_byte(value & 0xff);
+}
+
+read_word()
+{
+    new word[1];
+    fpga_read(word, 1);
+    return word[0] & 0xffff;
+}
+
+read_id(selector)
+{
+    write_register(5, selector);
+    write_register(5, selector);
+    fpga_set_pin(PC4);
+    new value = read_word();
+    fpga_clear_pin(PC4);
+    return value;
+}
+
+read_status()
+{
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    return read_word();
+}
+
+read_pair()
+{
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    read_word();
+    fpga_set_pin(PC5);
+    new value = read_word();
+    fpga_clear_pin(PC5);
+    return value;
+}
+
+configure_bus()
+{
+    fpga_config_outputs(PB1 | PA6 | PA7 | PC4 | PC5);
+    fpga_clear_pin(PB1);
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+}
+
+bool:capture(bool: interlaced)
+{
+    capture_failed = false;
+    wavein_settrigger(Trig_Always, Ch_A, 128, 10, 1, interlaced);
+    write_register(0x0e, 0); // FreeRun off.
+    write_register(0x0f, 0); // FPGA oversampling off.
+    write_register(0x10, 0);
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    fpga_set_pin(PB1);
+    fpga_clear_pin(PB1);
+
+    new start = get_time();
+    new status = 0;
+    get_keys(ANY_KEY);
+    while (get_time() - start < CAPTURE_TIMEOUT_MS)
+    {
+        status = read_status();
+        if ((status & 0x28) == 0x28) // Start and Full.
+            break;
+        if (get_keys(ANY_KEY))
+        {
+            capture_failed = true;
+            println("Capture cancelled.");
+            return false;
+        }
+    }
+    if ((status & 0x28) != 0x28)
+    {
+        capture_failed = true;
+        print("FIFO timeout, status=0x"); println(hex(status));
+        return false;
+    }
+
+    read_pair(); // Prime the W1.1 read pointer after Start.
+    // Trig_Always has no valid pre-trigger history. Never calibrate it.
+    for (new i = 0; i < DISCARD_PAIRS; i++) read_pair();
+    for (new i = 0; i < SAMPLE_COUNT; i++)
+        samples[i] = read_pair();
+    return true;
+}
+
+sum_channels(&sum_a, &sum_b)
+{
+    sum_a = 0; sum_b = 0;
+    for (new i = 0; i < SAMPLE_COUNT; i++)
+    {
+        sum_a += samples[i] & 0xff;
+        sum_b += (samples[i] >> 8) & 0xff;
+    }
+}
+
+clear_errors()
+{
+    for (new j = 0; j < sizeof errors; j++) errors[j] = 0;
+}
+
+// Error is retained in Q10 until after the complete fit. Positive lag
+// means B[i] matches A at a later time; negative lag tests the other order.
+fit_capture(mode)
+{
+    for (new lag = -MAX_LAG; lag <= MAX_LAG; lag++)
+    {
+        new whole = lag / LAG_SCALE, fraction = lag % LAG_SCALE;
+        if (fraction < 0) { fraction += LAG_SCALE; whole--; }
+        new total = 0;
+        for (new i = 2; i < SAMPLE_COUNT - 3; i++)
+        {
+            new a0 = samples[i + whole] & 0xff;
+            new a1 = samples[i + whole + 1] & 0xff;
+            new b_q10 = gain_q10[mode] * ((samples[i] >> 8) & 0xff) + bias_q10[mode];
+            new predicted = (a0 * (LAG_SCALE - fraction) + a1 * fraction) * 128;
+            total += abs(b_q10 - predicted);
+        }
+        errors[lag + MAX_LAG] += total;
+    }
+}
+
+best_fit(&near_best)
+{
+    new best = 0;
+    for (new j = 1; j < sizeof errors; j++)
+        if (errors[j] < errors[best]) best = j;
+    near_best = 0;
+    new threshold = errors[best] + errors[best] / 100;
+    for (new j = 0; j < sizeof errors; j++)
+        if (errors[j] <= threshold) near_best++;
+    return best - MAX_LAG;
+}
+
+triangle_value(t)
+{
+    t %= 256;
+    if (t < 0) t += 256;
+    return (t < 128) ? 32 + t : 288 - t;
+}
+
+bool:analysis_selftest()
+{
+    // Exercise the actual fitter with both possible half-cycle orders.
+    for (new lag = -4; lag <= 4; lag += 4)
+    {
+        for (new i = 0; i < SAMPLE_COUNT; i++)
+            samples[i] = triangle_value(i * 8) | (triangle_value(i * 8 + lag) << 8);
+        clear_errors();
+        fit_capture(0);
+        new near_best;
+        if (best_fit(near_best) != lag || errors[lag + MAX_LAG] != 0)
+            return false;
+    }
+    return true;
+}
+
+bool:measure_dc(mode)
+{
+    new low_a, low_b, high_a, high_b;
+    waveout_voltage(FIX(0.6));
+    delay_ms(100);
+    if (!capture(bool:mode)) return false;
+    sum_channels(low_a, low_b);
+    waveout_voltage(FIX(1.8));
+    delay_ms(100);
+    if (!capture(bool:mode)) return false;
+    sum_channels(high_a, high_b);
+    new delta_a = high_a - low_a, delta_b = high_b - low_b;
+    print(mode ? "I DC A/B: " : "S DC A/B: ");
+    print(str(low_a / SAMPLE_COUNT)); print("/"); print(str(high_a / SAMPLE_COUNT));
+    print("  "); print(str(low_b / SAMPLE_COUNT)); print("/"); println(str(high_b / SAMPLE_COUNT));
+    if (delta_a < 8 * SAMPLE_COUNT || delta_b < 8 * SAMPLE_COUNT)
+    {
+        println("No clear DC response; check GEN-to-A cable.");
+        return false;
+    }
+    if (high_a / SAMPLE_COUNT > 245 || high_b / SAMPLE_COUNT > 245 ||
+        low_a / SAMPLE_COUNT < 10 || low_b / SAMPLE_COUNT < 10)
+    {
+        println("DC near ADC limits; calibration rejected.");
+        return false;
+    }
+    gain_q10[mode] = delta_a * 1024 / delta_b;
+    if (gain_q10[mode] < 512 || gain_q10[mode] > 2048)
+    {
+        println("Gain outside diagnostic limits (0.5..2).");
+        return false;
+    }
+    bias_q10[mode] = (low_a * 1024 - gain_q10[mode] * low_b) / SAMPLE_COUNT;
+    print(mode ? "I gain/bias Q10: " : "S gain/bias Q10: ");
+    print(str(gain_q10[mode])); print("/"); println(str(bias_q10[mode]));
+    return true;
+}
+
+bool:measure_wave(mode, &lag)
+{
+    clear_errors();
+    new min_a = 255, max_a = 0, min_b = 255, max_b = 0;
+    new clip_a = 0, clip_b = 0;
+    for (new repetition = 0; repetition < TEST_REPEATS; repetition++)
+    {
+        if (!capture(bool:mode)) return false;
+        for (new i = 0; i < SAMPLE_COUNT; i++)
+        {
+            new a = samples[i] & 0xff, b = (samples[i] >> 8) & 0xff;
+            min_a = min(min_a, a); max_a = max(max_a, a);
+            min_b = min(min_b, b); max_b = max(max_b, b);
+            if (a <= 2 || a >= 253) clip_a++;
+            if (b <= 2 || b >= 253) clip_b++;
+        }
+        fit_capture(mode);
+    }
+    new near_best;
+    lag = best_fit(near_best);
+    print(mode ? "I lag8/near: " : "S lag8/near: ");
+    print(str(lag)); print("/"); println(str(near_best));
+    print("E(-4/0/+4) Q10: ");
+    print(str(errors[MAX_LAG - 4] / (FIT_COUNT * TEST_REPEATS))); print("/");
+    print(str(errors[MAX_LAG] / (FIT_COUNT * TEST_REPEATS))); print("/");
+    println(str(errors[MAX_LAG + 4] / (FIT_COUNT * TEST_REPEATS)));
+    print("A/B span: "); print(str(max_a - min_a)); print("/"); println(str(max_b - min_b));
+    print("A/B clips: "); print(str(clip_a)); print("/"); println(str(clip_b));
+    if (max_a - min_a < 10 || max_b - min_b < 10 || clip_a || clip_b)
+    {
+        println("Signal weak or clipped; phase fit invalid.");
+        return false;
+    }
+    if (abs(lag) == MAX_LAG || near_best > 3)
+    {
+        println("Fit at boundary or broad; timing inconclusive.");
+        return false;
+    }
+    return true;
+}
+
+bool:wait_next()
+{
+    println("Copy results. Key=next, K4=exit.");
+    get_keys(ANY_KEY);
+    new button:key;
+    while (!(key = get_keys(ANY_KEY))) {}
+    return !(key & BUTTON4);
+}
+
+bool:run_test()
+{
+    config_chA(ADC_DC, INPUT_RANGE, 128);
+    config_chB(ADC_DC, ADC_OTHER_CHANNEL, 128);
+    new clock_rate = wavein_samplerate(72000000);
+    if (clock_rate != 72000000)
+    {
+        println("Nominal 72 MHz clock could not be configured.");
+        return false;
+    }
+    if (!measure_dc(0) || !measure_dc(1)) return false;
+    waveout_voltage(FIX(0.0));
+    wavein_settrigger(Trig_Always, Ch_A, 128, 10, 1, false);
+    if (!wait_next()) return false;
+    new const frequencies[3] = [1000000, 2000000, 4000000];
+    for (new f = 0; f < sizeof frequencies; f++)
+    {
+        clear_console();
+        new rate = waveout_digital(frequencies[f]);
+        print("INT144 v3 generator Hz: "); println(str(rate));
+        if (rate != frequencies[f])
+        {
+            println("Unexpected nominal generator frequency.");
+            return false;
+        }
+        delay_ms(50);
+        new separate_lag, interlace_lag;
+        new bool: separate_ok = measure_wave(0, separate_lag);
+        if (capture_failed) return false;
+        new bool: interlace_ok = measure_wave(1, interlace_lag);
+        if (capture_failed) return false;
+        wavein_settrigger(Trig_Always, Ch_A, 128, 10, 1, false);
+        waveout_voltage(FIX(0.0));
+        print("Delta lag8 I-S: "); println(str(interlace_lag - separate_lag));
+        if (separate_ok && interlace_ok && abs(interlace_lag - separate_lag) >= 3 &&
+            abs(interlace_lag - separate_lag) <= 5)
+            println("Shift near half-cycle; verify other rates.");
+        else
+            println("Phase comparison inconclusive.");
+        if (!wait_next()) return false;
+    }
+    println("Absolute 144 MSa/s accuracy has not been measured.");
+    return true;
+}
+
+main()
+{
+    if (show_dialog(
+        "Connect Wave Out (GEN) to input A. This test changes the generator "
+        ... "and analog settings temporarily; calibration stays in RAM. "
+        ... "Use the patched QuadPawn runtime in slot 4.",
+        "Run", "", "", "Exit") != 0)
+        return;
+
+    clear_console();
+    println("INT144 v3: bidirectional delay fit");
+    if (!analysis_selftest())
+    {
+        println("FAIL: numerical self-test; acquisition blocked.");
+        return;
+    }
+    println("PASS: fitter self-test (-4/0/+4).");
+    configure_bus();
+    if (read_id(0) != 0x5731 || read_id(1) != 0x0101)
+    {
+        println("W1.1 protocol FPGA ID is required.");
+        return;
+    }
+    new ADCCoupling: couple_a, ADCCoupling: couple_b;
+    new ADCRange: range_a, ADCRange: range_b;
+    new offset_a, offset_b;
+    getconfig_chA(couple_a, range_a, offset_a);
+    getconfig_chB(couple_b, range_b, offset_b);
+
+    run_test();
+
+    // Leave the physical routing and clock phase in separate mode.
+    wavein_settrigger(Trig_Always, Ch_A, 128, 10, 1, false);
+    config_chA(couple_a, range_a, offset_a);
+    config_chB(couple_b, range_b, offset_b);
+    waveout_voltage(FIX(0.0));
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    println("Separate ADC mode restored; Wave Out set to 0 V.");
+    println("No calibration file or STM32 flash was written.");
+    println("Press a key to exit.");
+    get_keys(ANY_KEY);
+    while (!get_keys(ANY_KEY)) {}
+}

@@ -1,0 +1,383 @@
+/* Volatile W1.2-test loader and diagnostics for patched QuadPawn.
+ * Requires fpga_load_checked and fpga_restore_ready; old runtime cannot run it.
+ * Reuses the device-tested FPGAW12 diagnostic routines below.
+ */
+#include <fpga>
+#include <console>
+
+#define SAMPLE_COUNT 256
+#define CAPTURE_TIMEOUT_MS 1000
+
+new passed, failed;
+new raw_samples[SAMPLE_COUNT];
+new digital_samples[SAMPLE_COUNT];
+
+serial_byte(value)
+{
+    fpga_set_pin(PA6); // SCK high: SDA changes must not latch a byte.
+    for (new bitindex = 7; bitindex >= 0; bitindex--)
+    {
+        if (value & (1 << bitindex))
+            fpga_set_pin(PA7);
+        else
+            fpga_clear_pin(PA7);
+        fpga_clear_pin(PA6);
+        fpga_set_pin(PA6); // Shift on rising SCK.
+    }
+    fpga_clear_pin(PA7);
+    fpga_clear_pin(PA6);
+    fpga_set_pin(PA7); // Rising SDA with SCK low latches the byte.
+}
+
+write_register(address, value)
+{
+    fpga_set_pin(PC5); // H_L: address phase
+    serial_byte(address & 0x1F);
+    fpga_clear_pin(PC5);
+    serial_byte(value & 0xFF);
+}
+
+read_word()
+{
+    new word[1];
+    fpga_read(word, 1);
+    return word[0] & 0xFFFF;
+}
+
+read_id(selector)
+{
+    // Data is latched during the NEXT address phase in W1 IO_Ctrl.
+    write_register(5, selector);
+    write_register(5, selector);
+    fpga_set_pin(PC4); // C_D: read the ID register, not FIFO status.
+    new value = read_word();
+    fpga_clear_pin(PC4);
+    return value;
+}
+
+read_status()
+{
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    return read_word();
+}
+
+read_pair(&digital)
+{
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    digital = read_word() & 3;
+    fpga_set_pin(PC5);
+    new value = read_word(); // Rising nRD advances the FIFO read pointer.
+    fpga_clear_pin(PC5); // Return to status mode before any LCD access.
+    return value;
+}
+
+check_result(bool: ok, const label{})
+{
+    if (ok)
+    {
+        passed++;
+        println(strjoin("PASS: ", label));
+    }
+    else
+    {
+        failed++;
+        println(strjoin("FAIL: ", label));
+    }
+}
+
+bool: check_identity()
+{
+    new identity = read_id(0);
+    new revision = read_id(1);
+    new reserved = read_id(0x7F);
+    new bool: stable = true;
+    for (new i = 0; i < 16; i++)
+    {
+        if (read_id(0) != identity)
+            stable = false;
+    }
+    print("ID=0x"); print(hex(identity));
+    print("  revision=0x"); println(hex(revision));
+    check_result(identity == 0x5731, "W1 identity");
+    check_result(revision == 0x0101, "W1.1 protocol revision");
+    check_result(reserved == 0, "reserved selector returns zero");
+    check_result(stable, "16 repeated ID reads");
+    println("W1.1 and W1.2-test have the same ID.");
+    return identity == 0x5731 && revision == 0x0101
+        && reserved == 0 && stable;
+}
+
+capture(requested_rate)
+{
+    new ADCCoupling: couplingA, ADCCoupling: couplingB;
+    new ADCRange: rangeA, ADCRange: rangeB;
+    new offsetA, offsetB;
+    getconfig_chA(couplingA, rangeA, offsetA);
+    getconfig_chB(couplingB, rangeB, offsetB);
+
+    // Temporary acquisition settings only. Do not engage interlacing.
+    config_chA(ADC_DC, ADC_1V, 128);
+    config_chB(ADC_DC, ADC_1V, 128);
+    new actual_rate = wavein_samplerate(requested_rate);
+    wavein_settrigger(Trig_Always, Ch_A, 128, 10, 1, false);
+    write_register(0x0E, 0); // FreeRun off
+    write_register(0x0F, 0); // OS_Size low
+    write_register(0x10, 0); // OS_Size high
+    write_register(0x11, 0); // Trigger time upper bytes
+    write_register(0x12, 0);
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+
+    fpga_set_pin(PB1); // ClrW
+    fpga_clear_pin(PB1);
+    new started_at = get_time();
+    new status, bool: full = false, bool: cancelled = false;
+    get_keys(ANY_KEY);
+    while (get_time() - started_at < CAPTURE_TIMEOUT_MS)
+    {
+        status = read_status();
+        if ((status & 0x28) == 0x28) // Start and Full, per IO_Ctrl.v
+        {
+            full = true;
+            break;
+        }
+        if (get_keys(ANY_KEY))
+        {
+            cancelled = true;
+            break;
+        }
+    }
+
+    if (full)
+    {
+        new ignored;
+        read_pair(ignored); // Prime Loaded/read pointer before the first sample.
+        for (new i = 0; i < SAMPLE_COUNT; i++)
+            raw_samples[i] = read_pair(digital_samples[i]);
+    }
+
+    // Restore analog input configuration on success, timeout, or cancellation.
+    config_chA(couplingA, rangeA, offsetA);
+    config_chB(couplingB, rangeB, offsetB);
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    println(strjoin("Configured clock: ", str(actual_rate), " Hz"));
+    if (cancelled)
+    {
+        println("CANCELLED: capture, no result.");
+        return;
+    }
+    if (!full)
+    {
+        print("Status=0x"); println(hex(status));
+        check_result(false, "FIFO Start+Full before timeout");
+        return;
+    }
+
+    check_result(true, "FIFO Start+Full before timeout");
+    new minA = 255, maxA = 0, minB = 255, maxB = 0;
+    new sumA = 0, sumB = 0, digital_seen = 0;
+    for (new i = 0; i < SAMPLE_COUNT; i++)
+    {
+        new a = raw_samples[i] & 0xFF;
+        new b = (raw_samples[i] >> 8) & 0xFF;
+        minA = min(minA, a); maxA = max(maxA, a); sumA += a;
+        minB = min(minB, b); maxB = max(maxB, b); sumB += b;
+        digital_seen |= 1 << digital_samples[i];
+    }
+    println(strjoin("Read ", str(SAMPLE_COUNT), " FIFO samples."));
+    println(strjoin("A min/max/mean: ", str(minA), "/", str(maxA), "/", str(sumA / SAMPLE_COUNT)));
+    println(strjoin("B min/max/mean: ", str(minB), "/", str(maxB), "/", str(sumB / SAMPLE_COUNT)));
+    print("C/D combinations seen (mask): 0x"); println(hex(digital_seen));
+    println("First 8 raw B:A words:");
+    for (new i = 0; i < 8; i++)
+    {
+        print(hex(raw_samples[i])); print(" ");
+    }
+    println("");
+    println("Signal values and actual sample rate need an external reference.");
+}
+
+/* Only implemented by the corrected HW 2.81/2.82 runtime. */
+native bool: fpga_load_checked(const filename{}, expected_crc);
+native bool: fpga_restore_ready();
+
+#define TEST_IMAGE "W12TEST.BIN"
+#define TEST_IMAGE_SIZE 135100
+#define TEST_CRC32 0x46EDF657
+#define W11_CRC32 0x9FB87F03
+
+new bool: custom_loaded = false;
+new bool: fpga_online = true;
+
+configure_bus()
+{
+    fpga_config_outputs(PB1 | PA6 | PA7 | PC4 | PC5);
+    fpga_clear_pin(PB1);
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+}
+
+bool: restore_w11()
+{
+    println("Restoring reference W1.1 from STM32 flash...");
+    fpga_online = false;
+    if (!fpga_load_checked("", W11_CRC32))
+    {
+        check_result(false, "W1.1 restore / CDONE");
+        println("Restore failed. Power-cycle DS203.");
+        return false;
+    }
+    custom_loaded = false;
+    configure_bus();
+    fpga_online = true;
+    check_result(true, "W1.1 restore / CDONE");
+    if (!check_identity())
+    {
+        fpga_online = false;
+        println("Restored FPGA does not answer correctly. Power-cycle DS203.");
+        return false;
+    }
+    return true;
+}
+
+load_experiment()
+{
+    if (show_dialog(
+        "Load W12TEST.BIN into volatile FPGA configuration? "
+        ... "CRC and the W1.1 ROM backup will be checked before reset. "
+        ... "No FPGA image or calibration is written to STM32 flash.",
+        "Load", "", "", "Cancel") != 0)
+        return;
+    clear_console();
+    if (!f_exists(TEST_IMAGE))
+    {
+        println("Missing W12TEST.BIN. Current FPGA was not changed.");
+        return;
+    }
+    new File: image = f_open(TEST_IMAGE, FA_READ);
+    if (!image)
+    {
+        println("Missing W12TEST.BIN. Current FPGA was not changed.");
+        return;
+    }
+    if (f_error(image) != FR_OK)
+    {
+        f_close(image);
+        println("Cannot open W12TEST.BIN. Current FPGA was not changed.");
+        return;
+    }
+    new size = f_size(image);
+    if (!f_close(image))
+    {
+        println("File IO error. Current FPGA was not changed.");
+        return;
+    }
+    if (size != TEST_IMAGE_SIZE)
+    {
+        check_result(false, "W12TEST.BIN size");
+        println("Expected 135100 bytes. Current FPGA was not changed.");
+        return;
+    }
+    if (!fpga_restore_ready())
+    {
+        check_result(false, "reference W1.1 ROM CRC");
+        println("ROM backup differs. Loading is blocked.");
+        return;
+    }
+
+    println("Checking CRC and loading W1.2-test...");
+    fpga_online = false;
+    if (!fpga_load_checked(TEST_IMAGE, TEST_CRC32))
+    {
+        check_result(false, "W1.2-test checked load / CDONE");
+        restore_w11();
+        return;
+    }
+    custom_loaded = true;
+    configure_bus();
+    fpga_online = true;
+    check_result(true, "W1.2-test checked load / CDONE");
+    if (!check_identity())
+    {
+        fpga_online = false;
+        println("ID check failed; returning to W1.1.");
+        restore_w11();
+        return;
+    }
+    println("W1.2-test loaded. Next run ID, 1MHz and 72MHz.");
+    println("ID alone cannot distinguish W1.1 and this baseline W1.2-test.");
+}
+
+run_diagnostics()
+{
+    new choice = show_dialog(
+        custom_loaded ? "Diagnostics: loaded W1.2-test" : "Diagnostics: W1.1",
+        "ID", "1MHz", "72MHz", "Back");
+    clear_console();
+    if (choice == 3)
+        return;
+    if (!fpga_online)
+    {
+        println("FPGA state is unknown. Restore W1.1 first.");
+        return;
+    }
+    if (!check_identity())
+    {
+        println("Capture disabled after failed identity check.");
+        return;
+    }
+    if (choice == 1)
+        capture(1000000);
+    else if (choice == 2)
+        capture(72000000);
+}
+
+main()
+{
+    if (show_dialog(
+        "FPGALOAD requires the patched QuadPawn test runtime. "
+        ... "Reference W1.1 in ROM must match CRC 9FB87F03. "
+        ... "Loading is volatile and W1.1 is restored on exit. "
+        ... "144 MSa/s is not implemented.",
+        "Run", "", "", "Exit") != 0)
+        return;
+
+    clear_console();
+    if (!fpga_restore_ready())
+    {
+        show_msgbox("Reference W1.1 ROM CRC differs. No bitstream was loaded.");
+        return;
+    }
+    configure_bus();
+    if (!check_identity())
+    {
+        show_msgbox("Current FPGA is unsupported. No bitstream was loaded.");
+        return;
+    }
+
+    for (;;)
+    {
+        new choice = show_dialog(
+            custom_loaded ? "W1.2-test is loaded (volatile)." : "W1.1 baseline is active.",
+            "Load", "Test", "W1.1", "Exit");
+        clear_console();
+        switch (choice)
+        {
+            case 0: load_experiment();
+            case 1: run_diagnostics();
+            case 2: restore_w11();
+            case 3:
+            {
+                if ((!custom_loaded && fpga_online) || restore_w11())
+                    return;
+            }
+        }
+        println(strjoin("Checks PASS/FAIL: ", str(passed), "/", str(failed)));
+        println("Press any key to return to the menu.");
+        get_keys(ANY_KEY);
+        while (!get_keys(ANY_KEY)) {}
+    }
+}

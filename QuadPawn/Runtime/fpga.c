@@ -1,109 +1,157 @@
-/* FPGA configuration loading to the ICE65L04. */
-
-/* The ICE65 docs demand a constant clock frequency for SPI configuration,
- * but for some reason the DSO Quad has the configuration pins connected
- * to normal GPIO instead of a SPI module. This is somewhat annoying, as
- * the flash reading causes occassional slowdowns.
- *
- * However, it appears that the constant clock frequency is not really
- * necessary, and the configuration seems to work ok with simple bitbanged
- * SPI implementation.
+/* Volatile iCE40HX4K configuration for DS203 HW 2.81/2.82.
+ * The STM32 flash is only read. W1.1 must match the reference CRC before
+ * changing FPGA configuration. Host tests replace only the hardware layer.
  */
-
 #include "fpga.h"
-#include <stdint.h>
-#include <stm32f10x.h>
 #include <stddef.h>
 #include <string.h>
-#include <stdio.h>
-#include <ff.h>
+
+#ifdef FPGA_LOADER_HOST_TEST
+#include "fpga_loader_host.h"
+#define FPGA_ROM_BYTES fpga_test_rom
+#define begin_configuration fpga_test_begin
+#define spi_transmit fpga_test_transmit
+#define configuration_done fpga_test_done
+#define end_configuration fpga_test_end
+#else
+#include <stm32f10x.h>
 #include "buttons.h"
-#include "ds203_io.h"
-#include "BIOS.h"
-#include "irq.h"
-
-// Address of the original FPGA image in ROM
-#define FPGA_ROM_ADDR 0x0802C000
-
-// The FPGA SPI pins are mapped on PB10-PB13.
-#define SS_PIN          (1 << 10)
-#define SCK_PIN         (1 << 11)
-#define SI_PIN          (1 << 12)
-#define SO_PIN          (1 << 13)
-#define RESET_PIN       (1 << 14)
-#define DONE_PIN        (1 << 15)
-
-// A small delay for pin toggling
+#define FPGA_ROM_BYTES ((const uint8_t *)FPGA_ROM_ADDR)
+#define SS_PIN (1u << 10)
+#define SCK_PIN (1u << 11)
+#define SI_PIN (1u << 12)
+#define RESET_PIN (1u << 14)
+#define DONE_PIN (1u << 15)
 #define PIN_DELAY asm("nop"); asm("nop"); asm("nop"); asm("nop");
 
-// Transmit one byte of data over SPI.
+static bool begin_configuration(uint32_t *original_crh)
+{
+    *original_crh = GPIOB->CRH;
+    GPIOB->CRH = (GPIOB->CRH & 0x000000FF) | 0x83833300;
+    GPIOB->BRR = RESET_PIN | SS_PIN;
+    GPIOB->BSRR = SCK_PIN;
+    delay_ms(2);
+    /* CDONE must deassert during reset, not merely remain stuck high. */
+    bool reset_ok = (GPIOB->IDR & DONE_PIN) == 0;
+    GPIOB->BSRR = RESET_PIN;
+    delay_ms(2);
+    return reset_ok;
+}
+
 static void spi_transmit(uint8_t byte)
 {
-    unsigned _byte = byte;
-    
-    for (int j = 0; j < 8; j++)
-    {
-        if (_byte & 0x80)
-        {
-            GPIOB->BSRR = (SCK_PIN << 16) | SI_PIN;
-            PIN_DELAY;
-            GPIOB->BSRR = SCK_PIN | SI_PIN;
-            PIN_DELAY;
-        }
-        else
-        {
-            GPIOB->BSRR = (SCK_PIN << 16) | (SI_PIN << 16);
-            PIN_DELAY;
-            GPIOB->BSRR = SCK_PIN | (SI_PIN << 16);
-            PIN_DELAY;
-        }
-        
-        _byte <<= 1;
+    for (unsigned bit = 0; bit < 8; bit++) {
+        GPIOB->BSRR = (SCK_PIN << 16) |
+            ((byte & 0x80) ? SI_PIN : (SI_PIN << 16));
+        PIN_DELAY;
+        GPIOB->BSRR = SCK_PIN |
+            ((byte & 0x80) ? SI_PIN : (SI_PIN << 16));
+        PIN_DELAY;
+        byte <<= 1;
     }
+}
+
+static bool configuration_done(void)
+{
+    return (GPIOB->IDR & DONE_PIN) != 0;
+}
+
+static void end_configuration(uint32_t original_crh)
+{
+    GPIOB->BSRR = SS_PIN;
+    GPIOB->CRH = original_crh;
+}
+#endif
+
+static uint32_t crc_update(uint32_t crc, const uint8_t *data, unsigned count)
+{
+    while (count--) {
+        crc ^= *data++;
+        for (unsigned bit = 0; bit < 8; bit++)
+            crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320u : 0);
+    }
+    return crc;
+}
+
+bool fpga_restore_available(void)
+{
+    return ~crc_update(0xFFFFFFFFu, FPGA_ROM_BYTES, FPGA_ROM_SIZE)
+        == FPGA_ROM_CRC32;
+}
+
+bool fpga_validate_image(FIL *file, bool check_crc, uint32_t expected_crc)
+{
+    uint8_t buffer[256];
+    UINT got;
+    DWORD remaining = f_size(file);
+    /* Original HX4K image, or IceStorm image with the four-byte prefix. */
+    if (remaining != FPGA_ROM_SIZE && remaining != FPGA_ROM_SIZE + 4)
+        return false;
+    if (f_lseek(file, 0) != FR_OK ||
+        f_read(file, buffer, 8, &got) != FR_OK || got != 8)
+        return false;
+    static const uint8_t sync[] = {0x7E, 0xAA, 0x99, 0x7E};
+    unsigned offset = remaining == FPGA_ROM_SIZE ? 0 : 4;
+    if (memcmp(buffer + offset, sync, sizeof(sync)) != 0)
+        return false;
+    if (f_lseek(file, 0) != FR_OK)
+        return false;
+    uint32_t crc = 0xFFFFFFFFu;
+    while (remaining) {
+        UINT want = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+        if (f_read(file, buffer, want, &got) != FR_OK || got != want)
+            return false;
+        crc = crc_update(crc, buffer, got);
+        remaining -= got;
+    }
+    return (!check_crc || ~crc == expected_crc) && f_lseek(file, 0) == FR_OK;
+}
+
+static bool configure(FIL *file, bool check_crc, uint32_t expected_crc)
+{
+    if (!fpga_restore_available())
+        return false;
+    if (file) {
+        if (!fpga_validate_image(file, check_crc, expected_crc))
+            return false;
+    } else if (check_crc && expected_crc != FPGA_ROM_CRC32) {
+        return false;
+    }
+
+    uint32_t original_crh;
+    bool complete = begin_configuration(&original_crh);
+    if (complete && !file) {
+        for (unsigned i = 0; i < FPGA_ROM_SIZE; i++)
+            spi_transmit(FPGA_ROM_BYTES[i]);
+    } else if (complete) {
+        uint8_t buffer[256];
+        DWORD remaining = f_size(file);
+        while (remaining) {
+            UINT got, want = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+            if (f_read(file, buffer, want, &got) != FR_OK || got != want) {
+                complete = false;
+                break;
+            }
+            for (unsigned i = 0; i < got; i++)
+                spi_transmit(buffer[i]);
+            remaining -= got;
+        }
+    }
+    if (complete) {
+        for (unsigned i = 0; i < 500; i++)
+            spi_transmit(0); /* Keep the original postamble clocks. */
+    }
+    bool status = complete && configuration_done();
+    end_configuration(original_crh);
+    return status;
 }
 
 bool fpga_configure(FIL *file)
 {
-    // Configure SI, SCK, SS and RESET as outputs
-    uint32_t orig_crh = GPIOB->CRH;
-    GPIOB->CRH = (GPIOB->CRH & 0x000000FF) | 0x83833300;
-    
-    // Reset the FPGA
-    GPIOB->BRR = RESET_PIN | SS_PIN;
-    GPIOB->BSRR = SCK_PIN;
-    delay_ms(2);
-    GPIOB->BSRR = RESET_PIN;
-    delay_ms(2);
-    
-    if (file == NULL)
-    {
-        // Load the original FPGA image from STM32 flash
-        for (unsigned i = 0; i < 68088; i++)
-            spi_transmit(*(uint8_t*)(FPGA_ROM_ADDR + i));
-    }
-    else
-    {
-        while (true)
-        {
-            unsigned bytes_read;
-            uint8_t byte;
-            if (f_read(file, &byte, 1, &bytes_read) != FR_OK || bytes_read != 1)
-                break;
-            
-            spi_transmit(byte);
-        }
-    }
-    
-    // Send a few dummy clocks to finish off
-    for (int i = 0; i < 500; i++)
-        spi_transmit(0x00);
-    
-    // Check configuration status
-    bool status = ((GPIOB->IDR & DONE_PIN) != 0);
-    
-    // Return GPIOB pins to original config
-    GPIOB->BSRR = SS_PIN;
-    GPIOB->CRH = orig_crh;
-    
-    return status;
+    return configure(file, false, 0);
+}
+
+bool fpga_configure_checked(FIL *file, uint32_t expected_crc)
+{
+    return configure(file, true, expected_crc);
 }

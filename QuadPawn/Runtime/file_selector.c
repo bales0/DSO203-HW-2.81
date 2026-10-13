@@ -208,7 +208,7 @@ void select_file(char result[13])
         
         if (get_keys(BUTTON4))
         {
-            show_msgbox("About PAWN_APP",
+            show_msgbox("QuadPawn " QUADPAWN_VERSION,
                         "Pawn scripting language for DSO Quad\n"
                         "(C) 2012 Petteri Aimonen <jpa@kapsi.fi>\n"
                         "\n"

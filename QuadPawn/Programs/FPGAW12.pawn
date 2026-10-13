@@ -1,0 +1,251 @@
+/* DS203 HW 2.81/2.82: diagnostic for an already configured W1 FPGA.
+ * No fpga_load(), file writes, firmware writes, or calibration writes.
+ * Pin mapping: SYS 1.64 BIOS.h; W1 protocol: IO_Ctrl.v.
+ */
+#include <fpga>
+#include <console>
+
+#define SAMPLE_COUNT 256
+#define CAPTURE_TIMEOUT_MS 1000
+
+new passed, failed;
+new raw_samples[SAMPLE_COUNT];
+new digital_samples[SAMPLE_COUNT];
+
+serial_byte(value)
+{
+    fpga_set_pin(PA6); // SCK high: SDA changes must not latch a byte.
+    for (new bitindex = 7; bitindex >= 0; bitindex--)
+    {
+        if (value & (1 << bitindex))
+            fpga_set_pin(PA7);
+        else
+            fpga_clear_pin(PA7);
+        fpga_clear_pin(PA6);
+        fpga_set_pin(PA6); // Shift on rising SCK.
+    }
+    fpga_clear_pin(PA7);
+    fpga_clear_pin(PA6);
+    fpga_set_pin(PA7); // Rising SDA with SCK low latches the byte.
+}
+
+write_register(address, value)
+{
+    fpga_set_pin(PC5); // H_L: address phase
+    serial_byte(address & 0x1F);
+    fpga_clear_pin(PC5);
+    serial_byte(value & 0xFF);
+}
+
+read_word()
+{
+    new word[1];
+    fpga_read(word, 1);
+    return word[0] & 0xFFFF;
+}
+
+read_id(selector)
+{
+    // Data is latched during the NEXT address phase in W1 IO_Ctrl.
+    write_register(5, selector);
+    write_register(5, selector);
+    fpga_set_pin(PC4); // C_D: read the ID register, not FIFO status.
+    new value = read_word();
+    fpga_clear_pin(PC4);
+    return value;
+}
+
+read_status()
+{
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    return read_word();
+}
+
+read_pair(&digital)
+{
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    digital = read_word() & 3;
+    fpga_set_pin(PC5);
+    new value = read_word(); // Rising nRD advances the FIFO read pointer.
+    fpga_clear_pin(PC5); // Return to status mode before any LCD access.
+    return value;
+}
+
+check_result(bool: ok, const label{})
+{
+    if (ok)
+    {
+        passed++;
+        println(strjoin("PASS: ", label));
+    }
+    else
+    {
+        failed++;
+        println(strjoin("FAIL: ", label));
+    }
+}
+
+bool: check_identity()
+{
+    new identity = read_id(0);
+    new revision = read_id(1);
+    new reserved = read_id(0x7F);
+    new bool: stable = true;
+    for (new i = 0; i < 16; i++)
+    {
+        if (read_id(0) != identity)
+            stable = false;
+    }
+    print("ID=0x"); print(hex(identity));
+    print("  revision=0x"); println(hex(revision));
+    check_result(identity == 0x5731, "W1 identity");
+    check_result(revision == 0x0101, "W1.1 protocol revision");
+    check_result(reserved == 0, "reserved selector returns zero");
+    check_result(stable, "16 repeated ID reads");
+    println("W1.1 and W1.2-test have the same ID.");
+    return identity == 0x5731 && revision == 0x0101
+        && reserved == 0 && stable;
+}
+
+capture(requested_rate)
+{
+    new ADCCoupling: couplingA, ADCCoupling: couplingB;
+    new ADCRange: rangeA, ADCRange: rangeB;
+    new offsetA, offsetB;
+    getconfig_chA(couplingA, rangeA, offsetA);
+    getconfig_chB(couplingB, rangeB, offsetB);
+
+    // Temporary acquisition settings only. Do not engage interlacing.
+    config_chA(ADC_DC, ADC_1V, 128);
+    config_chB(ADC_DC, ADC_1V, 128);
+    new actual_rate = wavein_samplerate(requested_rate);
+    wavein_settrigger(Trig_Always, Ch_A, 128, 10, 1, false);
+    write_register(0x0E, 0); // FreeRun off
+    write_register(0x0F, 0); // OS_Size low
+    write_register(0x10, 0); // OS_Size high
+    write_register(0x11, 0); // Trigger time upper bytes
+    write_register(0x12, 0);
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+
+    fpga_set_pin(PB1); // ClrW
+    fpga_clear_pin(PB1);
+    new started_at = get_time();
+    new status, bool: full = false, bool: cancelled = false;
+    get_keys(ANY_KEY);
+    while (get_time() - started_at < CAPTURE_TIMEOUT_MS)
+    {
+        status = read_status();
+        if ((status & 0x28) == 0x28) // Start and Full, per IO_Ctrl.v
+        {
+            full = true;
+            break;
+        }
+        if (get_keys(ANY_KEY))
+        {
+            cancelled = true;
+            break;
+        }
+    }
+
+    if (full)
+    {
+        new ignored;
+        read_pair(ignored); // Prime Loaded/read pointer before the first sample.
+        for (new i = 0; i < SAMPLE_COUNT; i++)
+            raw_samples[i] = read_pair(digital_samples[i]);
+    }
+
+    // Restore analog input configuration on success, timeout, or cancellation.
+    config_chA(couplingA, rangeA, offsetA);
+    config_chB(couplingB, rangeB, offsetB);
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    println(strjoin("Configured clock: ", str(actual_rate), " Hz"));
+    if (cancelled)
+    {
+        println("CANCELLED: capture, no result.");
+        return;
+    }
+    if (!full)
+    {
+        print("Status=0x"); println(hex(status));
+        check_result(false, "FIFO Start+Full before timeout");
+        return;
+    }
+
+    check_result(true, "FIFO Start+Full before timeout");
+    new minA = 255, maxA = 0, minB = 255, maxB = 0;
+    new sumA = 0, sumB = 0, digital_seen = 0;
+    for (new i = 0; i < SAMPLE_COUNT; i++)
+    {
+        new a = raw_samples[i] & 0xFF;
+        new b = (raw_samples[i] >> 8) & 0xFF;
+        minA = min(minA, a); maxA = max(maxA, a); sumA += a;
+        minB = min(minB, b); maxB = max(maxB, b); sumB += b;
+        digital_seen |= 1 << digital_samples[i];
+    }
+    println(strjoin("Read ", str(SAMPLE_COUNT), " FIFO samples."));
+    println(strjoin("A min/max/mean: ", str(minA), "/", str(maxA), "/", str(sumA / SAMPLE_COUNT)));
+    println(strjoin("B min/max/mean: ", str(minB), "/", str(maxB), "/", str(sumB / SAMPLE_COUNT)));
+    print("C/D combinations seen (mask): 0x"); println(hex(digital_seen));
+    println("First 8 raw B:A words:");
+    for (new i = 0; i < 8; i++)
+    {
+        print(hex(raw_samples[i])); print(" ");
+    }
+    println("");
+    println("Signal values and actual sample rate need an external reference.");
+}
+
+main()
+{
+    if (show_dialog(
+        "FPGAW12 diagnostics for DS203 HW 2.81/2.82. "
+        ... "Requires W1.1 or W1.2-test already configured. "
+        ... "No bitstream loading. No flash or calibration writes. "
+        ... "Capture temporarily uses DC, 1V/div, offset 128.",
+        "Run", "", "", "Exit") != 0)
+        return;
+
+    // Existing SYS pin mapping; leave all unrelated pins as runtime defaults.
+    fpga_config_outputs(PB1 | PA6 | PA7 | PC4 | PC5);
+    fpga_clear_pin(PB1);
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+    clear_console();
+    if (!check_identity())
+    {
+        println("Unsupported FPGA or bus failure. Capture disabled.");
+        show_msgbox("FPGA identity check failed. Capture was not started.");
+        return;
+    }
+
+    new bool: running = true;
+    while (running)
+    {
+        new choice = show_dialog(
+            "FPGAW12: choose ID or a 256-sample FIFO capture. "
+            ... "144 MSa/s is not implemented or tested.",
+            "ID", "1MHz", "72MHz", "Exit");
+        clear_console();
+        switch (choice)
+        {
+            case 0: check_identity();
+            case 1: capture(1000000);
+            case 2: capture(72000000);
+            case 3: running = false;
+        }
+        if (running)
+        {
+            println(strjoin("Checks PASS/FAIL: ", str(passed), "/", str(failed)));
+            println("Press any key to return to the menu.");
+            get_keys(ANY_KEY);
+            while (!get_keys(ANY_KEY)) {}
+        }
+    }
+    fpga_clear_pin(PC4);
+    fpga_clear_pin(PC5);
+}

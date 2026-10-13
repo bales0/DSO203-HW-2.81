@@ -46,34 +46,67 @@ static void set_port_directions(uint32_t outputs)
 
 static bool have_custom_image;
 
-static cell AMX_NATIVE_CALL amx_fpga_load(AMX *amx, const cell *params)
+static bool restore_original(void)
 {
-    set_port_directions(0); // All as inputs
-    
-    char *fname;
-    amx_StrParam(amx, params[1], fname);
-    
-    bool status = false;
-    if (!fname[0])
-    {
+    set_port_directions(0);
+    bool status = fpga_configure(NULL);
+    if (status) {
         have_custom_image = false;
-        status = fpga_configure(NULL);
         set_port_directions(default_pins);
     }
-    else
-    {
-        have_custom_image = true;
-        
-        FIL file;
-        if (f_open(&file, fname, FA_READ) != FR_OK)
-            return false;
-
-        status = fpga_configure(&file);
-        
-        f_close(&file);
-    }
-    
     return status;
+}
+
+static cell load_image(AMX *amx, const cell *params, bool check_crc)
+{
+    char *fname;
+    amx_StrParam(amx, params[1], fname);
+    uint32_t expected_crc = check_crc ? (uint32_t)params[2] : 0;
+    if (!fname[0]) {
+        if (check_crc && expected_crc != FPGA_ROM_CRC32)
+            return false;
+        return restore_original();
+    }
+
+    /* Opening/preflight failure must leave current configuration and pins alone. */
+    FIL file;
+    if (f_open(&file, fname, FA_READ) != FR_OK)
+        return false;
+    if (!fpga_restore_available() ||
+        !fpga_validate_image(&file, check_crc, expected_crc)) {
+        f_close(&file);
+        return false;
+    }
+
+    set_port_directions(0);
+    have_custom_image = true; /* Set before reset, including failed transfers. */
+    bool status = check_crc ? fpga_configure_checked(&file, expected_crc)
+                            : fpga_configure(&file);
+    f_close(&file);
+    if (!status)
+        restore_original();
+    return status;
+}
+
+static cell AMX_NATIVE_CALL amx_fpga_load(AMX *amx, const cell *params)
+{
+    return load_image(amx, params, false);
+}
+
+/* A new native prevents this test application from using an unpatched loader. */
+static cell AMX_NATIVE_CALL amx_fpga_restore_ready(AMX *amx, const cell *params)
+{
+    return fpga_restore_available();
+}
+
+static cell AMX_NATIVE_CALL amx_fpga_load_checked(AMX *amx, const cell *params)
+{
+    return load_image(amx, params, true);
+}
+
+int amxcleanup_fpga(void)
+{
+    return !have_custom_image || restore_original() ? AMX_ERR_NONE : AMX_ERR_NATIVE;
 }
 
 static cell AMX_NATIVE_CALL amx_fpga_config_outputs(AMX *amx, const cell *params)
@@ -148,6 +181,8 @@ int amxinit_fpga(AMX *amx)
 {
     static const AMX_NATIVE_INFO funcs[] = {
         {"fpga_load", amx_fpga_load},
+        {"fpga_load_checked", amx_fpga_load_checked},
+        {"fpga_restore_ready", amx_fpga_restore_ready},
         {"fpga_config_outputs", amx_fpga_config_outputs},
         {"fpga_read_pins", amx_fpga_read_pins},
         {"fpga_write_pins", amx_fpga_write_pins},
@@ -158,8 +193,8 @@ int amxinit_fpga(AMX *amx)
     
     if (have_custom_image)
     {
-        have_custom_image = false;
-        fpga_configure(NULL); // Restore original FPGA image
+        if (!restore_original())
+            return AMX_ERR_NATIVE;
     }
     
     set_port_directions(default_pins);
