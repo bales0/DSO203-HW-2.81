@@ -7,8 +7,11 @@
 #define FPGA_ROM_ADDR 0x0805C800u
 #define FPGA_ROM_SIZE 135096u
 #define FPGA_ROM_CRC32 0x9FB87F03u
+#define FPGA_ROM_W12_CRC32 0x66B80BD2u
 
 bool fpga_restore_available(void);
+uint32_t fpga_rom_crc(void);
+uint16_t fpga_rom_version(void);
 bool fpga_validate_image(FIL *file, bool check_crc, uint32_t expected_crc);
 bool fpga_configure(FIL *file);
 bool fpga_configure_checked(FIL *file, uint32_t expected_crc);

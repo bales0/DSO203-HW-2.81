@@ -42,6 +42,19 @@ module tb_io_ctrl;
         end
     endtask
 
+    task automatic check_selector(input [7:0] selector, input [15:0] expected);
+        begin
+            write_reg(8'h05, selector);
+            send_byte(8'h00, 1); // Next address phase latches selected data.
+            H_L = 0;
+            nRD = 0;
+            #2;
+            if (DB !== expected)
+                $fatal(1, "selector %h returned %h, expected %h", selector, DB, expected);
+            nRD = 1;
+        end
+    endtask
+
     initial begin
         write_reg(8'h04, 8'h03);
         if (CtrlReg !== 8'h03 || nPD !== 1'b1)
@@ -66,7 +79,12 @@ module tb_io_ctrl;
         #2;
         if (DB !== 16'h5731)
             $fatal(1, "W1 ID read failed: %h", DB);
+        nRD = 1;
+        check_selector(8'h01, 16'h0101); // Wildcat protocol compatibility.
+        check_selector(8'h02, 16'h0102); // Real implementation version W1.2.
+        check_selector(8'h7f, 16'h0000); // Reserved selector remains zero.
         H_L = 1;
+        nRD = 0;
         #2;
         if (DB !== Dout[15:0])
             $fatal(1, "FIFO data bus read failed");
@@ -74,7 +92,7 @@ module tb_io_ctrl;
         #2;
         if (DB !== 16'hzzzz)
             $fatal(1, "FIFO bus must be high impedance when disabled");
-        $display("PASS tb_io_ctrl: registers, ID, FIFO bus");
+        $display("PASS tb_io_ctrl: registers, W1 ID, protocol 0101, W1.2 tag 0102, FIFO bus");
         $finish;
     end
 endmodule

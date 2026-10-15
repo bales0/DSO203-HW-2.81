@@ -57,7 +57,8 @@ module IO_Ctrl(CE, nRD, SCK, SDA, Dout, Start, Full, Empty, H_L, C_D, Ready,
         RegAddr  = DataBuff;
         case(Select)
           8'h00: Data<={8'h57,8'h31};   //For FPGA version ID: Ascii chars "W1" identifies revised fpga  
-          8'h01: Data<= 16'h0101;       //Sub-version, identifies updates
+          8'h01: Data<= 16'h0101;       // W1.1-compatible protocol (Wildcat expects this)
+          8'h02: Data<= 16'h0102;       // Implementation version: W1.2
         default: Data<=0;
         endcase
 

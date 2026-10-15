@@ -1,8 +1,17 @@
-# FPGALOAD: test dočasného načtení W1.2-test
+# FPGALOAD: test dočasného načtení W1.2
+
+Aktuální zdroj používá nové funkce runtime 2026.10.14.2 a podporuje
+obnovu známé uložené W1.1 **i W1.2**. Odpovídající AMX a runtime jsou
+v [bin/QuadPawnW12](../../bin/QuadPawnW12/README.md); prošlo 22 PC scénářů.
+Po obnově se očekávaná značka vybírá podle ověřeného ROM CRC, nikoli
+napevno W1.1. Starší balíček FPGATest níže zůstává historickou variantou
+pro uložené W1.1. Trvalou výměnu FPGA popisuje
+[nový instalační návod](../../bin/FPGAW1_2/README.md).
+
 
 Balíček: [bin/FPGATest](../../bin/FPGATest/README.md).
 Zdroj: [FPGALOAD.pawn](FPGALOAD.pawn).
-Ověřená aplikace FPGAW12 a původní hotový runtime v bin/QuadPawn se neměnily.
+Pawn aplikace nyní používají společné profily FPGA; původní hotový runtime se nemění.
 
 ## Stav ověření
 
@@ -23,7 +32,9 @@ Pawn compilerem 4.0.4611 bez chyb a varování.
 
 ## Verze a sestavení
 
-Verze runtime je volitelná parametrem VERSION; výchozí je 2026.10.13.
+Verze runtime je volitelná parametrem VERSION; aktuální výchozí je 2026.10.14.
+Nový runtime s původem zdrojů v About je v bin/QuadPawnTest/; dříve ověřená kopie runtime v bin/FPGATest/runtime/ zůstává 2026.10.13.
+Následující historický postup balíčku používá tuto starší ověřenou kopii.
 Zobrazuje se po stisku About v prohlížeči QuadPawn. Změna parametru vynutí
 překlad souboru s označením verze i bez clean. Na PC byly ověřeny verze
 1.2 a následně 2026.10.13.
@@ -38,7 +49,7 @@ běžné make bez BINDIR by přepsalo výstupy v bin/QuadPawn.
 
 Aplikace, z QuadPawn/Programs:
 
-    & ..\Compiler\bin\pawncc.exe 'FPGALOAD.pawn' '-d2' '-v2' '-V1' '-i..\Compiler\include' '-o..\..\bin\QuadPawn\Programs\FPGALOAD'
+    & ..\Compiler\bin\pawncc.exe 'FPGALOAD.pawn' '-d2' '-v2' '-V1' '-i..\Compiler\include' '-o..\..\bin\QuadPawn\Programs\FPGALOAD.amx'
 
 Regresní testy z kořene projektu:
 
@@ -76,10 +87,13 @@ Záloha musí přesně odpovídat referenční W1.1 ve flash:
 Pokud obsah nesouhlasí, nové načtení se zablokuje před resetem.
 Pouhé dočasné načtení W1.1 do FPGA tuto podmínku nenahrazuje.
 
-W12TEST.BIN: 135 100 B, CRC-32 46EDF657, SHA-256
-c979877f801e4371e4d5117d72549856a7bc573dac867aa8f2457277f72ffe16.
-Současné W1.2-test má stejné ID a podverzi jako W1.1. Samotné ID tedy
-obrazy nerozliší; přenos a přechod CDONE jsou samostatnou kontrolou.
+W12TEST.BIN: 135 100 B, CRC-32 33AFAD10, SHA-256
+787fff5254366c370ed571da5a5c606986160806a6e1e99164718aa5ef381ddb.
+Po Load se vyžaduje selector 2 = 0x0102; po obnově W1.1 se vyžaduje 0.
+Předchozí ověřený obraz je v reference/W12BASE.BIN (CRC 46EDF657).
+Nový loader jej záměrně nepřijme jako W1.2; očekává nový CRC a značku.
+Historické hardwarové testy se týkaly předchozí baseline.
+
 Při budoucí změně bitstreamu aktualizujte CRC v aplikaci a ověřte sestavení.
 
 Loader pouze čte flash a dočasně konfiguruje FPGA přes SPI.
@@ -93,4 +107,31 @@ Nativní DMA fpga_read zůstává původní; časový limit aplikace platí pro
 ani skutečných 144 MSa/s. Převzatý W1.1 má datovou cestu pro dvojice
 prokládaných ADC vzorků; tb_interlace ověřil jejich pořadí v simulaci.
 SYS a QuadPawn umějí zapnout INTERLACE, ale FPGALOAD jej nepoužívá.
-Analogové směrování, kalibrace a časování 144 MSa/s na DS203 změřeny nebyly.
+Samostatný INT144 v3 ověřil na původním W1.1 relativní DC korekci a prokládání při nominálních 144 MSa/s; nikoli absolutní kalibraci ani nový W1.2.
+
+Nový FPGALOAD.AMX má 29 532 B, odhad RAM 13 072 B.
+
+## Profily FPGA v Pawn aplikacích (14. 10. 2026)
+
+FPGALOAD, FPGAW12 a INT144 používají společný `fpgaver.inc`. Před každým
+záznamem znovu ověří identitu a potřebné funkce; neznámý profil měření
+zablokuje. Schopnosti jsou přiřazeny podle známých zdrojů, nejde o jejich
+automatické elektrické ověření. Neoznačený kompatibilní obraz nelze podle
+registrů jednoznačně odlišit od jiného obrazu se stejnými odpověďmi.
+
+| Údaj | W1.1 kompatibilní, neoznačený | W1.2 |
+| --- | --- | --- |
+| Selector 0, rodina | 0x5731 | 0x5731 |
+| Selector 1, protokol | 0x0101 | 0x0101 |
+| Selector 2, značka implementace | 0 | 0x0102 |
+| Deklarované funkce | FIFO, prokládání ADC, oversampling, 32bitový trigger, FreeRun | Stejné, navíc značka verze |
+
+Wildcat se nemění: používá původní údaj selectoru 1 pro povolení FPGA
+oversamplingu a novou značku selectoru 2 nečte. Změna rozlišování verzí
+se týká uvedených Pawn aplikací, nikoli Wildcatu ani QuadPawn runtime.
+
+Na PC prošlo 92 kontrol profilů ve skutečné Pawn VM a 16 kontrol loaderu.
+Loaderové testy přebírají očekávané CRC z FPGALOAD, nikoli z testovaného
+souboru. Spuštění z kořene: `./tests/fpga_profile/run.ps1` a
+`./tests/fpga_loader/run.ps1`. Celé aplikace s perifériemi na PC neběží.
+Nová sestavení AMX s profily dosud nebyla ověřena na DS203.

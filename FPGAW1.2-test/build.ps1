@@ -56,7 +56,7 @@ try {
         Invoke-FpgaTool 'yosys' @('-p', $script) 'synth.log'
     }
     if ($Step -in @('pnr', 'timing', 'bitstream', 'all')) {
-        Invoke-FpgaTool 'nextpnr-ice40' @('--hx4k', '--package', 'cb132', '--json', $json, '--pcf', 'Pins.pcf', '--asc', $asc, '--freq', '72', '--seed', '1', '--timing-allow-fail') 'pnr.log'
+        Invoke-FpgaTool 'nextpnr-ice40' @('--hx4k', '--package', 'cb132', '--json', $json, '--pcf', 'Pins.pcf', '--asc', $asc, '--freq', '72', '--seed', '3', '--timing-allow-fail') 'pnr.log'
     }
     if ($Step -in @('bitstream', 'all')) {
         Invoke-FpgaTool 'icepack' @($asc, $bit) 'icepack.log'

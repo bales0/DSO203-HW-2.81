@@ -1,5 +1,5 @@
 /* Volatile iCE40HX4K configuration for DS203 HW 2.81/2.82.
- * The STM32 flash is only read. W1.1 must match the reference CRC before
+ * The STM32 flash is only read. The stored W1.1 or W1.2 must match a known CRC before
  * changing FPGA configuration. Host tests replace only the hardware layer.
  */
 #include "fpga.h"
@@ -73,10 +73,22 @@ static uint32_t crc_update(uint32_t crc, const uint8_t *data, unsigned count)
     return crc;
 }
 
+uint32_t fpga_rom_crc(void)
+{
+    uint32_t crc = ~crc_update(0xFFFFFFFFu, FPGA_ROM_BYTES, FPGA_ROM_SIZE);
+    return crc == FPGA_ROM_CRC32 || crc == FPGA_ROM_W12_CRC32 ? crc : 0;
+}
+uint16_t fpga_rom_version(void)
+{
+    switch (fpga_rom_crc()) {
+    case FPGA_ROM_CRC32: return 0x0101;
+    case FPGA_ROM_W12_CRC32: return 0x0102;
+    default: return 0;
+    }
+}
 bool fpga_restore_available(void)
 {
-    return ~crc_update(0xFFFFFFFFu, FPGA_ROM_BYTES, FPGA_ROM_SIZE)
-        == FPGA_ROM_CRC32;
+    return fpga_rom_crc() != 0;
 }
 
 bool fpga_validate_image(FIL *file, bool check_crc, uint32_t expected_crc)
@@ -114,7 +126,7 @@ static bool configure(FIL *file, bool check_crc, uint32_t expected_crc)
     if (file) {
         if (!fpga_validate_image(file, check_crc, expected_crc))
             return false;
-    } else if (check_crc && expected_crc != FPGA_ROM_CRC32) {
+    } else if (check_crc && expected_crc != fpga_rom_crc()) {
         return false;
     }
 

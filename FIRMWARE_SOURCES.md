@@ -1,5 +1,22 @@
 # Zdroje firmwaru pro DS203 HW 2.81/2.82 s 8MB diskem
 
+Aktuální místní vývoj (15. 10. 2026): [Wildcat V6.6](WildcatV6.6/README.md)
+přidává běžné položky 144D/144A u vstupu A, osm rozsahů a kalibraci
+ve společném sériovém WPT se zálohou WPB. K1+K4/K3+K4 byly odstraněny;
+společná standardní kalibrace A+B+144 se otevírá dlouhým K2 na A nebo B.
+Stejná DC reference se připojuje na oba vstupy; pro 144 se její kroky
+ručně neopakují. Zápis se provádí až po potvrzení baterie/napáječe.
+Blikání již neovládá změny kalibračních koeficientů ani referenční hodnoty. Výchozí připravená instalace používá [FPGA W1.2](bin/FPGAW1_2/README.md),
+odvozené z W1.1 v FPGAW1.2-test/. Instalační raw obraz má CRC 66B80BD2,
+stejnou délku a adresu jako W1.1. Zůstává zachován původní protokol selector1=0101,
+nová značka je selector2=0102. [QuadPawn 2026.10.14.2](bin/QuadPawnW12/README.md)
+je nad stejným upstreamem a přijímá obě známé ROM zálohy. SYS se neměnil.
+Nová integrace 144D/144A a společné uložení WPT ještě nejsou ověřené na DS203.
+Uživatel potvrdil instalaci W1.2 přes ADR/BIN a běh předchozího Wildcatu;
+FPGA HEX hlásil ERR. Identifikace ve FPGALOAD se nadále diagnostikuje.
+Následující revize a původní reference zůstávají zachované.
+
+
 Tento pracovní strom obsahuje Wildcat V6.5b, SYS 1.64 s integrovaným
 AlterBIOS, samostatný QuadPawn a FPGA W1.1. Uvedené revize jsou určeny pro
 následující opravy. Převzetí zdrojů samo nepotvrzuje provoz na konkrétním
@@ -68,21 +85,24 @@ HW 2.82 naměřil INT144 v2 při 1/2/4 MHz vždy S=0, I=−4 a Delta=−4
 v osminách periody 72MHz taktu, bez ořezaných vzorků. Tyto hodnoty
 jsou zachovány v [INT144.md](QuadPawn/Programs/INT144.md), ale dodatečná
 kontrola odhalila chybějící zahození předtriggerové historie. V2 mohla
-měřit i stará data; její DC korekce a pořadí B→A musí potvrdit v3.
+měřit i stará data; tyto výsledky zůstávají pouze historické.
 
 INT144 v3 zahodí po nastavení ukazatele 152 dvojic a vyhodnotí dalších
-512 platných dvojic. Překlad prošel bez varování, 40 numerických kontrol
-prošlo v interpretu Pawn na PC. Běh v3 na DS203 zatím neproběhl.
-Absolutní přesnost frekvence, napětí a celková analogová kvalita jsou
-nadále neměřené; relativní DC korekce zůstávají pouze v RAM.
+512 platných dvojic. Překlad prošel bez varování a 40 numerických kontrol
+prošlo v interpretu Pawn na PC. Uživatel 14. 10. 2026 na HW 2.82 při
+1/2/4 MHz znovu naměřil vždy S=0, I=−4 a Delta=−4 bez ořezání. Čistý
+test ověřil prokládání při nominálních 144 MSa/s a pořadí B→A. DC korekce
+Q10 jsou S=1078/−3514 a I=1052/−885, pouze v RAM. Podle dosavadního
+postupu byl aktivní původní W1.1: FPGALOAD jej při ukončení obnovuje
+a INT144 bitstream nenačítá. Sdílené ID samo přesný obraz nerozlišuje.
+Při změně FPGA je nutné opakovat test fáze, FIFO a DC korekce. Absolutní
+přesnost frekvence, napětí a celková analogová kvalita zůstávají neměřené.
 
 Experimentální [FPGAW1.2-test](FPGAW1.2-test/README.md) má nyní ve třech
 výrazech DP_RAM.v výslovné dvoubitové odečítání kruhového indexu.
 Starší simulace nekontrolovala neznámá data; po její opravě prošly
 čtyři simulace včetně dvou záznamů bez přenosu staré historie po zahození.
-Úplné sestavení a kontrola 72MHz časování prošly. Nový bitstream v build/
-má jiný hash a na zařízení se netestoval; W12TEST.BIN v testovacím balíčku
-a původní W1.1 zůstaly zachované. FPGALOAD samotné INTERLACE nezapíná.
+Označené W1.2 přidává selector 2 = 0x0102 a zachovává selector 1 = 0x0101 pro Wildcat. Úplné sestavení se seedem 3 prošlo (13,14 ns / 76,12 MHz). Balíček W12TEST.BIN nyní obsahuje nový obraz, CRC 33AFAD10, SHA-256 787fff5254366c370ed571da5a5c606986160806a6e1e99164718aa5ef381ddb. Na zařízení se netestoval; stará baseline je v reference/W12BASE.BIN. Původní W1.1 zůstalo beze změny. FPGALOAD samotné INTERLACE nezapíná.
 
 [LA104](https://github.com/gabonator/LA104) je samostatný alternativní systém.
 Jeho aktuální zdroje mají experimentální cíl `DS203HD` pro 4096bajtové
@@ -94,3 +114,41 @@ Sestavení je popsáno v [BUILDING.md](BUILDING.md). SYS s místním GCC 9.2.1
 vytváří obraz po bajtech totožný s autorovým vydáním; finální výstupy jsou v
 `bin/SYS164AB/`. Původní obrazy a adresy jsou samostatně v
 [reference_builds/](reference_builds/README.md).
+
+## Profily FPGA v Pawn aplikacích (14. 10. 2026)
+
+FPGALOAD, FPGAW12 a INT144 používají společný `fpgaver.inc`. Před každým
+záznamem znovu ověří identitu a potřebné funkce; neznámý profil měření
+zablokuje. Schopnosti jsou přiřazeny podle známých zdrojů, nejde o jejich
+automatické elektrické ověření. Neoznačený kompatibilní obraz nelze podle
+registrů jednoznačně odlišit od jiného obrazu se stejnými odpověďmi.
+
+| Údaj | W1.1 kompatibilní, neoznačený | W1.2 |
+| --- | --- | --- |
+| Selector 0, rodina | 0x5731 | 0x5731 |
+| Selector 1, protokol | 0x0101 | 0x0101 |
+| Selector 2, značka implementace | 0 | 0x0102 |
+| Deklarované funkce | FIFO, prokládání ADC, oversampling, 32bitový trigger, FreeRun | Stejné, navíc značka verze |
+
+Wildcat se nemění: používá původní údaj selectoru 1 pro povolení FPGA
+oversamplingu a novou značku selectoru 2 nečte. Změna rozlišování verzí
+se týká uvedených Pawn aplikací, nikoli Wildcatu ani QuadPawn runtime.
+
+Na PC prošlo 92 kontrol profilů ve skutečné Pawn VM a 16 kontrol loaderu.
+Loaderové testy přebírají očekávané CRC z FPGALOAD, nikoli z testovaného
+souboru. Spuštění z kořene: `./tests/fpga_profile/run.ps1` a
+`./tests/fpga_loader/run.ps1`. Celé aplikace s perifériemi na PC neběží.
+Nová sestavení AMX s profily dosud nebyla ověřena na DS203.
+
+## Samostatný Wildcat V6.6 a About QuadPawn (14. 10. 2026)
+
+[WildcatV6.6](WildcatV6.6/README.md) je nová samostatná vývojová kopie V6.5b
+s detekcí FPGA, zobrazením profilu a přípravným rozhraním 144 MSa/s.
+V měřicí smyčce zatím režim nezapíná. Výstupy jsou v bin/WildcatV6.6/.
+Wildcat V6.5b se nemění. Předchozí poznámka o nezměněném Wildcatu
+se týká V6.5b a kroku zavádění profilů do Pawn aplikací.
+
+[QuadPawnTest](bin/QuadPawnTest/README.md) byl následně samostatně sestaven
+s About 2026.10.14 a původem Turro75 f702d57. Zdrojová základna ověřené
+větve je stále aktuální, dva commity před upstreamem PetteriAimonen.
+Změna About nemění API runtime. Nové výstupy V6.6 a runtime nebyly na zařízení testovány.

@@ -1,0 +1,36 @@
+#include <fpgaver>
+public checks = 0;
+new failures = 0;
+stock verify(bool:condition) { checks++; if (!condition) failures++; }
+main() {
+    verify(fpga_profile_decode(0x5731, 0x0101, 0) == FPGA_PROFILE_W11);
+    verify(fpga_profile_decode(0x5731, 0x0101, 0x0102) == FPGA_PROFILE_W12);
+    verify(fpga_profile_features(FPGA_PROFILE_UNKNOWN) == 0);
+    verify(fpga_profile_features(FPGA_PROFILE_W11) == FPGA_W1_BASE_FEATURES);
+    verify(fpga_profile_features(FPGA_PROFILE_W12) == (FPGA_W1_BASE_FEATURES | FPGA_FEAT_VERSION_TAG));
+    for (new profile = FPGA_PROFILE_W11; profile <= FPGA_PROFILE_W12; profile++) {
+        verify(fpga_profile_supports(profile, FPGA_W1_BASE_FEATURES));
+        for (new test = FPGA_TEST_ID; test <= FPGA_TEST_FREERUN; test++)
+            verify(fpga_profile_allows_test(profile, test));
+        verify(!fpga_profile_allows_test(profile, -1));
+        verify(!fpga_profile_allows_test(profile, 6));
+        verify(!fpga_profile_supports(profile, 1 << 10));
+    }
+    verify(!fpga_profile_supports(FPGA_PROFILE_W11, FPGA_FEAT_VERSION_TAG));
+    verify(fpga_profile_supports(FPGA_PROFILE_W12, FPGA_FEAT_VERSION_TAG));
+    new bad[][3] = [
+        [0, 0x0101, 0], [0x5730, 0x0101, 0x0102],
+        [0x5731, 0, 0], [0x5731, 0x0102, 0x0102],
+        [0x5731, 0x0101, 0x0101], [0x5731, 0x0101, 0x0103],
+        [0x5731, 0x0101, 0xffff], [0xffff, 0xffff, 0xffff]
+    ];
+    for (new i = 0; i < sizeof bad; i++) {
+        new profile = fpga_profile_decode(bad[i][0], bad[i][1], bad[i][2]);
+        verify(profile == FPGA_PROFILE_UNKNOWN);
+        verify(!fpga_profile_supports(profile, 0));
+        for (new test = FPGA_TEST_ID; test <= FPGA_TEST_FREERUN; test++)
+            verify(!fpga_profile_allows_test(profile, test));
+    }
+    verify(!fpga_profile_supports(99, FPGA_FEAT_FIFO));
+    return failures;
+}

@@ -60,3 +60,8 @@ native fpga_read(dest[], count = sizeof dest);
 native fpga_write(const data[], count = sizeof data);
 
 
+
+/// CRC/version of the verified default FPGA in MCU flash, or 0 if unknown.
+/// Runtime 2026.10.14.2+: W1.1=0x0101, W1.2=0x0102.
+native fpga_restore_crc();
+native fpga_restore_version();

@@ -63,7 +63,7 @@ static cell load_image(AMX *amx, const cell *params, bool check_crc)
     amx_StrParam(amx, params[1], fname);
     uint32_t expected_crc = check_crc ? (uint32_t)params[2] : 0;
     if (!fname[0]) {
-        if (check_crc && expected_crc != FPGA_ROM_CRC32)
+        if (check_crc && expected_crc != fpga_rom_crc())
             return false;
         return restore_original();
     }
@@ -97,6 +97,15 @@ static cell AMX_NATIVE_CALL amx_fpga_load(AMX *amx, const cell *params)
 static cell AMX_NATIVE_CALL amx_fpga_restore_ready(AMX *amx, const cell *params)
 {
     return fpga_restore_available();
+}
+
+static cell AMX_NATIVE_CALL amx_fpga_restore_crc(AMX *amx, const cell *params)
+{
+    return (cell)fpga_rom_crc();
+}
+static cell AMX_NATIVE_CALL amx_fpga_restore_version(AMX *amx, const cell *params)
+{
+    return (cell)fpga_rom_version();
 }
 
 static cell AMX_NATIVE_CALL amx_fpga_load_checked(AMX *amx, const cell *params)
@@ -183,6 +192,8 @@ int amxinit_fpga(AMX *amx)
         {"fpga_load", amx_fpga_load},
         {"fpga_load_checked", amx_fpga_load_checked},
         {"fpga_restore_ready", amx_fpga_restore_ready},
+        {"fpga_restore_crc", amx_fpga_restore_crc},
+        {"fpga_restore_version", amx_fpga_restore_version},
         {"fpga_config_outputs", amx_fpga_config_outputs},
         {"fpga_read_pins", amx_fpga_read_pins},
         {"fpga_write_pins", amx_fpga_write_pins},

@@ -1,5 +1,14 @@
 # Building DS203 firmware
 
+Current development for installed W1.2 and interlaced acquisition is documented
+in [Wildcat V6.6](WildcatV6.6/README.md). Build with ARM GCC 9.2.1 using
+`./WildcatV6.6/build.ps1 -ToolchainBin <GCC9.2.1-bin>` and
+`./QuadPawn/build-w12.ps1`. Export the installed FPGA image with
+`python -B ./FPGAW1.2-test/export-system.py`.
+Outputs are in `bin/WildcatV6.6`, `bin/QuadPawnW12` and `bin/FPGAW1_2`.
+These commands never deploy to the device. The older V6.5b instructions follow.
+
+
 Wildcat V6.5b sources are in `WildcatV6.5b/`. This is the STM32 Cortex-M3
 application for DS203 hardware **2.81 and later**.
 The FPGA Verilog sources in `W1.1 FPGA/` are a separate project; the application

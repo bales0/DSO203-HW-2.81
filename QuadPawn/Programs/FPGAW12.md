@@ -5,8 +5,7 @@ Zdroj: [FPGAW12.pawn](FPGAW12.pawn). Hotová aplikace:
 
 Určeno pro DS203 HW 2.81/2.82 s místním QuadPawn navázaným na SYS 1.64
 s integrovaným AlterBIOS. Aplikace pracuje s již nakonfigurovaným FPGA W1.1
-nebo současnou experimentální kopií W1.2-test. Obě vracejí ID 0x5731 a
-podverzi 0x0101, takže podle ID nelze poznat, který bitstream byl načten.
+nebo označeným W1.2. Rodina 0x5731 a protokol 0x0101 zůstávají společné; selector 2 rozlišuje neoznačený kompatibilní profil (0) a W1.2 (0x0102).
 
 ## Spuštění na přístroji
 
@@ -44,7 +43,7 @@ neznamená chybu FPGA.
 
 ## Bitstream a rozsah testování
 
-Experimentální bitstream zůstává v build/FPGAW1.2-test/FIFO.bin.
+Označené W1.2 je v build/FPGAW1.2-test/FIFO.bin a bin/FPGATest/disk/W12TEST.BIN.
 Aplikace jej automaticky nenačítá. Nepoužívá fpga_load, obnovu FPGA,
 zápis souborů ani zápis firmware či kalibrace. Mění pouze provozní
 registry, GPIO a dočasná nastavení vstupů při záznamu.
@@ -66,12 +65,12 @@ analogových dat, všech triggerových režimů, oversamplingu a dosažení
 
 Z adresáře QuadPawn/Programs v PowerShellu:
 
-    & ..\Compiler\bin\pawncc.exe 'FPGAW12.pawn' '-d2' '-v2' '-V1' '-i..\Compiler\include' '-o..\..\bin\QuadPawn\Programs\FPGAW12'
+    & ..\Compiler\bin\pawncc.exe 'FPGAW12.pawn' '-d2' '-v2' '-V1' '-i..\Compiler\include' '-o..\..\bin\QuadPawn\Programs\FPGAW12.amx'
 
 Existující Makefile zahrne nový zdroj automaticky díky seznamu *.pawn.
 Není potřeba měnit Makefile ani sestavovat runtime.
 
-Ověřeno na PC dne 13. 10. 2026:
+Historické údaje sestavení před profily (13. 10. 2026):
 
 - Kompilace Pawn compiler 4.0.4611: úspěšná, bez chyb a varování.
 - AMX: 22 565 bajtů, 32bitová hlavička, 19 nativních funkcí; všechny jsou
@@ -83,7 +82,7 @@ Ověřeno na PC dne 13. 10. 2026:
 - SHA-256 AMX:
   ae6b37961663e7c43f47503fd3b870d9fde364db215a1508c5901ddd412d577f.
 
-Program nebyl spuštěn na DS203 ani v hostitelském emulátoru Pawn.
+Původní aplikaci uživatel ověřil na DS203. Nové sestavení s profily dosud na zařízení netestováno.
 Kontrola importů a kompilace nepotvrzují funkčnost na zařízení.
 
 
@@ -95,3 +94,31 @@ Varování o starém loaderu výše se vztahuje na původní hotový runtime
 v bin/QuadPawn. Místní zdroje runtime již obsahují opravu.
 Uživatel potvrdil úspěch všech tří testů této aplikace
 (ID, 1 MHz, 72 MHz) na HW 2.82 s W1.1 bez chyby a timeoutu.
+
+Aktuální FPGAW12.amx má 25 110 B, odhad RAM 11 736 B, SHA-256
+`0f9427ea08906aa498d1165ca730646a06da771c2f4c0084b1f88b57ed6d148d`.
+
+## Profily FPGA v Pawn aplikacích (14. 10. 2026)
+
+FPGALOAD, FPGAW12 a INT144 používají společný `fpgaver.inc`. Před každým
+záznamem znovu ověří identitu a potřebné funkce; neznámý profil měření
+zablokuje. Schopnosti jsou přiřazeny podle známých zdrojů, nejde o jejich
+automatické elektrické ověření. Neoznačený kompatibilní obraz nelze podle
+registrů jednoznačně odlišit od jiného obrazu se stejnými odpověďmi.
+
+| Údaj | W1.1 kompatibilní, neoznačený | W1.2 |
+| --- | --- | --- |
+| Selector 0, rodina | 0x5731 | 0x5731 |
+| Selector 1, protokol | 0x0101 | 0x0101 |
+| Selector 2, značka implementace | 0 | 0x0102 |
+| Deklarované funkce | FIFO, prokládání ADC, oversampling, 32bitový trigger, FreeRun | Stejné, navíc značka verze |
+
+Wildcat se nemění: používá původní údaj selectoru 1 pro povolení FPGA
+oversamplingu a novou značku selectoru 2 nečte. Změna rozlišování verzí
+se týká uvedených Pawn aplikací, nikoli Wildcatu ani QuadPawn runtime.
+
+Na PC prošlo 92 kontrol profilů ve skutečné Pawn VM a 16 kontrol loaderu.
+Loaderové testy přebírají očekávané CRC z FPGALOAD, nikoli z testovaného
+souboru. Spuštění z kořene: `./tests/fpga_profile/run.ps1` a
+`./tests/fpga_loader/run.ps1`. Celé aplikace s perifériemi na PC neběží.
+Nová sestavení AMX s profily dosud nebyla ověřena na DS203.

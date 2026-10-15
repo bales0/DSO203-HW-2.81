@@ -4,11 +4,13 @@
  */
 #include <fpga>
 #include <console>
+#include <fpgaver>
 
 #define SAMPLE_COUNT 256
 #define CAPTURE_TIMEOUT_MS 1000
 
 new passed, failed;
+new current_fpga_profile = FPGA_PROFILE_UNKNOWN;
 new raw_samples[SAMPLE_COUNT];
 new digital_samples[SAMPLE_COUNT];
 
@@ -91,6 +93,8 @@ bool: check_identity()
 {
     new identity = read_id(0);
     new revision = read_id(1);
+    new version_tag = read_id(2);
+    current_fpga_profile = fpga_profile_decode(identity, revision, version_tag);
     new reserved = read_id(0x7F);
     new bool: stable = true;
     for (new i = 0; i < 16; i++)
@@ -101,16 +105,26 @@ bool: check_identity()
     print("ID=0x"); print(hex(identity));
     print("  revision=0x"); println(hex(revision));
     check_result(identity == 0x5731, "W1 identity");
-    check_result(revision == 0x0101, "W1.1 protocol revision");
+    check_result(revision == 0x0101, "W1.1-compatible protocol");
+    check_result(version_tag == 0 || version_tag == 0x0102, "supported FPGA implementation tag");
+    check_result(fpga_profile_allows_test(current_fpga_profile, FPGA_TEST_FIFO), "known FPGA profile / FIFO available");
+    print("FPGA: ");
+    if (version_tag == 0x0102) println("W1.2");
+    else if (version_tag == 0) println("W1.1-compatible (untagged)");
+    else { print("unknown tag 0x"); println(hex(version_tag)); }
     check_result(reserved == 0, "reserved selector returns zero");
     check_result(stable, "16 repeated ID reads");
-    println("W1.1 and W1.2-test have the same ID.");
     return identity == 0x5731 && revision == 0x0101
-        && reserved == 0 && stable;
+        && fpga_profile_allows_test(current_fpga_profile, FPGA_TEST_FIFO) && reserved == 0 && stable;
 }
 
 capture(requested_rate)
 {
+    if (!check_identity() || !fpga_profile_allows_test(current_fpga_profile, FPGA_TEST_FIFO))
+    {
+        println("SKIP: current FPGA profile does not permit FIFO capture.");
+        return;
+    }
     new ADCCoupling: couplingA, ADCCoupling: couplingB;
     new ADCRange: rangeA, ADCRange: rangeB;
     new offsetA, offsetB;
@@ -228,7 +242,7 @@ main()
     {
         new choice = show_dialog(
             "FPGAW12: choose ID or a 256-sample FIFO capture. "
-            ... "144 MSa/s is not implemented or tested.",
+            ... "Use INT144 for interlacing diagnostics.",
             "ID", "1MHz", "72MHz", "Exit");
         clear_console();
         switch (choice)

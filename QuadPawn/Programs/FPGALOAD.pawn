@@ -1,14 +1,22 @@
-/* Volatile W1.2-test loader and diagnostics for patched QuadPawn.
+/* Volatile W1.2 loader and diagnostics for patched QuadPawn.
  * Requires fpga_load_checked and fpga_restore_ready; old runtime cannot run it.
  * Reuses the device-tested FPGAW12 diagnostic routines below.
  */
 #include <fpga>
 #include <console>
+#include <fpgaver>
 
 #define SAMPLE_COUNT 256
 #define CAPTURE_TIMEOUT_MS 1000
 
 new passed, failed;
+new bool: custom_loaded = false;
+new baseline_tag, baseline_crc;
+// Preserve the first identity check; reporting must not reread the FPGA.
+new observed_id, observed_revision, observed_tag, observed_reserved;
+new observed_expected_tag;
+new bool: observed_stable;
+new current_fpga_profile = FPGA_PROFILE_UNKNOWN;
 new raw_samples[SAMPLE_COUNT];
 new digital_samples[SAMPLE_COUNT];
 
@@ -87,10 +95,12 @@ check_result(bool: ok, const label{})
     }
 }
 
-bool: check_identity()
+bool: check_identity(expected_tag = 0)
 {
     new identity = read_id(0);
     new revision = read_id(1);
+    new version_tag = read_id(2);
+    current_fpga_profile = fpga_profile_decode(identity, revision, version_tag);
     new reserved = read_id(0x7F);
     new bool: stable = true;
     for (new i = 0; i < 16; i++)
@@ -98,19 +108,56 @@ bool: check_identity()
         if (read_id(0) != identity)
             stable = false;
     }
+    observed_id = identity;
+    observed_revision = revision;
+    observed_tag = version_tag;
+    observed_reserved = reserved;
+    observed_expected_tag = expected_tag;
+    observed_stable = stable;
     print("ID=0x"); print(hex(identity));
     print("  revision=0x"); println(hex(revision));
     check_result(identity == 0x5731, "W1 identity");
-    check_result(revision == 0x0101, "W1.1 protocol revision");
+    check_result(revision == 0x0101, "W1 protocol 0x0101");
+    check_result(version_tag == expected_tag, "expected FPGA implementation tag");
+    check_result(fpga_profile_allows_test(current_fpga_profile, FPGA_TEST_FIFO), "known FPGA profile / FIFO available");
+    print("FPGA: ");
+    if (version_tag == 0x0102) println("W1.2");
+    else if (version_tag == 0) println("W1.1");
+    else { print("unknown tag 0x"); println(hex(version_tag)); }
     check_result(reserved == 0, "reserved selector returns zero");
     check_result(stable, "16 repeated ID reads");
-    println("W1.1 and W1.2-test have the same ID.");
-    return identity == 0x5731 && revision == 0x0101
-        && reserved == 0 && stable;
+    return identity == 0x5731 && revision == 0x0101 && version_tag == expected_tag
+        && fpga_profile_allows_test(current_fpga_profile, FPGA_TEST_FIFO) && reserved == 0 && stable;
+}
+
+
+identity_failure_report()
+{
+    clear_console();
+    println("FPGALOAD diagnostic D1");
+    print("ROM CRC=0x"); println(hex(baseline_crc));
+    print("Family=0x"); print(hex(observed_id)); println(" expected=5731");
+    print("Protocol=0x"); print(hex(observed_revision)); println(" expected=0101");
+    print("Tag=0x"); print(hex(observed_tag));
+    print(" expected=0x"); println(hex(observed_expected_tag));
+    print("Reserved=0x"); print(hex(observed_reserved)); println(" expected=0");
+    print("Stable (16 reads): "); println(observed_stable ? "YES" : "NO");
+    print("Known profile / FIFO: ");
+    println(fpga_profile_allows_test(current_fpga_profile, FPGA_TEST_FIFO) ? "YES" : "NO");
+    println("Identity check FAILED. Loading blocked.");
+    println("No bitstream was loaded.");
+    println("Copy these values, then press any key to exit.");
+    get_keys(ANY_KEY);
+    while (!get_keys(ANY_KEY)) {}
 }
 
 capture(requested_rate)
 {
+    if (!check_identity(custom_loaded ? 0x0102 : baseline_tag) || !fpga_profile_allows_test(current_fpga_profile, FPGA_TEST_FIFO))
+    {
+        println("SKIP: current FPGA profile does not permit FIFO capture.");
+        return;
+    }
     new ADCCoupling: couplingA, ADCCoupling: couplingB;
     new ADCRange: rangeA, ADCRange: rangeB;
     new offsetA, offsetB;
@@ -206,10 +253,8 @@ native bool: fpga_restore_ready();
 
 #define TEST_IMAGE "W12TEST.BIN"
 #define TEST_IMAGE_SIZE 135100
-#define TEST_CRC32 0x46EDF657
-#define W11_CRC32 0x9FB87F03
+#define TEST_CRC32 0x33AFAD10
 
-new bool: custom_loaded = false;
 new bool: fpga_online = true;
 
 configure_bus()
@@ -220,21 +265,21 @@ configure_bus()
     fpga_clear_pin(PC5);
 }
 
-bool: restore_w11()
+bool: restore_baseline()
 {
-    println("Restoring reference W1.1 from STM32 flash...");
+    println("Restoring installed baseline from STM32 flash...");
     fpga_online = false;
-    if (!fpga_load_checked("", W11_CRC32))
+    if (!fpga_load_checked("", baseline_crc))
     {
-        check_result(false, "W1.1 restore / CDONE");
+        check_result(false, "Baseline restore / CDONE");
         println("Restore failed. Power-cycle DS203.");
         return false;
     }
     custom_loaded = false;
     configure_bus();
     fpga_online = true;
-    check_result(true, "W1.1 restore / CDONE");
-    if (!check_identity())
+    check_result(true, "Baseline restore / CDONE");
+    if (!check_identity(custom_loaded ? 0x0102 : baseline_tag))
     {
         fpga_online = false;
         println("Restored FPGA does not answer correctly. Power-cycle DS203.");
@@ -247,7 +292,7 @@ load_experiment()
 {
     if (show_dialog(
         "Load W12TEST.BIN into volatile FPGA configuration? "
-        ... "CRC and the W1.1 ROM backup will be checked before reset. "
+        ... "CRC and the installed ROM backup will be checked before reset. "
         ... "No FPGA image or calibration is written to STM32 flash.",
         "Load", "", "", "Cancel") != 0)
         return;
@@ -283,48 +328,48 @@ load_experiment()
     }
     if (!fpga_restore_ready())
     {
-        check_result(false, "reference W1.1 ROM CRC");
+        check_result(false, "known installed ROM CRC");
         println("ROM backup differs. Loading is blocked.");
         return;
     }
 
-    println("Checking CRC and loading W1.2-test...");
+    println("Checking CRC and loading W1.2...");
     fpga_online = false;
     if (!fpga_load_checked(TEST_IMAGE, TEST_CRC32))
     {
-        check_result(false, "W1.2-test checked load / CDONE");
-        restore_w11();
+        check_result(false, "W1.2 checked load / CDONE");
+        restore_baseline();
         return;
     }
     custom_loaded = true;
     configure_bus();
     fpga_online = true;
-    check_result(true, "W1.2-test checked load / CDONE");
-    if (!check_identity())
+    check_result(true, "W1.2 checked load / CDONE");
+    if (!check_identity(custom_loaded ? 0x0102 : baseline_tag))
     {
         fpga_online = false;
-        println("ID check failed; returning to W1.1.");
-        restore_w11();
+        println("ID check failed; returning to installed baseline.");
+        restore_baseline();
         return;
     }
-    println("W1.2-test loaded. Next run ID, 1MHz and 72MHz.");
-    println("ID alone cannot distinguish W1.1 and this baseline W1.2-test.");
+    println("W1.2 loaded. Next run ID, 1MHz and 72MHz.");
+    println("Selector 2 identifies W1.2 as 0x0102.");
 }
 
 run_diagnostics()
 {
     new choice = show_dialog(
-        custom_loaded ? "Diagnostics: loaded W1.2-test" : "Diagnostics: W1.1",
+        custom_loaded || baseline_tag == 0x0102 ? "Diagnostics: W1.2" : "Diagnostics: W1.1",
         "ID", "1MHz", "72MHz", "Back");
     clear_console();
     if (choice == 3)
         return;
     if (!fpga_online)
     {
-        println("FPGA state is unknown. Restore W1.1 first.");
+        println("FPGA state is unknown. Restore baseline first.");
         return;
     }
-    if (!check_identity())
+    if (!check_identity(custom_loaded ? 0x0102 : baseline_tag))
     {
         println("Capture disabled after failed identity check.");
         return;
@@ -338,40 +383,48 @@ run_diagnostics()
 main()
 {
     if (show_dialog(
-        "FPGALOAD requires the patched QuadPawn test runtime. "
-        ... "Reference W1.1 in ROM must match CRC 9FB87F03. "
-        ... "Loading is volatile and W1.1 is restored on exit. "
-        ... "144 MSa/s is not implemented.",
+        "FPGALOAD diagnostic D1. Requires patched QuadPawn. "
+        ... "Installed W1.1 or W1.2 must match a known ROM CRC. "
+        ... "Loading is volatile; the installed baseline is restored on exit. "
+        ... "Use INT144 for interlacing diagnostics.",
         "Run", "", "", "Exit") != 0)
         return;
 
     clear_console();
     if (!fpga_restore_ready())
     {
-        show_msgbox("Reference W1.1 ROM CRC differs. No bitstream was loaded.");
+        show_msgbox("Installed FPGA ROM CRC differs. No bitstream was loaded.");
         return;
     }
-    configure_bus();
-    if (!check_identity())
+    baseline_crc = fpga_restore_crc();
+    new baseline_version = fpga_restore_version();
+    if (baseline_version != 0x0101 && baseline_version != 0x0102)
     {
-        show_msgbox("Current FPGA is unsupported. No bitstream was loaded.");
+        show_msgbox("Unknown installed FPGA version. Loading blocked.");
+        return;
+    }
+    baseline_tag = baseline_version == 0x0102 ? 0x0102 : 0;
+    configure_bus();
+    if (!check_identity(custom_loaded ? 0x0102 : baseline_tag))
+    {
+        identity_failure_report();
         return;
     }
 
     for (;;)
     {
         new choice = show_dialog(
-            custom_loaded ? "W1.2-test is loaded (volatile)." : "W1.1 baseline is active.",
-            "Load", "Test", "W1.1", "Exit");
+            custom_loaded ? "W1.2 is loaded (volatile)." : baseline_tag == 0x0102 ? "W1.2 baseline is active." : "W1.1 baseline is active.",
+            "Load", "Test", "Restore", "Exit");
         clear_console();
         switch (choice)
         {
             case 0: load_experiment();
             case 1: run_diagnostics();
-            case 2: restore_w11();
+            case 2: restore_baseline();
             case 3:
             {
-                if ((!custom_loaded && fpga_online) || restore_w11())
+                if ((!custom_loaded && fpga_online) || restore_baseline())
                     return;
             }
         }

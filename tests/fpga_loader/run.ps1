@@ -11,9 +11,13 @@ $oldPath = $env:PATH
 $env:PATH = (Split-Path $compiler -Parent) + ';' + $env:PATH
 Push-Location $repo
 try {
+    $application = Get-Content -LiteralPath 'QuadPawn/Programs/FPGALOAD.pawn' -Raw
+    $crcMatch = [regex]::Match($application, '(?m)^#define TEST_CRC32 0x([0-9A-Fa-f]{8})\s*$')
+    if (-not $crcMatch.Success) { throw 'Expected image CRC missing from FPGALOAD.' }
+    $imageCrc = $crcMatch.Groups[1].Value
     & $compiler '-std=c99' '-Wall' '-Wextra' '-Wno-unused-parameter' '-Itests/fpga_loader/mocks' 'tests/fpga_loader/test_loader.c' '-o' $executable
     if ($LASTEXITCODE -ne 0) { throw 'Host test compilation failed.' }
-    & $executable 'bin/FPGAW1_1/FPGAW1_1.BIN' 'bin/FPGATest/disk/W12TEST.BIN' | Tee-Object (Join-Path $outdir 'results.log')
+    & $executable 'bin/FPGAW1_1/FPGAW1_1.BIN' 'bin/FPGATest/disk/W12TEST.BIN' $imageCrc 'bin/FPGAW1_2/FPGAW1_2.BIN' | Tee-Object (Join-Path $outdir 'results.log')
     if ($LASTEXITCODE -ne 0) { throw 'Host loader tests failed.' }
 } finally {
     Pop-Location

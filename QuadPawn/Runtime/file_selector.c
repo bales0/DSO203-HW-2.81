@@ -213,7 +213,10 @@ void select_file(char result[13])
                         "(C) 2012 Petteri Aimonen <jpa@kapsi.fi>\n"
                         "\n"
                         "Built " __DATE__ " at " __TIME__ "\n"
-                        "Git id " COMMITID "\n"
+                        "Base: Turro75 f702d57\n"
+                        "SYS GCCA0 / AlterBIOS merged\n"
+                        "Local: FPGA ROM W1.1/W1.2 loader\n"
+                        "Project git " COMMITID "\n"
                         "GCC version " __VERSION__
             );
             rerender = true;

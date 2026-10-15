@@ -1,20 +1,27 @@
-# FPGA W1.2-test — vývojová větev pro DS203 HW 2.81/2.82
+# FPGA W1.2 — experimentální vývoj pro DS203 HW 2.81/2.82
 
-Experimentální pracovní kopie [W1.1 FPGA](../W1.1%20FPGA/README.TXT) pro
-Lattice iCE40HX4K-CB132. Čtyři HDL soubory a Time.sdc jsou po bajtech
-shodné s W1.1. V DP_RAM.v jsou tři kruhové indexy opravené na
-dvoubitové odečítání. Pins.pcf zachovává všech 45 původních fyzických pinů;
-pouze zápis vektorových názvů DB[n] a Din[n] nemá zpětná lomítka,
-aby jej přijal nextpnr. Původní W1.1 se neměnila.
+Pro trvalou náhradu W1.1 je nově připravený samostatný
+[bin/FPGAW1_2](../bin/FPGAW1_2/README.md). `export-system.py` ověří přesný
+hash označeného testovacího obrazu a odstraní pouze čtyřbajtový úvod,
+aby raw BIN měl původní délku 135 096 B a začínal sync slovem na stejné
+adrese 0x0805C800. CRC této instalační varianty je 66B80BD2, CRC plného
+W12TEST.BIN zůstává 33AFAD10. HDL ani rozmístění se tím nemění.
+Nový [Wildcat 144](../WildcatV6.6/README.md) vyžaduje instalační variantu;
+trvalé nahrání a nová kontinuální smyčka na zařízení zatím neproběhly.
 
-Toto je vývojové prostředí, nikoli hotová funkční verze W1.2.
-Firmware stále vrací ID W1, podverzi 0x0101. Vygenerovaný
-build/FPGAW1.2-test/FIFO.bin je nový experimentální výstup po opravě
-kruhového indexu. Tento obraz na zařízení testován nebyl. Dřívější
-baseline W12TEST.BIN uživatel na HW 2.82 úspěšně načetl přes FPGALOAD,
-provedl testy ID/FIFO a obnovil W1.1. Balíček bin/FPGATest/disk/W12TEST.BIN
-zůstává původní (SHA-256 c979877f801e4371e4d5117d72549856a7bc573dac867aa8f2457277f72ffe16).
-Není tu instalační pár ADR/BIN ani ověření analogové kvality nového obrazu.
+
+W1.2 vychází z původního W1.1 pro Lattice iCE40HX4K-CB132. V DP_RAM.v
+jsou tři výrazy kruhového indexu výslovně dvoubitové. IO_Ctrl.v přidává
+značku implementace na selectoru 2. Ostatní tři HDL soubory a Time.sdc
+zůstávají shodné s W1.1. Pins.pcf zachovává všech 45 fyzických pinů;
+změnil se pouze zápis vektorových názvů pro nextpnr. Původní W1.1 se nemění.
+
+Balíček `bin/FPGATest/disk/W12TEST.BIN` nyní obsahuje označené W1.2.
+Má 135 100 B, CRC-32 `33AFAD10`, SHA-256
+`787fff5254366c370ed571da5a5c606986160806a6e1e99164718aa5ef381ddb`.
+Dříve na zařízení ověřený obraz je zachován jako
+`bin/FPGATest/reference/W12BASE.BIN` (CRC-32 `46EDF657`).
+Finální označené W1.2 dosud na zařízení otestováno nebylo.
 
 ## Nástroje na tomto počítači (13. 10. 2026)
 
@@ -53,67 +60,77 @@ Všechny výstupy i logy se ukládají pouze do ignorované složky
 build/FPGAW1.2-test/. Skript nemá žádný příkaz pro programování
 přístroje.
 
-## Výsledky na tomto počítači
+## Výsledky sestavení 14. 10. 2026
 
 | Kontrola | Výsledek |
 | --- | --- |
-| tb_io_ctrl (sériové registry, 32bitový čas triggeru, W1 ID, datová sběrnice) | PASS |
-| tb_clock_phase (CKA/CKB ve stejné a opačné fázi) | PASS |
-| tb_interlace (32 známých párů v obou režimech, po zahození 152 úvodních dvojic) | PASS, explicitní kontrola neznámých hodnot |
-| tb_capture_window (dva různé záznamy za sebou) | PASS; 146 starých dvojic v každém úvodu; po zahození 152 dvojic všech 512 ponechaných dvojic nových |
-| Verilator lint | Dokončen s upozorněními ve zděděném HDL, bez chyb |
-| Yosys synth_ice40 -top FIFO | Dokončeno, kontrolní fáze 0 problémů |
-| nextpnr --hx4k --package cb132 --freq 72 --seed 1 | Dokončeno, všech 45 pinů přiřazeno |
-| icepack | Vygeneroval nový FIFO.bin, 135 100 B, SHA-256 5fb620f171ab6a769f38afe6412af5de0c9c781875b5ab56df7d912031ed0896 |
-| icetime -d hx4k -P cb132 -c 72 | PASS; nejdelší cesta 13,22 ns (odhad 75,67 MHz), požadavek 13,89 ns |
+| tb_io_ctrl | PASS, včetně protokolu 0101 a značky W1.2 0102 |
+| tb_clock_phase | PASS, stejná a opačná fáze hodin ADC |
+| tb_interlace | PASS, 32 známých dvojic v obou režimech, kontrola X/Z |
+| tb_capture_window | PASS, dva záznamy; 512 nových dvojic po zahození 152 úvodních |
+| Verilator lint | Dokončen s upozorněními ve zděděném HDL |
+| Yosys synth_ice40 | Dokončeno |
+| nextpnr HX4K / CB132 / 72 MHz / seed 3 | Dokončeno |
+| icepack | 135 100 B; výstup shodný s W12TEST.BIN v balíčku |
+| icetime -c 72 | PASS, nejdelší cesta 13,14 ns, odhad 76,12 MHz |
 
-nextpnr po směrování hlásí pro MCI odhad 83,90 MHz; odhad
-icetime 75,67 MHz je konzervativnější. Jde o dvě odlišné časové
-metody, nikoli měření na zařízení. Převzaté Time.sdc je ponecháno
-jako reference; tento otevřený build nastavuje cíl 72 MHz přímo
-přepínačem --freq a kontrolou icetime -c 72.
+Úplné `build.ps1 -Step all` skutečně prošlo. Výchozí seed je po souhlasu
+uživatele 3. Seed určuje rozmístění stejných obvodů; nemění funkce ani
+piny. Označený návrh se seedem 1 měl 14,04 ns a se seedem 2 měl 13,92 ns;
+oba neprošly limitem 13,89 ns. Předchozí naše sestavení bez značky mělo
+13,22 ns. Tyto odhady nejsou změřeným zpožděním původního autorského W1.1
+ani celkovou latencí od analogového vstupu.
 
-Yosys upozornil na omezenou podporu tri-state v IO_Ctrl.v a
-rozbalení malých akumulátorů na registry. Verilator hlásí mimo jiné
-šířky výrazů a neúplné case v původním HDL. Žádné upozornění nebylo
-automaticky označeno za opravené. Originální W1.1 bitstream má
-135 096 B; nový výstup má 135 100 B, takže nejde o binárně
-shodnou náhradu.
+Time.sdc zůstává referencí; otevřený build nastavuje 72 MHz přes nextpnr
+--freq a icetime -c. Varování Yosys/Verilator o tri-state, šířkách a
+neúplných case nebyla automaticky označena za opravená.
 
-## Oprava simulace a kruhového indexu
+## Kruhový index a platné okno
 
-Původní tb_interlace nekontroloval neznámé hodnoty a nevyvolal spolehlivou
-hranu resetu čtecího stavu. Jeho dřívější PASS proto nebyl dostatečným
-ověřením dat. Opravený test odmítá X/Z, explicitně modeluje známý počáteční
-stav nezresetovaných čítačů a skutečnou hranu resetu a čte platné okno.
+Výraz `TrigBufAddr-2` při indexu 0/1 vracel v simulaci neplatná data.
+Experiment používá `TrigBufAddr-2'b10`, tedy odečítání modulo 4.
+Chyba původního skutečného W1.1 tím prokázána není; syntéza mohla již
+původně vytvořit zamýšlený obvod. Testy nyní odmítají X/Z, inicializují
+model a čtou platné okno. Regresní model našel 146 starých dvojic v úvodu;
+po zahození 152 bylo dalších 512 dvojic nových. Nejde o univerzální
+změřenou konstantu každého zařízení.
 
-Přísná kontrola odhalila, že TrigBufAddr-2 při 0/1 v simulaci čte mimo
-čtyřprvkový buffer. Pouze v DP_RAM.v této experimentální kopie se nyní
-používá TrigBufAddr-2'b10, tedy výslovné modulo 4. HDL W1.1 se nezměnilo.
-Po této opravě prošly všechny čtyři simulace, lint s původními upozorněními,
-syntéza, place & route, icepack a časová kontrola na 72 MHz.
-Nový bitstream má jiný hash než dřívější baseline a nesmí se zaměňovat
-za již vyzkoušený W12TEST.BIN. Testovací balíček ani CRC v aplikacích
-se touto změnou neaktualizovaly. Číslo 146 je výsledek konkrétního
-regresního modelu; zahození 152 dvojic ověřilo jeho čisté okno.
+## Hardware a 144 MSa/s
 
-## 144 MSa/s a hardware
+Prokládání existovalo již ve W1.1. Uživatel na HW 2.82 ověřil dřívější
+baseline přes FPGALOAD a obnovu W1.1. INT144 v3 následně při GEN→A a
+1/2/4 MHz potvrdil na původním W1.1 podle postupu posun půl periody,
+pořadí B→A a relativní DC korekci v RAM. Podrobnosti jsou v
+[INT144.md](../QuadPawn/Programs/INT144.md). Výsledky se automaticky
+nepřenášejí na označený W1.2. Absolutní přesnost, celková analogová
+kvalita a všechny triggery ověřeny nejsou. Simulace má ideální ADC model
+s 1ns zpožděním, nikoli pipeline skutečného ADC.
 
-Převzatý W1.1 obsahuje přepnutí hodin ADC B do opačné fáze a ukládá
-vzorky A/B společně do jednoho 16bitového slova při každém taktu MCI.
-SYS podporuje režim INTERLACE přes GPIO PC3 a QuadPawn jej umí zapnout. Model ADC v testbenchi používá jen ideální výstupní zpoždění 1 ns; neobsahuje skutečnou pipeline ani režim data-align fyzického ADC. Znaménko jeho časového pořadí tedy nelze přenášet na hardware. Výsledky INT144 v2 na zařízení jsou předběžné kvůli úvodní historii a musí je ověřit INT144 v3.
-Nový tb_interlace se syntetickým společným vstupem ověřil 32 po sobě
-jdoucích dvojic ve správném pořadí a 32 dvojic po návratu do odděleného
-režimu. To potvrzuje možnost prokládané datové cesty v tomto HDL,
-nikoli skutečnou rychlost 144 MSa/s na DS203.
+Na zařízení se nic automaticky nenahrává a trvalý zápis FPGA do flash
+se netestoval. Pinové mapování z W1.1 pro HW 2.81 a novější přijal
+nextpnr; přijetí nástrojem nenahrazuje kontrolu konkrétní desky.
 
-Uživatel na DS203 ověřil dočasné načtení dřívější baseline, základní
-testy ID/FIFO a obnovu W1.1. FPGALOAD nezapíná INTERLACE. Zatím
-nebylo změřeno směrování stejného analogového vstupu, časování ADC,
-pořadí skutečných vzorků, analogová kvalita, všechny režimy triggeru
-ani kalibrace pro 144 MSa/s. Trvalé ukládání FPGA do flash se netestovalo.
+## Profily FPGA v Pawn aplikacích (14. 10. 2026)
 
-Původní mapování pochází z W1.1 pro HW 2.81 a novější. Kopie má
-45 různých přiřazení a nextpnr je pro iCE40HX4K-CB132 přijal.
-To ověřuje syntaxi a obsazení pinů v nástroji; nenahrazuje měření
-na konkrétní revizi desky.
+FPGALOAD, FPGAW12 a INT144 používají společný `fpgaver.inc`. Před každým
+záznamem znovu ověří identitu a potřebné funkce; neznámý profil měření
+zablokuje. Schopnosti jsou přiřazeny podle známých zdrojů, nejde o jejich
+automatické elektrické ověření. Neoznačený kompatibilní obraz nelze podle
+registrů jednoznačně odlišit od jiného obrazu se stejnými odpověďmi.
+
+| Údaj | W1.1 kompatibilní, neoznačený | W1.2 |
+| --- | --- | --- |
+| Selector 0, rodina | 0x5731 | 0x5731 |
+| Selector 1, protokol | 0x0101 | 0x0101 |
+| Selector 2, značka implementace | 0 | 0x0102 |
+| Deklarované funkce | FIFO, prokládání ADC, oversampling, 32bitový trigger, FreeRun | Stejné, navíc značka verze |
+
+Wildcat se nemění: používá původní údaj selectoru 1 pro povolení FPGA
+oversamplingu a novou značku selectoru 2 nečte. Změna rozlišování verzí
+se týká uvedených Pawn aplikací, nikoli Wildcatu ani QuadPawn runtime.
+
+Na PC prošlo 92 kontrol profilů ve skutečné Pawn VM a 16 kontrol loaderu.
+Loaderové testy přebírají očekávané CRC z FPGALOAD, nikoli z testovaného
+souboru. Spuštění z kořene: `./tests/fpga_profile/run.ps1` a
+`./tests/fpga_loader/run.ps1`. Celé aplikace s perifériemi na PC neběží.
+Nová sestavení AMX s profily dosud nebyla ověřena na DS203.
