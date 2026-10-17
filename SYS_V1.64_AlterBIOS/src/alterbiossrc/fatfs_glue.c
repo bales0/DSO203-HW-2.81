@@ -216,9 +216,15 @@ DRESULT disk_ioctl(BYTE drv, BYTE ctrl, void *buff)
         *(DWORD*)buff = sectorcount();
         return RES_OK;
     }
-    else if (ctrl == GET_SECTOR_SIZE || ctrl == GET_BLOCK_SIZE)
+    else if (ctrl == GET_SECTOR_SIZE)
     {
-        *(DWORD*)buff = sectorlen();
+        *(WORD*)buff = sectorlen();
+        return RES_OK;
+    }
+    else if (ctrl == GET_BLOCK_SIZE)
+    {
+        /* FatFs expects an erase block size in logical sectors, not bytes. */
+        *(DWORD*)buff = 1;
         return RES_OK;
     }
     else

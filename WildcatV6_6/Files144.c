@@ -220,7 +220,7 @@ static int WriteCsv(const Scope144Cal *cal,const int32_t *q10,const uint16_t *pa
         error=File144_Text(line,length,cluster,directory,&used); total+=length;
     }
     if(!error && used) {
-        /* AlterBIOS sector API cannot truncate: newline padding remains valid CSV. */
+        /* Older SYS versions retain sector padding; keep it valid CSV there. */
         memset(SecBuff+used,'\n',SectorSize-used);
         error=WriteFileSec(SecBuff,cluster,directory);
     }

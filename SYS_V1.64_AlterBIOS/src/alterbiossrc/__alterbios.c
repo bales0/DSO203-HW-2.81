@@ -6,7 +6,7 @@
 #include "LCD.h"
 #include "stm32f10x_map.h"
 
-#define VERSION "      NEW AlterBIOS 0.6" 
+#define VERSION "      NEW AlterBIOS 0.7"
 
 #define RGB(r, g, b) (((r)>>3)|(((g)>>2)<<5)|(((b)>>3)<<11))
 extern FATFS fatfs;
@@ -193,7 +193,9 @@ u8 __patch_ProgFileSec(u8* buffer, u16* cluster)
 {
     unsigned wcount;
     FRESULT r = __f_write(&g_file, buffer, fatfs.ssize, &wcount);
-    
+    if (r != FR_OK)
+        return ERR(r);
+
     if (wcount != fatfs.ssize)
         return 3; // Disk is full
     
@@ -202,11 +204,17 @@ u8 __patch_ProgFileSec(u8* buffer, u16* cluster)
 
 u8 __patch_CloseFile(u8* buffer, u32 length, u16* cluster, u32* diraddr)
 {
-    FRESULT r = __f_lseek(&g_file, length);
-    if (r != FR_OK)
-        return ERR(r);
-    
-    r = __f_close(&g_file);
-    return ERR(r);
+    FRESULT r = FR_OK, closed;
+    /* Read closes must never modify a file. For writes, the BIOS length is
+     * the logical size, not a request to extend with uninitialised bytes. */
+    if (g_file.flag & FA_WRITE) {
+        if (length > g_file.fsize) r = FR_INT_ERR;
+        else {
+            r = __f_lseek(&g_file, length);
+            if (r == FR_OK) r = __f_truncate(&g_file);
+        }
+    }
+    closed = __f_close(&g_file); /* Also attempt close after seek/truncate failure. */
+    return ERR(r != FR_OK ? r : closed);
 }
 

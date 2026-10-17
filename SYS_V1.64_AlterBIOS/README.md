@@ -3,7 +3,7 @@
 Port to GCC of SYS ver 1.64 of DSO203.
 tested only on DSO203 v2.72 8Mb.
 
-this version GCCA0 includes Alterbios as part of SYS.
+This version includes AlterBIOS 0.7 as part of SYS 1.64, with FAT save/close fixes.
 To use quadpawn with this release You need the latest quadpawn built for this new memory mapping.
 
 Todo:

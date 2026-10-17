@@ -15,6 +15,7 @@ $previousPath = $env:PATH
 $env:PATH = (Split-Path $compiler -Parent) + ';' + $env:PATH
 Push-Location $repo
 try {
+    & (Join-Path $PSScriptRoot 'run_fat.ps1') -HostCompiler $compiler
     $digitalExe = Join-Path $output 'test_digital144.exe'
     & $compiler '-std=c99' '-O2' '-Wall' '-Wextra' '-Werror' '-Wno-misleading-indentation' '-IWildcatV6_6/inc' 'tests/wildcat144/test_digital144.c' 'WildcatV6_6/Frame144.c' 'WildcatV6_6/Digital144.c' 'WildcatV6_6/CaptureWindow.c' 'WildcatV6_6/ViewWindowGeometry.c' 'WildcatV6_6/Scope144.c' 'WildcatV6_6/Interlace144.c' 'WildcatV6_6/FpgaProfile.c' '-o' $digitalExe
     if ($LASTEXITCODE -ne 0) { throw 'Digital C/D compilation failed.' }

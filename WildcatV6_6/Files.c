@@ -14,6 +14,18 @@
 #include "Interrupt.h"
 #include "UiCommon.h"
 
+/* The project SYS exports AlterBIOS at this fixed, versioned ABI. */
+static int File_UsesAlterBios(void)
+{
+  return *(volatile const u32 *)0x08004400u == 0x017a0025u;
+}
+
+static int File_AlterUnlink(const char *name)
+{
+  typedef int (*Unlink)(const char *);
+  return ((Unlink)0x0800444du)(name);
+}
+
 u16 SectorSize = 0;
 u8 flash_mode = 0;
 u8  SecBuff[LARGEST_SECTOR_SIZE];
@@ -42,7 +54,7 @@ char LastAccessedConfig[9]={32,32,32,32,32,32,32,32,0};
 u8  Edited=0;
 u8  BufferRestore=0;
 u32 RootStart=0x00004000;
-u32 RootStop =0x00007F00;
+u32 RootStop =0x00008000; /* Exclusive end of the root directory. */
 uc32 FatStart=0x00001000;
 u16 CSVposition;
 
@@ -72,9 +84,9 @@ uc16 BMP_Color[16] = { WHT,  CYAN, CYAN_,  YEL,  YEL_, PURPL, PURPL_, GRN,   		/
                       GRN_, GRAY, ORANGE, BLUE, RED,  BLACK, 0x87F0,  0x7BEF};    
 
 						      //16 color BMP file header	
-uc8  BmpHead16[54] = { 0X42, 0X4D, 0XF8, 0XBB, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X76, 0X0, 0X00, 0X00, 0X28, 0X00,	
+uc8  BmpHead16[54] = { 0X42, 0X4D, 0XF6, 0XBB, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X76, 0X0, 0X00, 0X00, 0X28, 0X00,
                       0X00, 0X00, 0X90, 0X01, 0X00, 0X00, 0XF0, 0X00, 0X00, 0X00, 0X01, 0X0, 0X04, 0X00, 0X00, 0X00,
-                      0X00, 0X00, 0X82, 0XBB, 0X00, 0X00, 0X12, 0X0B, 0X00, 0X00, 0X12, 0XB, 0X00, 0X00, 0X10, 0X00,
+                      0X00, 0X00, 0X80, 0XBB, 0X00, 0X00, 0X12, 0X0B, 0X00, 0X00, 0X12, 0XB, 0X00, 0X00, 0X10, 0X00,
                       0X00, 0X00, 0X00, 0X00, 0X00, 0X00};
                                                                                              //byte 28= 0x04 bits/pixel
                                                        //64K color BMP file header 
@@ -120,10 +132,10 @@ u8 InitFileSystem() {
 
     if(flash_mode==FLASH_2M){                                   //root dir starting/ending addresses
       RootStart=0x00004000;
-      RootStop =0x00007F00;
+      RootStop =0x00008000;
     }else{
       RootStart=0x00003000;
-      RootStop =0x00006F00;
+      RootStop =0x00007000;
     }
 
   return 0;
@@ -259,6 +271,7 @@ Save_Dat: save current screen to display the original image data		input: the fil
 u8 Save_Dat(u8 FileNum)
 {
   if(Generator_SecBusy())return UI_FILE_BUSY;
+  if(InitFileSystem()!=OK)return DISK_ERR;
   char Filename[13] = "FILE    DAT"; 
   u16 i, j;
   u16 pCluster[3];
@@ -305,6 +318,7 @@ Save_Bmp: save the current screen image as BMP		input: file number		return value
 u8 Save_Bmp(u8 FileNum)
 {
   if(Generator_SecBusy())return UI_FILE_BUSY;
+  if(InitFileSystem()!=OK)return DISK_ERR;
   u32 FileSize;
   char Filename[12] = "IMAG    BMP"; 
   u16 k, i,x=0, y=0, j, ColorH, ColorL; //, tmp;        // j,  ColorH, ColorL;
@@ -318,10 +332,12 @@ u8 Save_Bmp(u8 FileNum)
       if (Make_Filename(FileNum, Filename)!=0) return 1;
     }
 
-  if(__OpenFileRd(SecBuff, Filename, pCluster, pDirAddr)==0){            // original file exists
+  i=__OpenFileRd(SecBuff,Filename,pCluster,pDirAddr);
+  if(i==OK){            // original file exists
+    if(File_UsesAlterBios() && __CloseFile(SecBuff,0,pCluster,pDirAddr)!=OK)return RD_ERR;
     if(OverWriteWarn())return 200;
-    if(DeleteFile(SecBuff,Filename))return WR_ERR; 
-  }
+    if(!File_UsesAlterBios() && DeleteFile(SecBuff,Filename))return WR_ERR;
+  }else if(i!=NEW)return RD_ERR;
 
   if(__OpenFileWr(SecBuff, Filename, pCluster, pDirAddr)!=OK) return DISK_ERR;
 
@@ -342,7 +358,7 @@ if((_4_source==10)||(_4_source==11)){					//only save in 64K color if displaying
       }
     }
   }
-  FileSize=0x2F000;
+  FileSize=0x2EE42;
 }else{
   memcpy(SecBuff, BmpHead16, 54);					//16 COLOR BMP
   i = 0x0036; // palette to store the starting address
@@ -370,7 +386,7 @@ if((_4_source==10)||(_4_source==11)){					//only save in 64K color if displaying
       }
     }
   }
-  FileSize=0xBC00;
+  FileSize=0xBBF6;
 }
   if(i!=0){
     i=WriteFileSec(SecBuff, pCluster, pDirAddr);
@@ -443,6 +459,7 @@ Save_Buf: save the data collection buffer in BUF format		input: file number		ret
 u8 Save_Buf(u8 FileNum)
 {
   if(Generator_SecBusy())return UI_FILE_BUSY;
+  if(InitFileSystem()!=OK)return DISK_ERR;
   u8   i;
   u16  j;
   char Filename[12] = "DATA    BUF"; 
@@ -459,12 +476,14 @@ u8 Save_Buf(u8 FileNum)
       if (Make_Filename(FileNum, Filename)!=0) return 1;
     }
 
-  if(__OpenFileRd(SecBuff, Filename, pCluster, pDirAddr)==0){                       // original file exists
+  i=__OpenFileRd(SecBuff,Filename,pCluster,pDirAddr);
+  if(i==OK){                       // original file exists
+    if(File_UsesAlterBios() && __CloseFile(SecBuff,0,pCluster,pDirAddr)!=OK)return RD_ERR;
     if((AutoSaveBuf==0)||(ChartLogic()==0)){
       if(OverWriteWarn())return 200;
     }
-    if(DeleteFile(SecBuff,Filename))return WR_ERR; 
-  }
+    if(!File_UsesAlterBios() && DeleteFile(SecBuff,Filename))return WR_ERR;
+  }else if(i!=NEW)return RD_ERR;
   if(__OpenFileWr(SecBuff, Filename, pCluster, pDirAddr)!=OK) return DISK_ERR;
 
   if(OSBufferLogic()){                                                                //store OS data in unused part of DataBuf 
@@ -522,13 +541,18 @@ u8 Save_Buf(u8 FileNum)
 
 
 u8 WriteFileSec(u8* SecBuff, u16* pCluster, u32* pDirAddr){
-  if(*pCluster>2040){                                                   //if trying to write beyond the end of the drive        
-    __CloseFile(SecBuff, 0, pCluster, pDirAddr);                        //will result in a 0 length file and use up space, but at least will 
-    return OVER;                                                        //not destroy the file allocation table by looping around
-  }else{          
-    if(__ProgFileSec(SecBuff, pCluster)!= OK) return WR_ERR;         
+  u8 status;
+  /* AlterBIOS owns allocation; its cluster token can be zero for a new file
+   * and is not the moving FAT12 cursor used by the original SYS. */
+  if(!File_UsesAlterBios() && (*pCluster<2 ||
+      *pCluster>(flash_mode==FLASH_8M?2042:4033)))return OVER;
+  status=__ProgFileSec(SecBuff,pCluster);
+  if(status!=OK){
+    /* Flush/release the failed AlterBIOS write before the next operation. */
+    if(File_UsesAlterBios())__CloseFile(SecBuff,0,pCluster,pDirAddr);
+    return status==OVER?OVER:WR_ERR;
   }
-  return 0;
+  return OK;
 }
 
 
@@ -652,59 +676,94 @@ u8 ReadDir(char *ext){                          //Load 10 filenames matching ext
     return LabelIndex;
 }
 
-u8 DeleteFile(u8* pBuffer, char* FileName){
-  if(Generator_SecBusy())return UI_FILE_BUSY;
-  u32 pDirAddr[1];      
-  u16 pCluster[1];
-  u16 i=0,n,Offset;
-
-    for(*pDirAddr=RootStart; *pDirAddr<RootStop;){                         //scan for filename in root directory
-      if(__ReadDiskData(pBuffer, *pDirAddr, 4096)!= OK)return RD_ERR;            
-      for(n=0; n<4096; n+=32){
-        for(i=0; i<11; i++){
-          if(pBuffer[n + i]!= 0){
-            if(pBuffer[n+i]!=FileName[i]) break;
-            if(i == 10){
-              *pCluster=*(u16*)(pBuffer+n+0x1A);                           //starting cluster in FAT table for selected file 
-              goto FileNameFound;                                          //n represents the offset
-            }
-          }
-        }
-      }
-      *pDirAddr+=4096	;
+/* Original SYS fallback: validate the complete FAT12 chain before changing it.
+ * AlterBIOS must use its own unlink API so its cached FAT stays coherent. */
+static u16 NativeFatLimit(void)
+{
+  return flash_mode==FLASH_8M?2042:4033;
+}
+static u8 NativeFatNext(u16 cluster,u16 *next)
+{
+  u8 bytes[2];u16 value;
+  if(cluster<2 || cluster>NativeFatLimit())return RD_ERR;
+  if(__ReadDiskData(bytes,FatStart+cluster+cluster/2,2)!=OK)return RD_ERR;
+  value=(u16)bytes[0]|((u16)bytes[1]<<8);
+  *next=(cluster&1)?value>>4:value&0xfff;
+  return OK;
+}
+static u8 NativeFatFlush(u8 *buffer,u32 base)
+{
+  u32 fat2=flash_mode==FLASH_8M?0x2000:0x2800;
+  if(base==0xffffffffu)return OK;
+  if(__ProgDiskPage(buffer,FatStart+base)!=OK ||
+     __ProgDiskPage(buffer,fat2+base)!=OK)return WR_ERR;
+  return OK;
+}
+static u8 NativeFatClear(u8 *buffer,u16 cluster,u32 *cached)
+{
+  u16 page=flash_mode==FLASH_8M?4096:256;
+  u16 offset=cluster+cluster/2,j;u8 status;
+  /* Cache one physical page, including entries crossing a page boundary.
+   * Contiguous chains and the entire 8MB FAT need only one write per copy. */
+  for(j=0;j<2;++j){
+    u16 byte=offset+j,inpage=byte%page;
+    u32 base=byte-inpage;
+    if(base!=*cached){
+      status=NativeFatFlush(buffer,*cached);if(status)return status;
+      if(__ReadDiskData(buffer,FatStart+base,page)!=OK)return RD_ERR;
+      *cached=base;
     }
-    return RD_ERR; 
-    
-FileNameFound:
-    pBuffer[n]=0xE5;                                                            //write deleted file flag at address offset 0 in pBuffer
-    if(__ProgDiskPage(pBuffer,*pDirAddr)!=0)return WR_ERR;                      //write section back to disk (4096 bytes for 8M, 256 for 2M)
-
-    if(__ReadDiskData(pBuffer,FatStart,4096)!= OK)return RD_ERR;                   //load FAT chain table in pBuffer
-    if(*pCluster<2)return RD_ERR;                
-    do{                                      //Follow the white rabbit, but don't get lost, or your files will end up cross-linked!
-      Offset=*pCluster+(*pCluster/2);                    //scale address to accommodate extra nibbles   
-      if(Offset>=3072)return RD_ERR;                
-      if(i++>2048)return RD_ERR;                         //all good things MUST come to an end 
-                                                         
-      if(*pCluster&1){                                                                             
-        *pCluster=pBuffer[Offset+1];                     //Most Significant byte, save value pointing to next link before zeroing
-        *pCluster=(*pCluster<<4)+(pBuffer[Offset]>>4);   //Shift to proper position and add little endian nibble
-        pBuffer[Offset]&=0x0F;                           //zero, to release link
-        pBuffer[Offset+1]=0;                                                               
-      }else{
-        *pCluster=pBuffer[Offset+1]&0x0F;                //Construct 12 bit entry within proper 2 bytes of double entry "triplet", 
-        *pCluster=(*pCluster<<8)+pBuffer[Offset];        //depending on whether the entry number is odd or even.(Convolutions 
-        pBuffer[Offset]=0;                               //courtesy of Microsoft et al. who just HAD to pack a 12 bit entry into 
-        pBuffer[Offset+1]&=0xF0;                         //1.5 bytes instead of 2, thus saving a small fraction of 1% of drive 
-      }                                                  //space on a typical floppy; bytes were precious in the age of floppies...)      
-    }while(*pCluster<0xFF0);   
-    if(__ProgDiskPage(pBuffer,FatStart)!=0)return WR_ERR;                      //write section back to disk 
-                                                                                //synch FAT2 with FAT1
-    if(__ReadDiskData(pBuffer,0x1000,0x1000)!= OK) return RD_ERR;           
-    if(__ProgDiskPage(pBuffer,0x2000)!= OK) return WR_ERR;                  
-
-    if(*pCluster<0xFF0)return RD_ERR;                                           //end of file to be deleted not found, return error
-    return 0;
+    if((cluster&1) && !j)buffer[inpage]&=0x0f;
+    else if(!(cluster&1) && j)buffer[inpage]&=0xf0;
+    else buffer[inpage]=0;
+  }
+  return OK;
+}
+u8 DeleteFile(u8* pBuffer, char* FileName){
+  u32 address,entry=0,pagebase,size=0,cached=0xffffffffu;u16 offset,cluster=0,next,count,page;
+  u8 status,found=0;
+  if(Generator_SecBusy())return UI_FILE_BUSY;
+  if(InitFileSystem()!=OK)return DISK_ERR;
+  if(File_UsesAlterBios()){
+    char name[13];unsigned i,n=0;
+    for(i=0;i<8 && FileName[i]!=' ';++i)name[n++]=FileName[i];
+    name[n++]='.';
+    for(i=8;i<11 && FileName[i]!=' ';++i)name[n++]=FileName[i];
+    name[n]=0;
+    status=(u8)File_AlterUnlink(name);
+    return status==0?OK:(status==4 || status==5?EMPT:WR_ERR);
+  }
+  for(address=RootStart;address<RootStop && !found;address+=256){
+    if(__ReadDiskData(pBuffer,address,256)!=OK)return RD_ERR;
+    for(offset=0;offset<256;offset+=32){
+      if(!pBuffer[offset])return EMPT;
+      if(pBuffer[offset]==0xe5 || (pBuffer[offset+11]&0x18))continue;
+      if(!memcmp(pBuffer+offset,FileName,11)){
+        entry=address+offset;found=1;
+        cluster=(u16)pBuffer[offset+26]|((u16)pBuffer[offset+27]<<8);
+        size=(u32)pBuffer[offset+28]|((u32)pBuffer[offset+29]<<8)|
+             ((u32)pBuffer[offset+30]<<16)|((u32)pBuffer[offset+31]<<24);
+        break;
+      }
+    }
+  }
+  if(!found)return EMPT;
+  next=cluster;count=0;
+  if(cluster || size){
+    do{
+      if(++count>NativeFatLimit()-1 || NativeFatNext(next,&next)!=OK)return RD_ERR;
+    }while(next<0xff8);
+  }
+  page=flash_mode==FLASH_8M?4096:256;pagebase=entry-entry%page;
+  if(__ReadDiskData(pBuffer,pagebase,page)!=OK)return RD_ERR;
+  pBuffer[entry%page]=0xe5;
+  if(__ProgDiskPage(pBuffer,pagebase)!=OK)return WR_ERR;
+  while(count--){
+    if(NativeFatNext(cluster,&next)!=OK)return RD_ERR;
+    status=NativeFatClear(pBuffer,cluster,&cached);if(status)return status;
+    cluster=next;
+  }
+  return NativeFatFlush(pBuffer,cached);
 }
 
 void FileMessage(u8 i){  
@@ -910,6 +969,7 @@ Save_Csv: save the acquisition buffer in CSV format		input: file number		return 
 u8 Save_Csv(u8 FileNum)
 {
   if(Generator_SecBusy())return UI_FILE_BUSY;
+  if(InitFileSystem()!=OK)return DISK_ERR;
   char Num[4][6];
   char Val[4];
   char Filename[12] = "DATA    CSV"; 
@@ -931,12 +991,14 @@ u8 Save_Csv(u8 FileNum)
 
   length = SectorSize;				
 
-  if(__OpenFileRd(SecBuff, Filename, pCluster, pDirAddr)==0){                       // original file exists
+  i=__OpenFileRd(SecBuff,Filename,pCluster,pDirAddr);
+  if(i==OK){                       // original file exists
+    if(File_UsesAlterBios() && __CloseFile(SecBuff,0,pCluster,pDirAddr)!=OK)return RD_ERR;
     if((AutoSaveBuf==0)||(ChartLogic()==0)){
       if(OverWriteWarn())return 200;
     }
-    if(DeleteFile(SecBuff,Filename))return WR_ERR; 
-  }
+    if(!File_UsesAlterBios() && DeleteFile(SecBuff,Filename))return WR_ERR;
+  }else if(i!=NEW)return RD_ERR;
   if(__OpenFileWr(SecBuff, Filename, pCluster, pDirAddr)!=OK) return DISK_ERR;
 
 //============================================HEADERS===========================================
