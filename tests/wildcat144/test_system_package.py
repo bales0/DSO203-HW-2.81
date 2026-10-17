@@ -35,8 +35,8 @@ def read_hex(path):
     check(ended, "EOF present")
     return result
 
-source = (ROOT/"bin/FPGATest/disk/W12TEST.BIN").read_bytes()
 image = (ROOT/"bin/FPGAW1_2/FPGAW1_2.BIN").read_bytes()
+source = bytes.fromhex("ff0000ff") + image
 check(len(image) == 135096 and source[4:] == image, "strip dummy prefix only")
 check(image[:4] == bytes.fromhex("7eaa997e"), "iCE40 sync at offset 0")
 check(zlib.crc32(image) == 0x66B80BD2, "installed W1.2 CRC")
@@ -47,20 +47,21 @@ check(address + len(image) <= 0x0807D800, "FPGA sector boundary")
 hexdata = read_hex(ROOT/"bin/FPGAW1_2/FPGAW1_2.HEX")
 check(len(hexdata) == len(image), "FPGA HEX length")
 check(all(hexdata[address+i] == b for i,b in enumerate(image)), "FPGA HEX/BIN equality")
-raw = (ROOT/"bin/QuadPawnW12/PAWN4WA.BIN").read_bytes()
-address = int((ROOT/"bin/QuadPawnW12/PAWN4WA.ADR").read_text().strip(), 0)
+raw = (ROOT/"bin/QuadPawn/PAWN4WA.BIN").read_bytes()
+address = int((ROOT/"bin/QuadPawn/PAWN4WA.ADR").read_text().strip(), 0)
 check(address == 0x08024000 and 0 < len(raw) <= 32768, "QuadPawn slot-4 bounds")
-hexdata = read_hex(ROOT/"bin/QuadPawnW12/PAWN4W.HEX")
+hexdata = read_hex(ROOT/"bin/QuadPawn/PAWN4W.HEX")
 check(len(hexdata) == len(raw), "QuadPawn HEX length")
 check(all(hexdata[address+i] == b for i,b in enumerate(raw)), "QuadPawn HEX/BIN equality")
 sp, entry = struct.unpack_from("<II", raw)
 check(0x20003000 <= sp <= 0x20010000 and sp%8 == 0, "initial stack")
 check(entry&1 and address <= entry-1 < address+len(raw), "Thumb entry in slot 4")
-version = (ROOT/"bin/QuadPawnW12/VERSION.TXT").read_text().strip().encode("ascii")
+version = (ROOT/"QuadPawn/Runtime/build/VERSION.TXT").read_text().strip().encode("ascii")
 check(version and version in raw, "configured runtime version")
 # Conversion refuses an unreviewed bitstream before producing output.
-namespace = {"__file__": str(ROOT/"FPGAW1.2-test/export-system.py"), "__name__": "audit"}
-exec(compile((ROOT/"FPGAW1.2-test/export-system.py").read_text(), "export-system.py", "exec"), namespace)
+namespace = {"__file__": str(ROOT/"FPGAW1_2/export-system.py"), "__name__": "audit"}
+exec(compile((ROOT/"FPGAW1_2/export-system.py").read_text(), "export-system.py", "exec"), namespace)
+check(namespace["installed_image"](source) == image, "approved full bitstream converts to installed image")
 try:
     namespace["installed_image"](bytes([source[0]^1])+source[1:])
 except ValueError:

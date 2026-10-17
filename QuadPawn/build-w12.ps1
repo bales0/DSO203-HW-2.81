@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^[A-Za-z0-9._]+$')][string]$Version = '2026.10.14.2',
+    [ValidatePattern('^[A-Za-z0-9._]+$')][string]$Version = '2026.10.17.1',
     [string]$ToolchainBin = "$env:LOCALAPPDATA/Programs/gcc-arm-none-eabi-9-2019-q4-major/bin",
     [string]$MakeExe = 'C:/msys64/usr/bin/make.exe'
 )
@@ -11,11 +11,11 @@ try {
     $env:PATH = "$ToolchainBin;C:/msys64/usr/bin;$previousPath"
     Push-Location $repo
     try {
-        & $MakeExe '-C' 'QuadPawn/Runtime' '-j4' 'NAME=PAWN4W' 'BINDIR=../../bin/QuadPawnW12' "VERSION=$Version"
+        & $MakeExe '-C' 'QuadPawn/Runtime' '-j4' 'NAME=PAWN4W' 'BINDIR=../../bin/QuadPawn' "VERSION=$Version"
         if ($LASTEXITCODE -ne 0) { throw 'QuadPawn W1.2 runtime build failed.' }
-        & './QuadPawn/Compiler/bin/pawncc.exe' 'QuadPawn/Programs/FPGALOAD.pawn' '-d0' '-v2' '-iQuadPawn/Compiler/include' '-obin/QuadPawnW12/FPGALOAD.AMX'
-        if ($LASTEXITCODE -ne 0) { throw 'FPGALOAD compilation failed.' }
-        Set-Content -LiteralPath 'bin/QuadPawnW12/VERSION.TXT' -Value $Version -Encoding ascii
-        Write-Host "Built QuadPawn $Version for slot 4: bin/QuadPawnW12/"
+        & $MakeExe '-C' 'QuadPawn/Programs' '-j4' 'all'
+        if ($LASTEXITCODE -ne 0) { throw 'Pawn programs compilation failed.' }
+        Set-Content -LiteralPath 'QuadPawn/Runtime/build/VERSION.TXT' -Value $Version -Encoding ascii
+        Write-Host "Built QuadPawn $Version for slot 4: bin/QuadPawn/"
     } finally { Pop-Location }
 } finally { $env:PATH = $previousPath }

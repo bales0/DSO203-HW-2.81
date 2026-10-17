@@ -17,5 +17,5 @@ $(BINDIR):
 	mkdir -p $(BINDIR)
 
 $(BINDIR)/%.amx: %.pawn $(wildcard ../Compiler/include/*.inc) | $(BINDIR)
-	$(PAWNCC) -d2 -v2 -V1 -o$(basename $@) $<
+	$(PAWNCC) -d2 -v2 -V1 -o$@ $<
 

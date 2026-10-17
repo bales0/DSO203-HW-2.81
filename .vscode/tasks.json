@@ -2,52 +2,52 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "FPGA W1.2-test: Simulace",
+      "label": "FPGA W1.2: Simulace",
       "type": "process",
       "command": "powershell.exe",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "sim"],
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1_2/build.ps1", "-Step", "sim"],
       "problemMatcher": []
     },
     {
-      "label": "FPGA W1.2-test: Lint",
+      "label": "FPGA W1.2: Lint",
       "type": "process",
       "command": "powershell.exe",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "lint"],
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1_2/build.ps1", "-Step", "lint"],
       "problemMatcher": []
     },
     {
-      "label": "FPGA W1.2-test: Syntéza",
+      "label": "FPGA W1.2: Syntéza",
       "type": "process",
       "command": "powershell.exe",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "synth"],
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1_2/build.ps1", "-Step", "synth"],
       "problemMatcher": []
     },
     {
-      "label": "FPGA W1.2-test: Place & Route",
+      "label": "FPGA W1.2: Place & Route",
       "type": "process",
       "command": "powershell.exe",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "pnr"],
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1_2/build.ps1", "-Step", "pnr"],
       "problemMatcher": []
     },
     {
-      "label": "FPGA W1.2-test: Timing",
+      "label": "FPGA W1.2: Timing",
       "type": "process",
       "command": "powershell.exe",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "timing"],
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1_2/build.ps1", "-Step", "timing"],
       "problemMatcher": []
     },
     {
-      "label": "FPGA W1.2-test: Bitstream",
+      "label": "FPGA W1.2: Bitstream",
       "type": "process",
       "command": "powershell.exe",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "bitstream"],
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1_2/build.ps1", "-Step", "bitstream"],
       "problemMatcher": []
     },
     {
-      "label": "FPGA W1.2-test: Vše",
+      "label": "FPGA W1.2: Vše",
       "type": "process",
       "command": "powershell.exe",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1.2-test/build.ps1", "-Step", "all"],
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/FPGAW1_2/build.ps1", "-Step", "all"],
       "group": { "kind": "build", "isDefault": true },
       "problemMatcher": []
     }

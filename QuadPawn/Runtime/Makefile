@@ -6,10 +6,10 @@
 _NAME = PAWN
 APP = 4
 ADR = 0x08024000
-NAME = $(_NAME)$(APP)
+NAME = PAWN4W
 BINDIR = ../../bin/QuadPawn
 # Local runtime version, configurable with make VERSION=1.2
-VERSION ?= 2026.10.14.2
+VERSION ?= 2026.10.17.1
 
 # Names of the object files (add all .c files you want to include)
 OBJS = main.o ds203_io.o libc_glue.o drawing.o menubar.o buttons.o \

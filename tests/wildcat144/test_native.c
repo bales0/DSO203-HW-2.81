@@ -8,23 +8,56 @@
 #include "Process.h"
 #include "Interrupt.h"
 #include "Scope144.h"
+#include "Frame144.h"
+#include "UiCommon.h"
+extern uint32_t Scope144_RealCrc(const void *,uint32_t);
 #include "UnifiedCal.h"
 #include "Calibrat.h"
 #include "Function.h"
 extern void * __stdcall VirtualAlloc(void *,unsigned long,unsigned long,unsigned long);
-static unsigned id_read_pending,confirm_stage,cal_calls,history,fifo_index;
+static unsigned id_read_pending,confirm_stage,cal_calls,history,fifo_index,cal_loads,panel_clears;
 static unsigned checks,selector,draws,files,outputs,adc_mode,adc_a,adc_b,screen_clears,app_clears;
 static unsigned key_status=0xffff;
 static char footer[64];
 static unsigned watch_settle,expected_mode,wrong_settle;
 static uint32_t fake_cycles,capture_started,first_record_at;
-static unsigned capture_case,record_count;
+static unsigned capture_case,record_count,range_sets,adc_controls,clock_arr,clock_psc;
+static uint32_t fifo_started;
+static unsigned timer_running;
+static unsigned hw_test,hw_ready,hw_mode,hw_raw,hw_pre,hw_waiting,hw_ticks;
+static unsigned hold_on_read;
+static uint32_t noise_latency;
 #define CHECK(x) do {++checks;if(!(x)){fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);exit(1);}}while(0)
 u8 Current,Detail[14],FlagMeter,FlagFrameMode,FrameMode,OSBuffer,OSAvg,OsBufferLogicFlag;
 u8 ShowFFT,Det,TrgAuto,CurDefTime,OsChartFlag,EnableCursorDisplay,DigChLockout,DownConvertMode,Sweep,CalibrateMode;
+u8 FPGAosFlag,FPGAsubVer=1;
+u8 OffsetSelect,OS_RateSelect;
+u8 UpdateMeter=4;
+u8 GenAdjustMode,PWAdjustMode,GenBaudAdjSpeed,GenUartMode=3,GenUartCont,GenUartAdj,GenUartStopBits,InitiateUartGen,StartUart;
+u8 FastDimAdjust,HboldAdjust,AdjBeepLevel;
+uc8 ScaleIndex[17]={1,1,1,1,1,1,1,1,1,1,1,2,4,10,20,40,80};
+u16 GenBaudIndex=7500,ArbtSampleNumber,DirRange;
+u32 GenBaudRate=9600,UartFileSize;
+s8 GenFreqShift;
+char Label[15][13],Ext[4],SelectedFileName[9];
+void OutputAdjust(void){}
+void PWMdutyControl(u8 direction){(void)direction;}
+void PWMscaleReset(u8 direction){(void)direction;}
+const char F_UNIT[12]="Hz",T_UNIT[12]="ns",V_UNIT[12]="uV";
+void Int2Str(char *out,s32 value,const char *unit,u8 precision,u8 mode,s8 shift)
+{(void)value;(void)unit;(void)precision;(void)mode;(void)shift;out[0]=0;}
+u8 ReadDir(char *ext){(void)ext;return 0;}
+u8 Load_Arbt(u8 number){(void)number;return UI_ARB_INVALID;}
+u8 Load_Uart(u8 number){(void)number;return UI_UART_INVALID;}
 vu8 Key_Buffer;vu16 Delay_Cnt,PD_Cnt,CursorDisplayTimer;
-u16 MAX_X;menu Title[13][4];meter Meter[9];trigg V_Trigg[4];s16 PPM_Comp;
+vu8 Twink;
+void Print_Str(u16 x,u16 y,u16 color,u8 mode,char *s){(void)x;(void)y;(void)color;(void)mode;(void)s;}
+void PrintDir(u16 row,u8 buffer,u8 mode){(void)row;(void)buffer;(void)mode;}
+void ClearScreenArea(u16 x0,u16 x1,u8 y0,u8 y1){(void)x0;(void)x1;(void)y0;(void)y1;}
+u16 MAX_X;menu Title[13][4];meter Meter[9];trigg V_Trigg[4];s16 PPM_Comp;u8 ADCoffset=54;
+u32 DataBuf[4096];
 static Y_attr attributes[8];Y_attr *Y_Attr=attributes;
+static X_attr xattributes[27];X_attr *X_Attr=xattributes;
 uint32_t native_test_demcr,native_test_dwt;
 uint32_t NativeTestCycles(void){if(watch_settle && adc_mode!=expected_mode)++wrong_settle;fake_cycles+=720;return fake_cycles;}
 uint32_t Scope144_Crc(const void *bytes,uint32_t count)
@@ -39,35 +72,91 @@ u32 __Get(u8 object)
         return key_status;
     }
     if(object==0 && id_read_pending){id_read_pending=0;return selector==0?0x5731:(selector==1?0x0101:(selector==2?0x0102:0));}
-    if(object==FIFO_DIGIT)return capture_case==6?0:0x28;
+    if(object==V_BATTERY)return 3700;
+    if(object==FIFO_DIGIT)return hw_test && hw_mode!=UNCONDITION?(hw_ready?0x2c:0):(capture_case==6?0:0x2c);
     return 0;
 }
 void __Set(u8 object,u32 value)
 {
     if(object==37){selector=(unsigned)value;id_read_pending=1;}
-    if(object==ADC_MODE)adc_mode=(unsigned)value;
-    if(object==FIFO_CLR && value==W_PTR){fifo_index=0;if(!record_count)first_record_at=fake_cycles;++record_count;}
-    if(object==CH_A_RANGE)adc_a=(unsigned)value;
+    if(object==TRIGG_MODE)hw_mode=(unsigned)value;
+    if(object==V_THRESHOLD)hw_raw=(unsigned)value;
+    if(object==T_THRESHOLD)hw_ticks=(unsigned)value;
+    if(object==32+8)hw_pre=(hw_pre&0xff00)|(unsigned)value;
+    if(object==32+9)hw_pre=(hw_pre&255)|((unsigned)value<<8);
+    if(object==ADC_MODE){adc_mode=(unsigned)value;if(watch_settle)wrong_settle=0;}
+    if(object==ADC_CTRL)++adc_controls;
+    if(object==STANDBY)timer_running=value==DN;
+    if(object==T_BASE_ARR)clock_arr=(unsigned)value;
+    if(object==T_BASE_PSC)clock_psc=(unsigned)value;
+    if(object==FIFO_CLR && value==W_PTR){fifo_started=fake_cycles;fifo_index=0;if(!record_count)first_record_at=fake_cycles;++record_count;}
+    if(object==CH_A_RANGE){adc_a=(unsigned)value;++range_sets;}
     if(object==CH_B_RANGE)adc_b=(unsigned)value;
 }
 u32 __Read_FIFO(void)
 {
     unsigned index=fifo_index++,a=55,b=55;
-    if(history && index<=152)return 0xffff;
+    if(_Kind==5 && !(index%16))fake_cycles+=noise_latency;
+    if(hold_on_read && index==200) {
+        hold_on_read=0;key_status&=~KEY1_STATUS;Key_Buffer=KEY1;
+    }
+    if(hw_test && clock_arr==0 && hw_mode!=UNCONDITION) {
+        CHECK(hw_ready && index<4097 && hw_pre==150 && adc_b==8 && adc_mode==INTERLACE);
+        unsigned kind=hw_mode&7u,boundary=kind>=4?149u:150u;
+        unsigned falling=kind==0 || kind==2 || kind>=6;
+        a=index<boundary?hw_raw-14:hw_raw+14;
+        if(falling)a=index<boundary?hw_raw+14:hw_raw-14;
+        if(hw_mode>=16 && hw_mode<32) {
+            unsigned mask=1u<<((hw_mode&8)?17:16),high=(index>=boundary)^falling;
+            return index<3?0xffffffffu:0x2c0000u|(high?mask:0)|(a<<8)|a;
+        }
+        return index<3?0xffffffffu:0x2c0000u|(((index-1)&3)<<16)|(a<<8)|a;
+    }
+    if(clock_arr==239) {
+        CHECK(index<4096 && adc_mode==SEPARATE && !clock_psc && timer_running);
+        CHECK((uint32_t)(fake_cycles-fifo_started)>=20u*72000u);
+    }
+    if(history && clock_arr!=239 && index<=152)return 0xffff;
     if(capture_case==1)b=record_count<=4?75-record_count*5:55;
-    if(capture_case==2){a=record_count%2?53:57;b=record_count%2?55:59;}
+    if(capture_case==2){a=index%2?53:57;b=index%2?55:59;}
     if(capture_case==3 || (capture_case==7 && record_count==1) || (capture_case==11 && record_count==2))return 0xffff;
-    if(capture_case==10)b=((record_count>1?record_count-2:0)/8)%2?59:55;
-    if(capture_case==12 && record_count>1 && (record_count-1)%8==0)b=255;
+    if(capture_case==10)b=record_count%2?59:55;
+    if(capture_case==12 && record_count>1 && index>=3584)b=255;
     if(capture_case==9) {
         uint32_t ms=(fake_cycles-capture_started)/72000u;
         b=55+(ms<600?(600-ms)/10:0);
+    }
+    if(capture_case==13) {
+        a=165;b=163;
+        if(record_count>1 && index==200)a=0;
+        if(record_count>1 && index==201)b=255;
     }
     if(capture_case==8) {
         unsigned quarters=(record_count-1)*3;
         b=55+quarters/4+(index%4<quarters%4);
     }
-    return a|(b<<8);
+    if(capture_case==14){if(index==0){a=56;b=56;}if(index==4095){a=57;b=58;}}
+    if(capture_case==15){if(index==0)a=0;if(index==4095)b=255;}
+    if(capture_case==17){a=70;b=adc_b==8?72:95;}
+    /* Synthetic record matching the user's raw means/extrema and 1/3 rails;
+     * the intermediate samples are invented, not recovered device data. */
+    if(capture_case==18) {
+        a=166;b=165;
+        if(index==0)a=255;else if(index==1)a=87;else if(index<225)a=165;
+        if(index<3)b=255;else if(index==3)b=72;else if(index<1238)b=164;
+    }
+    if(capture_case>=19 && capture_case<=23) {
+        a=100;b=120;
+        if(capture_case==19){if(index<4)a=255;if(index>=4 && index<8)b=0;}
+        if(capture_case==20 && index<5)a=255;
+        if(capture_case==21 && index<5)b=0;
+        if(capture_case==22 && index<4){a=0;b=255;}
+        if(capture_case==23){a=0;b=255;}
+    }
+    if(capture_case==24){a=9;b=200;}
+    if(capture_case==25){a=246;b=150;}
+    if(capture_case==26){a=10;b=245;if(index<4){a=255;b=0;}}
+    return a|(b<<8)|(clock_arr==239?0:(((index/32)&3)<<16)|0x2c0000u);
 }
 void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
 {(void)x;(void)color;(void)mode;if(y==0){strncpy(footer,s,63);footer[63]=0;}}
@@ -76,38 +165,76 @@ void __Point_SCR(u16 x,u16 y){(void)x;(void)y;}
 void __LCD_SetPixl(u16 color){(void)color;}
 u8 ChartLogic(void){return 0;}
 void App_init(u8 clear){app_clears+=clear;}
-void Calibrat(u8 channel){CHECK(channel==TRACK1);CHECK(!Wildcat144_Active());++cal_calls;key_status|=KEY2_STATUS;}
+void Clear_Meter_Area(void){++panel_clears;}
+void Menu144_Calibration(unsigned status){CHECK(status<=2);}
+void Menu144_TriggerWait(unsigned waiting){hw_waiting=waiting;}
+static unsigned presentation_available;
+void Menu144_Presentation(unsigned available){presentation_available=available;}
+void Menu144_Cursor(unsigned base){CHECK(base<3);}
+void Calibrat(u8 channel){CHECK(channel==TRACK1);CHECK(!Wildcat144_Active());if(hw_test)CHECK(hw_mode==UNCONDITION);++cal_calls;key_status|=KEY2_STATUS;}
+static unsigned native_releases;
+void Process144_ReleaseBuffer(void){++native_releases;}
 void Update_Range(void){}
 void Update_Base(void){}
-void Update_Output(void){++outputs;}
+void Update_Output(void){Generator_Validate();++outputs;}
 void Update_Trig(u8 service){(void)service;}
 static unsigned ui_calls;
+static int32_t shown_dt;static unsigned shown_valid;
+static Scope144Measurements shown_measure;
 void Menu144_View(const Scope144Measurements *m,int32_t dt,int32_t dv,unsigned valid,unsigned fps,unsigned refresh)
-{(void)refresh;(void)m;(void)dt;(void)dv;(void)valid;(void)fps;++ui_calls;}
+{(void)refresh;(void)dv;(void)fps;shown_measure=*m;shown_dt=dt;shown_valid=valid;++ui_calls;}
 
 void Process144_Draw(const Scope144Cal *c,const int32_t *q,unsigned start,unsigned base,unsigned pos,unsigned inv)
-{(void)c;(void)q;(void)start;(void)base;(void)pos;(void)inv;++draws;}
+{CHECK(c->reference_uv==1234567+_A_Range*10000);(void)q;(void)start;(void)base;(void)pos;(void)inv;++draws;}
+static const Frame144 *last_frame;
+static unsigned frame_clears;
+void Process144_ClearFrame(void){++frame_clears;}
+static ViewWindowGeometry last_view;
+static uint32_t held_epoch,held_hash;
+void Process144_DrawFrame(const Frame144 *f,const ViewWindowGeometry *view,unsigned pos,unsigned inv)
+{
+    CHECK(Frame144_Valid(f) && f->words==(const uint32_t *)DataBuf);
+    CHECK(f->capture.fifo_words==4096);
+    if(hw_test && f->capture.trigger_kind>=CAPTURE_TRIGGER_HARDWARE_A) {
+        CHECK(f->capture.valid_begin==2 && f->capture.time_samples==8188);
+        unsigned slot=f->capture.trigger_kind==CAPTURE_TRIGGER_HARDWARE_A?295u:306u;
+        if((hw_mode&7u)>=4)slot-=2;
+        CHECK(f->capture.trigger_q16==slot*65536);
+        CHECK(f->capture.flags&CAPTURE_WINDOW_PRETRIGGER);
+    } else CHECK(f->capture.valid_begin==152 && f->capture.time_samples==7888);
+    CHECK(f->calibration.reference_uv==1234567+_A_Range*10000);
+    CHECK(view->capture_count==f->capture.time_samples && view->visible_columns==(unsigned)(MAX_X-MIN_X));
+    CHECK(f->capture.sample_phase==CAPTURE_PHASE_B_A);
+    last_frame=f;last_view=*view;(void)pos;(void)inv;++draws;
+}
 int File144_CalLoad(Scope144Bank *bank)
 {
-    unsigned i;memset(bank,0,sizeof(*bank));
-    for(i=0;i<8;++i){Scope144Cal c={1024,0,55*1024,125*1024,5000000,1};bank->range[i]=c;}
-    return 1;
+    unsigned i;++cal_loads;memset(bank,0,sizeof(*bank));
+    for(i=0;i<8;++i){Scope144Cal c={1024,0,55*1024,125*1024,1234567+(int32_t)i*10000,1,1024,0,1024,1024,54,1024,1024};bank->range[i]=c;}
+    bank->battery[0]=3700;return 1;
 }
 int File144_CalSave(Scope144Bank *bank){(void)bank;++files;return 0;}
 int File144_Csv(const Scope144Cal *c,const int32_t *q,const uint16_t *pairs,unsigned range,unsigned base,unsigned num,int factor)
-{(void)c;(void)q;(void)pairs;(void)range;(void)base;(void)num;(void)factor;++files;confirm_stage=1;return 0;}
+{(void)c;(void)q;(void)pairs;(void)range;(void)base;(void)num;(void)factor;++files;return 0;}
+int File144_CsvFrame(const Frame144 *f,unsigned base,unsigned num,int factor)
+{
+    CHECK(f==last_frame && Frame144_Valid(f));
+    CHECK(f->capture.epoch==held_epoch && Scope144_RealCrc(DataBuf,sizeof DataBuf)==held_hash);
+    (void)base;(void)num;(void)factor;++files;return 0;
+}
 static int CalScenario(unsigned scenario,unsigned mode,CalMean *mean)
 {
-    int result;CalCaptureStats stats;
-    capture_case=scenario;record_count=0;capture_started=fake_cycles;first_record_at=0;
-    expected_mode=mode?INTERLACE:SEPARATE;watch_settle=1;wrong_settle=0;
+    int result;CalCaptureStats stats;unsigned controls_before=adc_controls;
+    timer_running=0;capture_case=scenario;record_count=0;capture_started=fake_cycles;first_record_at=0;
+    expected_mode=SEPARATE;watch_settle=1;wrong_settle=0;
     result=WildcatCalibration_Capture(0,mode,79,79,mean);
-    watch_settle=0;CHECK(!wrong_settle);
+    watch_settle=0;CHECK(!wrong_settle && adc_controls==controls_before+1);
+    CHECK(adc_mode==SEPARATE && clock_arr==239 && !clock_psc && adc_b==(mode?8:0));
     WildcatCalibration_Diagnostics(&stats);
     CHECK(stats.records<=record_count && stats.window<=3);
     CHECK(stats.elapsed_ms<=2021);
     if(result==1) {
-        CHECK(stats.records>=25 && stats.blocks>=3 && stats.window==3);
+        CHECK(stats.records>=4 && stats.blocks>=3 && stats.window==3);
         CHECK(stats.block_ms>=20 && stats.spread_a<=1024 && stats.spread_b<=1024);
     }
     CHECK((uint32_t)(fake_cycles-capture_started)<=2021u*72000u);
@@ -116,23 +243,365 @@ static int CalScenario(unsigned scenario,unsigned mode,CalMean *mean)
 }
 static void KeyEvent(unsigned key){Key_Buffer=(u8)key;CHECK(Wildcat144_Service());}
 static void SelectGroup(unsigned group){unsigned count=0;while(Current!=group){CHECK(++count<22);KeyEvent(K_ITEM_INC);}}
+static void CheckWindow(void)
+{
+    unsigned first,last;ViewWindowOverview o;int32_t a,b;
+    CHECK(shown_valid && Frame144_Valid(last_frame));
+    CHECK(last_frame->capture.first_visible_q16==last_view.window_start_q16);
+    CHECK(ViewWindow_Overview(&last_view,91,216,&o));
+    if(_State.Value==HOLD) {
+        CHECK(Wildcat144_Overview(&first,&last));
+        CHECK(first==o.first && last==o.last && first>=91 && last<=306);
+    } else CHECK(!Wildcat144_Overview(&first,&last) && !first && !last);
+    CHECK(Wildcat144_CursorTime((unsigned)_T1,&a) && Frame144_TimeAt(last_frame,&last_view,(unsigned)_T1,&b) && a==b);
+    CHECK(Frame144_TimeDelta(last_frame,&last_view,(unsigned)_T1,(unsigned)_T2,&a) && a==shown_dt);
+}
+static void BrowseHeld(void)
+{
+    unsigned i,reads=fifo_index,records=record_count,epoch=last_frame->capture.epoch;
+    unsigned hash=Scope144_RealCrc(DataBuf,sizeof DataBuf),group=Current,detail=Detail[Current];
+    int32_t before,after,dt;
+    Current=T_BASE;Detail[T_BASE]=BASE;
+    while(_T_base!=19)KeyEvent(K_INDEX_INC);
+    Detail[T_BASE]=XPOSI;CheckWindow();dt=shown_dt;
+    CHECK(Wildcat144_CursorTime(30,&before));KeyEvent(K_INDEX_INC);
+    CHECK(Wildcat144_CursorTime(30,&after) && after>before && shown_dt==dt);
+    CHECK(Wildcat144_XposTime(&after) && after>0);
+    for(i=0;i<4000;++i)KeyEvent(K_INDEX_INC);
+    CheckWindow();CHECK(last_view.window_end_q16==(last_frame->capture.time_samples-1u)*65536);
+    CHECK(Wildcat144_CursorTime(last_view.visible_columns-1,&after));
+    CHECK(Frame144_TimeAt(last_frame,&last_view,last_view.visible_columns-1,&before) && after==before);
+    {uint32_t start=last_view.window_start_q16;KeyEvent(K_INDEX_INC);CHECK(last_view.window_start_q16==start);}
+    KeyEvent(KEY3);KeyEvent(KEY3);KeyEvent(KEY3);CheckWindow();
+    Detail[T_BASE]=BASE;KeyEvent(K_INDEX_INC);CheckWindow();
+    while(_T_base!=19)KeyEvent(K_INDEX_INC);
+    Detail[T_BASE]=XPOSI;for(i=0;i<4000;++i)KeyEvent(K_INDEX_DEC);
+    CHECK(!last_view.window_start_q16 && Wildcat144_XposTime(&after) && !after);CheckWindow();
+    CHECK(fifo_index==reads && record_count==records && last_frame->capture.epoch==epoch);
+    CHECK(Scope144_RealCrc(DataBuf,sizeof DataBuf)==hash && _State.Value==HOLD);
+    Current=(u8)group;Detail[group]=(u8)detail;
+}
+static void HardwareTriggers(void)
+{
+    unsigned i,records,painted,detail;
+    WildcatFpga=FpgaProfile_Decode(0x5731,0x0101,0x0102);
+    hw_test=1;hw_ready=0;history=0;TrgAuto=0;capture_case=0;
+    _Mode=NORH;_State.Value=RUN;_A_Range=0;_1_source=1;_T_base=21;_Tr_kind=1;
+    Title[TRACK1][COUPLE].Value=SCOPE144_DC;Current=TRACK1;Detail[TRACK1]=RANGE;
+    CHECK(Wildcat144_Service());
+    CHECK(hw_mode==1 && hw_raw==55 && hw_pre==150);
+    CHECK(hw_waiting && !fifo_index && _State.Value==RUN);
+    records=record_count;painted=draws;
+    for(i=0;i<20;++i)KeyEvent(0);
+    KeyEvent(KEY3);KeyEvent(KEY3);KeyEvent(KEY3);
+    CHECK(record_count==records && !fifo_index && draws==painted && hw_waiting);
+    /* Timebase and panel are display-only while the hardware is armed. */
+    Current=T_BASE;Detail[T_BASE]=BASE;KeyEvent(K_INDEX_INC);
+    CHECK(record_count==records && _T_base==20);
+    Current=TRIGG;Detail[TRIGG]=2;KeyEvent(K_INDEX_INC);
+    CHECK(record_count==records+2 && hw_raw==59 && hw_waiting);records=record_count;
+    Detail[TRIGG]=1;KeyEvent(K_INDEX_DEC);
+    CHECK(record_count==records+2 && hw_mode==0);records=record_count;
+    Current=TRACK1;Detail[TRACK1]=SOURCE;KeyEvent(K_INDEX_INC);
+    CHECK(record_count==records+2 && hw_mode==1 && hw_raw==51);records=record_count;
+    KeyEvent(K_INDEX_INC);CHECK(hw_raw==55 && hw_mode==0); /* x10 without inversion. */
+    KeyEvent(K_INDEX_INC);KeyEvent(K_INDEX_INC); /* Restore A, no inversion. */
+    CHECK(_1_source==1 && hw_mode==0 && hw_raw==59);
+    records=record_count;ADCoffset=53;KeyEvent(0);CHECK(record_count==records+2 && hw_raw==58);
+    ADCoffset=54;KeyEvent(0);CHECK(hw_raw==59);
+    Current=TRACK1;Detail[TRACK1]=RANGE;KeyEvent(K_INDEX_INC);CHECK(hw_waiting && adc_a==1);
+    /* NORM publishes only after all chunks, then re-arms a distinct epoch. */
+    hw_ready=1;painted=draws;
+    for(i=0;i<7;++i){KeyEvent(0);CHECK(hw_waiting && draws==painted && fifo_index==1+(i+1)*512);}
+    KeyEvent(0);CHECK(!hw_waiting && draws==painted+1 && _State.Value==RUN && fifo_index==4097);
+    held_epoch=last_frame->capture.epoch;hw_ready=0;detail=frame_clears;KeyEvent(0);
+    CHECK(hw_waiting && last_frame->capture.epoch!=held_epoch && !last_frame->capture.time_samples);
+    CHECK(frame_clears==detail && !shown_valid && presentation_available);
+    {
+        Scope144Measurements analog=shown_measure,digital;
+        CHECK(Wildcat144_DigitalMeasurement(0,&digital));
+        hw_ready=1;KeyEvent(0);
+        CHECK(hw_waiting==2 && fifo_index==513 && !shown_valid && presentation_available);
+        CHECK(!memcmp(&analog,&shown_measure,sizeof(analog)) && frame_clears==detail);
+        CHECK(Wildcat144_DigitalMeasurement(0,&digital));
+    }
+    /* K4 navigates while armed; only HOLD cancels acquisition. */
+    detail=Detail[TRACK1];KeyEvent(KEY4);CHECK(hw_waiting && _State.Value==RUN && Detail[TRACK1]==(detail+1)%4);
+    KeyEvent(KEY1);CHECK(!hw_waiting && _State.Value==HOLD && !presentation_available);
+    hw_ready=0;
+    records=record_count;KeyEvent(0);CHECK(record_count==records && !fifo_index);
+    KeyEvent(KEY1);CHECK(hw_waiting && _State.Value==RUN);
+    painted=draws;fake_cycles+=2000u*72000u;KeyEvent(0);
+    CHECK(!hw_waiting && _State.Value==RUN && draws==painted);KeyEvent(0);CHECK(hw_waiting);
+    /* Abort hardware before the calibration wizard borrows DataBuf. */
+    Current=TRACK1;records=record_count;detail=cal_calls;
+    key_status&=~KEY2_STATUS;KeyEvent(KEY2);fake_cycles+=3000u*72000u;KeyEvent(0);
+    CHECK(cal_calls==detail+1 && hw_waiting && record_count==records+2);
+    key_status|=KEY2_STATUS;KeyEvent(0);
+    /* Switching to SGL preserves the armed event; timeout stops until K1. */
+    Current=T_BASE;Detail[T_BASE]=MODE;KeyEvent(K_INDEX_INC);CHECK(_Mode==SGL);
+    fake_cycles+=2000u*72000u;KeyEvent(0);CHECK(!hw_waiting && _State.Value==HOLD);
+    KeyEvent(KEY1);CHECK(hw_waiting);hw_ready=1;
+    for(i=0;i<8;++i)KeyEvent(0);
+    CHECK(_State.Value==HOLD && !hw_waiting && Frame144_Valid(last_frame));
+    CHECK(last_frame->capture.trigger_kind==CAPTURE_TRIGGER_HARDWARE_A);
+    CheckWindow();CHECK(Wildcat144_TriggerColumn()==MIN_X+30);
+    {int32_t a,b,dt=shown_dt;uint32_t epoch=last_frame->capture.epoch;
+     Current=T_BASE;Detail[T_BASE]=XPOSI;CHECK(Wildcat144_CursorTime(30,&a) && !a);
+     KeyEvent(K_INDEX_INC);CHECK(Wildcat144_CursorTime(30,&b) && b>a && shown_dt==dt);
+     CHECK(Wildcat144_TriggerColumn()==MIN_X+29 && last_frame->capture.epoch==epoch);
+     KeyEvent(K_INDEX_DEC);CHECK(Wildcat144_TriggerColumn()==MIN_X+30);CheckWindow();}
+    held_epoch=last_frame->capture.epoch;held_hash=Scope144_RealCrc(DataBuf,sizeof DataBuf);
+    records=record_count;KeyEvent(KEY3);KeyEvent(KEY3);KeyEvent(KEY3);
+    CHECK(record_count==records && last_frame->capture.epoch==held_epoch && fifo_index==4097);
+    CHECK(Scope144_RealCrc(DataBuf,sizeof DataBuf)==held_hash);
+    Current=FILE;Detail[FILE]=1;KeyEvent(KEY3);CHECK(record_count==records);
+    /* HOLD during a partial transfer cancels; no partial frame is exported. */
+    Current=TRACK1;KeyEvent(KEY1);CHECK(hw_waiting && fifo_index==513);
+    KeyEvent(KEY1);CHECK(!hw_waiting && _State.Value==HOLD && !last_frame->capture.time_samples);
+    /* AUTO switch must disarm pending HW before its unconditional capture. */
+    hw_ready=0;KeyEvent(KEY1);CHECK(hw_waiting);
+    Current=T_BASE;Detail[T_BASE]=MODE;KeyEvent(K_INDEX_INC);
+    CHECK(_Mode==AUTO && !hw_waiting && hw_mode==UNCONDITION && fifo_index==4097);
+    CHECK(last_frame->capture.time_samples==7888);
+    KeyEvent(KEY1);CHECK(_State.Value==HOLD);
+    /* Exit while waiting also aborts and restores the normal acquisition. */
+    KeyEvent(K_INDEX_INC);CHECK(_Mode==NORH);KeyEvent(KEY1);CHECK(hw_waiting);
+    Current=TRACK1;KeyEvent(K_ITEM_S);CHECK(!Wildcat144_Active() && hw_mode==UNCONDITION && adc_mode==SEPARATE);
+    hw_test=0;hw_ready=0;ADCoffset=54;
+}
+static void DigitalUI(void)
+{
+    unsigned source,falling,i,reads,records;int32_t ps;Scope144Measurements m;
+    hw_test=1;hw_ready=0;capture_case=0;history=0;TrgAuto=0;
+    for(source=TRACK3;source<=TRACK4;++source)for(falling=0;falling<2;++falling) {
+        _Mode=SGL;_State.Value=RUN;_Tr_source=TRACK2;_Tr_kind=falling?0:1;
+        _3_source=1;_4_source=1;_3_posi=60;_4_posi=20;_T_base=21;
+        Title[TRACK1][COUPLE].Value=SCOPE144_DC;Current=TRACK2;hw_ready=0;
+        CHECK(Wildcat144_Service() && Current==TRACK1 && _Tr_source==TRACK1 && _3_source==1 && _4_source==1);
+        Current=TRIGG;Detail[TRIGG]=SOURCE;
+        for(i=TRACK1;i<source;i+=(i==TRACK1?2:1))KeyEvent(K_INDEX_INC);
+        CHECK(_Tr_source==(s16)source && hw_mode==source*8+!falling && hw_waiting);
+        records=record_count;Current=TRACK3;Detail[TRACK3]=SOURCE;
+        KeyEvent(K_INDEX_DEC);CHECK(_3_source==0 && record_count==records);
+        KeyEvent(K_INDEX_INC);CHECK(_3_source==1 && record_count==records);
+        Current=TRACK4;Detail[TRACK4]=POSI;KeyEvent(K_INDEX_INC);CHECK(_4_posi==21);
+        hw_ready=1;for(i=0;i<8;++i)KeyEvent(0);
+        CHECK(_State.Value==HOLD && !hw_waiting);
+        CHECK(last_frame->capture.trigger_kind==CAPTURE_TRIGGER_HARDWARE_C+source-TRACK3);
+        CHECK(last_frame->trigger_source==source && last_frame->capture.trigger_q16==306u*65536);
+        CHECK(Wildcat144_CursorTime(30,&ps) && !ps);CheckWindow();
+        records=record_count;reads=fifo_index;
+        Current=TRACK3;Detail[TRACK3]=POSI;KeyEvent(K_INDEX_INC);CHECK(_3_posi==61);
+        Current=TRACK4;Detail[TRACK4]=SOURCE;KeyEvent(K_INDEX_DEC);CHECK(!_4_source);
+        KeyEvent(K_INDEX_INC);CHECK(_4_source==1);
+        Current=METER_0;Detail[13]=0;Meter[0].Item=FRQ;Meter[0].Track=TRACK1;
+        KeyEvent(KEY4);CHECK(Detail[13]==1);KeyEvent(K_INDEX_INC);CHECK(Meter[0].Track==TRACK3);
+        KeyEvent(K_INDEX_INC);CHECK(Meter[0].Track==TRACK4);
+        CHECK(!Wildcat144_DigitalMeasurement(2,&m));
+        Current=T_BASE;Detail[T_BASE]=XPOSI;KeyEvent(K_INDEX_INC);KeyEvent(KEY3);KeyEvent(KEY3);KeyEvent(KEY3);
+        CHECK(record_count==records && fifo_index==reads);CheckWindow();
+        Current=TRACK1;KeyEvent(K_ITEM_S);
+        CHECK(!Wildcat144_Active() && Current==TRACK2 && _Tr_source==TRACK2 && _3_source==1 && _4_source==1);
+        CHECK(_3_posi==60 && _4_posi==20 && adc_mode==SEPARATE);
+    }
+    _Tr_source=TRACK1;hw_test=0;hw_ready=0;
+}
+static void TriggerNavigation(void)
+{
+    unsigned i,source;
+    hw_test=1;hw_ready=0;capture_case=0;TrgAuto=0;TriggerLevelSelect=0;
+    _Mode=NORH;_State.Value=RUN;_Tr_source=TRACK1;_Tr_kind=1;_T_base=21;
+    _A_Range=0;_1_source=1;Current=T_BASE;Detail[T_BASE]=BASE;
+    /* Native contexts and transient edit cursors must not leak across modes. */
+    Detail[OUTPUT]=FRQN;OffsetSelect=1;OS_RateSelect=1;
+    Title[TRACK1][COUPLE].Value=SCOPE144_DC;CHECK(Wildcat144_Service());
+    for(source=TRACK1;source<=TRACK4;++source)if(source!=TRACK2) {
+        Current=TRIGG;Detail[TRIGG]=SOURCE;TriggerLevelSelect=0;
+        _Tr_source=(s16)source;KeyEvent(0);
+        KeyEvent(KEY4);CHECK(Detail[TRIGG]==TR_KIND && hw_waiting && _State.Value==RUN);
+        if(source==TRACK1) {
+            KeyEvent(KEY4);CHECK(Detail[TRIGG]==2 && !TriggerLevelSelect);
+            KeyEvent(KEY4);CHECK(Detail[TRIGG]==2 && TriggerLevelSelect);
+            for(i=0;i<8;++i) {KeyEvent(K_INDEX_INC);CHECK(TrgAuto==(i+1)%4 && Detail[TRIGG]==2 && hw_waiting);}
+            for(i=0;i<8;++i) {KeyEvent(K_INDEX_DEC);CHECK(TrgAuto==(7-i)%4 && Detail[TRIGG]==2 && hw_waiting);}
+        }
+        KeyEvent(KEY4);CHECK(Detail[TRIGG]==SOURCE && !TriggerLevelSelect);
+    }
+    Current=T_BASE;Detail[T_BASE]=XPOSI;Detail[OUTPUT]=OUTATT;TriggerLevelSelect=1;
+    KeyEvent(K_ITEM_S);CHECK(!Wildcat144_Active());
+    CHECK(Current==T_BASE && Detail[T_BASE]==BASE && Detail[OUTPUT]==FRQN && !TriggerLevelSelect);
+    CHECK(!OffsetSelect && !OS_RateSelect && !presentation_available);
+    hw_test=0;hw_ready=0;_Tr_source=TRACK1;TrgAuto=0;
+}
+static void HoldDuringPoll(void)
+{
+    hw_test=1;hw_ready=0;capture_case=0;TrgAuto=0;
+    _Mode=NORH;_State.Value=RUN;_Tr_source=TRACK1;_Tr_kind=1;_T_base=21;
+    _A_Range=0;_1_source=1;Current=TRACK1;
+    Title[TRACK1][COUPLE].Value=SCOPE144_DC;CHECK(Wildcat144_Service());
+    hold_on_read=1;hw_ready=1;KeyEvent(0);
+    CHECK(!hold_on_read && !hw_waiting && _State.Value==HOLD && Key_Buffer==KEY1);
+    CHECK(Wildcat144_Service() && _State.Value==HOLD);
+    KeyEvent(0);CHECK(_State.Value==HOLD);
+    key_status|=KEY1_STATUS;KeyEvent(0);CHECK(_State.Value==HOLD);
+    KeyEvent(K_ITEM_S);CHECK(!Wildcat144_Active());hw_test=hw_ready=0;
+}
+static void AllTriggerKinds(void)
+{
+    unsigned source,kind,invert,base,mode,i,records,reads;
+    const unsigned inverted[8]={1,0,3,2,6,7,4,5};
+    hw_test=1;history=0;TrgAuto=0;capture_case=0;ADCoffset=54;
+    for(source=TRACK1;source<=TRACK4;++source)if(source!=TRACK2)
+    for(kind=0;kind<9;++kind)for(invert=0;invert<(source==TRACK1?2u:1u);++invert)
+    for(base=0;base<3;++base)for(mode=0;mode<3;++mode) {
+        unsigned physical=kind==8?3:kind,expected,slot;
+        if(!mode && kind<2)continue; /* Existing AUTO edge path is covered above. */
+        if(source==TRACK1 && invert)physical=inverted[physical];
+        expected=source*8+physical;
+        _Mode=mode==0?AUTO:mode==1?NORH:SGL;_State.Value=RUN;
+        _Tr_source=(s16)source;_Tr_kind=(s16)kind;_T_base=(s16)(21-base);
+        _A_Range=0;_1_source=(s16)(1+invert);_T1=30;_T2=180;
+        Title[TRACK1][COUPLE].Value=SCOPE144_DC;Current=TRACK1;hw_ready=0;
+        CHECK(Wildcat144_Service());
+        CHECK(_Tr_kind==(s16)kind && hw_mode==expected && hw_waiting && !fifo_index);
+        CHECK(hw_ticks==(base==0?36u:base==1?72u:180u));
+        records=record_count;hw_ready=1;
+        for(i=0;i<8;++i)KeyEvent(0);
+        CHECK(shown_valid && !hw_waiting && fifo_index==4097 && record_count==records);
+        CHECK(_State.Value==(mode==2?HOLD:RUN));
+        slot=source==TRACK1?295:306;if(kind>=4 && kind<=7)slot-=2;
+        CHECK(last_frame->trigger_source==source && last_frame->capture.trigger_q16==slot*65536);
+        CHECK(last_frame->capture.trigger_kind==(source==TRACK1?CAPTURE_TRIGGER_HARDWARE_A:
+            CAPTURE_TRIGGER_HARDWARE_C+source-TRACK3));
+        CHECK(Wildcat144_TriggerColumn()==MIN_X+30);CheckWindow();
+        if(mode!=2)KeyEvent(KEY1);
+        reads=fifo_index;records=record_count;
+        /* All nine choices cycle in both directions in HOLD without reads. */
+        Current=TRIGG;Detail[TRIGG]=TR_KIND;
+        for(i=0;i<9;++i){KeyEvent(K_INDEX_INC);CHECK(_Tr_kind==(s16)((kind+i+1)%9));}
+        for(i=0;i<9;++i){KeyEvent(K_INDEX_DEC);CHECK(_Tr_kind==(s16)((kind+17-i)%9));}
+        CHECK(record_count==records && fifo_index==reads);
+        Current=TRACK1;KeyEvent(K_ITEM_S);
+        CHECK(!Wildcat144_Active() && _Tr_source==(s16)source && _Tr_kind==(s16)kind);
+    }
+    /* AUTO without a qualifying pulse: timeout publishes an untriggered,
+     * fresh record, without inventing an event or stopping RUN. */
+    _Mode=AUTO;_State.Value=RUN;_Tr_source=TRACK1;_Tr_kind=4;_T_base=21;
+    _A_Range=0;_1_source=1;Title[TRACK1][COUPLE].Value=SCOPE144_DC;hw_ready=0;
+    CHECK(Wildcat144_Service() && hw_waiting && !fifo_index);
+    records=record_count;fake_cycles+=100u*72000u;KeyEvent(0);
+    CHECK(_State.Value==RUN && !hw_waiting && hw_mode==UNCONDITION && record_count==records+2);
+    CHECK(shown_valid && last_frame->capture.time_samples==7888 &&
+        !(last_frame->capture.flags&CAPTURE_WINDOW_HAS_TRIGGER) && !Wildcat144_TriggerColumn());
+    /* AUTO and NORM must not inherit each other's armed wait deadline. */
+    KeyEvent(0);CHECK(hw_waiting);records=record_count;
+    Current=T_BASE;Detail[T_BASE]=MODE;KeyEvent(K_INDEX_INC);
+    CHECK(_Mode==NORH && hw_waiting && record_count==records+2);records=record_count;
+    fake_cycles+=100u*72000u;KeyEvent(0);
+    CHECK(hw_waiting && record_count==records && _State.Value==RUN);
+    KeyEvent(K_INDEX_DEC);CHECK(_Mode==AUTO && hw_waiting && record_count==records+2);
+    fake_cycles+=100u*72000u;KeyEvent(0);CHECK(!hw_waiting && shown_valid && _State.Value==RUN);
+    /* Width, timebase and source edits re-arm an unfinished pulse wait. */
+    KeyEvent(0);CHECK(hw_waiting);records=record_count;
+    Current=T_VERNIE;Detail[T_VERNIE]=T2;
+    for(i=0;i<5;++i)KeyEvent(K_INDEX_INC);
+    CHECK(hw_waiting && record_count>records && hw_ticks==37);
+    records=record_count;Current=T_BASE;Detail[T_BASE]=BASE;KeyEvent(K_INDEX_INC);
+    CHECK(hw_ticks==74 && record_count==records+2 && hw_waiting);
+    records=record_count;Current=TRIGG;Detail[TRIGG]=SOURCE;KeyEvent(K_INDEX_INC);
+    CHECK(_Tr_source==TRACK3 && hw_mode==20 && record_count==records+2);
+    /* A transfer timeout is a failure, not AUTO's no-event fallback. */
+    hw_ready=1;KeyEvent(0);CHECK(hw_waiting && fifo_index==513);
+    records=record_count;fake_cycles+=1000u*72000u;KeyEvent(0);
+    CHECK(!hw_waiting && _State.Value==HOLD && !shown_valid && !presentation_available && record_count==records+1);
+    Current=TRACK1;KeyEvent(K_ITEM_S);hw_test=hw_ready=0;_Tr_source=TRACK1;
+}
+static void AutoLevels(void)
+{
+    unsigned fraction,invert,probe;Scope144Measurements physical;
+    hw_test=0;history=0;capture_case=2;attributes[0].SCALE=1000;
+    for(fraction=1;fraction<4;++fraction)for(invert=0;invert<2;++invert)for(probe=0;probe<2;++probe) {
+        int32_t low,high,expected;
+        _Mode=AUTO;_State.Value=RUN;_Tr_source=TRACK1;_Tr_kind=1;_T_base=21;
+        _A_Range=0;_1_source=(s16)(1+invert+2*probe);TrgAuto=(u8)fraction;
+        Current=TRACK1;Title[TRACK1][COUPLE].Value=SCOPE144_DC;
+        CHECK(Wildcat144_Service() && shown_valid);
+        CHECK(Frame144_Measure(last_frame,&physical));
+        low=invert?-physical.maximum_uv:physical.minimum_uv;
+        high=invert?-physical.minimum_uv:physical.maximum_uv;
+        expected=low+(high-low)*(int)fraction/4;
+        KeyEvent(KEY1);CHECK(_State.Value==HOLD);
+        CHECK(_Vt1==_1_posi+expected/1000 && TrgAuto==fraction);
+        Current=TRACK1;KeyEvent(K_ITEM_S);CHECK(!Wildcat144_Active());
+    }
+    capture_case=0;TrgAuto=0;attributes[0].SCALE=40000;
+}
+static void NoiseCaptures(void)
+{
+    const unsigned rates[]={0,8,14,15,16,18};unsigned r,i;
+    hw_test=1;capture_case=0;history=0;noise_latency=100000u;
+    for(r=0;r<sizeof(rates)/sizeof(*rates);++r) {
+        _Kind=5;_Frqn=(s16)rates[r];Sweep=0;TrgAuto=0;
+        TIM2->DIER=1;TIM4->DIER=rates[r]<16;
+        _Mode=SGL;_State.Value=RUN;_Tr_source=TRACK1;_Tr_kind=1;_T_base=21;_A_Range=0;_1_source=1;
+        Current=TRACK1;Title[TRACK1][COUPLE].Value=SCOPE144_DC;hw_ready=0;
+        CHECK(Wildcat144_Service() && hw_waiting && TIM2->DIER==1 && TIM4->DIER==(rates[r]<16));
+        hw_ready=1;
+        for(i=0;i<8;++i){unsigned before=fifo_index;KeyEvent(0);CHECK(fifo_index-before<=513);}
+        CHECK(_State.Value==HOLD && shown_valid && last_frame->capture.time_samples==8188);
+        CHECK(TIM2->DIER==1 && TIM4->DIER==(rates[r]<16));CheckWindow();
+        KeyEvent(K_ITEM_S);CHECK(!Wildcat144_Active() && _Kind==5 && _Frqn==(s16)rates[r]);
+        CHECK(TIM2->DIER==1 && TIM4->DIER==(rates[r]<16));
+    }
+    noise_latency=0;hw_ready=hw_test=0;_Kind=6;TIM2->DIER=TIM4->DIER=0;
+}
+static void FailedTransfer(void)
+{
+    unsigned i,cleared;
+    _Kind=6;Sweep=TrgAuto=0;hw_test=1;hw_ready=0;capture_case=0;history=0;
+    _Mode=NORH;_State.Value=RUN;_Tr_source=TRACK1;_Tr_kind=1;_T_base=21;_A_Range=0;_1_source=1;
+    Current=TRACK1;Title[TRACK1][COUPLE].Value=SCOPE144_DC;CHECK(Wildcat144_Service());
+    hw_ready=1;for(i=0;i<8;++i)KeyEvent(0);
+    CHECK(shown_valid && presentation_available);hw_ready=0;KeyEvent(0);
+    CHECK(!shown_valid && presentation_available);hw_ready=1;KeyEvent(0);
+    CHECK(hw_waiting==2 && presentation_available);cleared=frame_clears;
+    fake_cycles+=1000u*72000u;KeyEvent(0);
+    CHECK(!shown_valid && !presentation_available && frame_clears==cleared+1 && _State.Value==RUN);
+    CHECK(!Frame144_Valid(last_frame));KeyEvent(KEY1);CHECK(_State.Value==HOLD);
+    KeyEvent(K_ITEM_S);CHECK(!Wildcat144_Active());hw_test=hw_ready=0;
+}
 int main(void)
 {
     unsigned i,a;static char gen_names[230]={0};
-    CHECK(VirtualAlloc((void *)0x40000000,0x20000,0x3000,4)==(void *)0x40000000);
+    CHECK(VirtualAlloc((void *)0x40000000,0x30000,0x3000,4)==(void *)0x40000000);
+    xattributes[_100uS].PSC=0;xattributes[_100uS].ARR=239;
     for(i=0;i<8;++i){strcpy(attributes[i].STR,"1V");attributes[i].SCALE=40000;}
     Title[OUTPUT][KIND].Str=gen_names;Title[OUTPUT][FRQN].Str=gen_names;
     WildcatFpga=FpgaProfile_Decode(0x5731,0x0101,0x0102);
     Title[0][COUPLE].Value=DC;Detail[0]=COUPLE;
     CHECK(!Wildcat144_Service());
-    Title[0][COUPLE].Value=2;Key_Buffer=K_INDEX_INC;
-    CHECK(Wildcat144_CouplingKey());CHECK(Title[0][COUPLE].Value==SCOPE144_DC);
+    Current=TRACK1;Key_Buffer=K_INDEX_INC;
+    CHECK(!Wildcat144_ModeKey());CHECK(Title[0][COUPLE].Value==DC);
+    Key_Buffer=K_ITEM_S;CHECK(!Wildcat144_ModeKey());
+    FlagFrameMode=1;CHECK(!Wildcat144_ModeKey());
+    OSBuffer=1;OSAvg=1;CHECK(!Wildcat144_ModeKey());
+    OSAvg=0;CHECK(!Wildcat144_ModeKey());
+    FPGAosFlag=1;
+    CHECK(Wildcat144_ModeKey());CHECK(Title[0][COUPLE].Value==SCOPE144_DC);
     FlagMeter=1;Meter[1].Item=FRQ;Meter[1].Track=TRACK2;
     Title[0][RANGE].Value=4;Title[0][POSI].Value=100;Title[RUNNING][STATE].Value=HOLD;
-    Title[OUTPUT][KIND].Value=6;Title[T_BASE][BASE].Value=21;
+    Title[OUTPUT][KIND].Value=6;Title[T_BASE][BASE].Value=20;
     CHECK(Wildcat144_Service());CHECK(Wildcat144_Active() && ui_calls==1 && _State.Value==HOLD && MAX_X==311 && FlagMeter==1);
     CHECK(Meter[1].Item==FRQ && Meter[1].Track==TRACK2 && !app_clears && !screen_clears);
-    CHECK(adc_b==8 && adc_a==4);CHECK(Current==0 && Detail[0]==COUPLE);
+    CHECK(adc_b==8 && adc_a==4);CHECK(Current==TRACK1 && Detail[0]==COUPLE);
+    CHECK(cal_loads==1 && _T_base==20);
+    {unsigned item=Meter[1].Item,track=Meter[1].Track;
+     KeyEvent(KEY3);CHECK(FlagMeter==2 && MAX_X==311);
+     KeyEvent(KEY3);CHECK(FlagMeter==0 && MAX_X==397);
+     KeyEvent(KEY3);CHECK(FlagMeter==1 && MAX_X==311 && panel_clears==4);
+     CHECK(Meter[1].Item==item && Meter[1].Track==track);}
+    Current=TRACK1;Detail[0]=COUPLE;
     KeyEvent(K_INDEX_INC);CHECK(Title[0][COUPLE].Value==SCOPE144_AC);CHECK(_State.Value==HOLD);
     { CalMean mean;
       history=1;
@@ -141,38 +610,67 @@ int main(void)
       watch_settle=0;CHECK(!wrong_settle);
       CHECK(adc_a==4 && adc_b==4 && adc_mode==SEPARATE);
       CHECK(mean.a==55*1024 && mean.b==55*1024 && mean.clips==0);
-      expected_mode=INTERLACE;watch_settle=1;wrong_settle=0;
+      expected_mode=SEPARATE;watch_settle=1;wrong_settle=0;
       CHECK(WildcatCalibration_Capture(4,1,40,40,&mean)==1);
       watch_settle=0;CHECK(!wrong_settle);
-      CHECK(adc_b==8 && adc_mode==INTERLACE && mean.clips==0);
+      CHECK(adc_b==8 && adc_mode==SEPARATE && clock_arr==239 && mean.clips==0);
       history=0;
     }
     { CalMean mean;
       CHECK(CalScenario(7,0,&mean)==1); /* Completely clipped first full record is ignored. */
-      CHECK(record_count==25 && mean.a==55*1024 && mean.b==55*1024);
+      CHECK(record_count==4 && mean.a==55*1024 && mean.b==55*1024);
       CHECK(CalScenario(1,0,&mean)==1); /* B slowly settles from the previous path. */
       CHECK(record_count>=6 && mean.a==55*1024 && mean.b==55*1024);
       CHECK(CalScenario(1,1,&mean)==1);CHECK(record_count>=6);
       CHECK(CalScenario(9,0,&mean)==1);
       CHECK((uint32_t)(fake_cycles-capture_started)>=600u*72000u && mean.b<=56*1024);
-      CHECK(CalScenario(2,0,&mean)==1); /* Alternating short-burst interference is averaged. */
-      CHECK(record_count==25 && mean.a==55*1024 && mean.b==57*1024);
+      CHECK(CalScenario(2,0,&mean)==1); /* Whole consecutive record averages sample noise. */
+      CHECK(record_count==4 && mean.a==55*1024 && mean.b==57*1024);
       CHECK(CalScenario(2,1,&mean)==1 && mean.b==57*1024);
       CHECK(CalScenario(10,0,&mean)==CAL_CAPTURE_UNSTABLE); /* Entire block means keep alternating. */
       { CalCaptureStats stats;
         WildcatCalibration_Diagnostics(&stats);
         CHECK(stats.blocks>3 && stats.window==3 && stats.spread_b==4*1024 && stats.spread_a==0);
       }
-      CHECK(CalScenario(11,0,&mean)==1 && record_count==33 && !mean.clips);
+      CHECK(CalScenario(11,0,&mean)==1 && record_count==5 && !mean.clips);
       CHECK(CalScenario(12,0,&mean)==CAL_CAPTURE_CLIPPED && mean.clips==512);
+      {CalCaptureStats stats;WildcatCalibration_Diagnostics(&stats);
+       CHECK(!stats.clips_a && stats.clips_b==512 && stats.min_a==55 && stats.max_a==55);
+       CHECK(stats.min_b==55 && stats.max_b==255 && !stats.window && !stats.spread_a && !stats.spread_b);}
+      CHECK(CalScenario(13,0,&mean)==1 && mean.a==165*1024 && mean.b==163*1024 && !mean.clips);
+      {CalCaptureStats stats;WildcatCalibration_Diagnostics(&stats);
+       CHECK(mean.a>160*1024 && mean.a<166*1024 && mean.b>160*1024 && mean.b<166*1024);
+       CHECK(stats.clips_a==1 && stats.clips_b==1 && stats.min_a==0 && stats.max_a==165);
+       CHECK(stats.min_b==163 && stats.max_b==255 && stats.window==3 && !stats.spread_a && !stats.spread_b);}
       CHECK(CalScenario(8,0,&mean)==CAL_CAPTURE_UNSTABLE); /* 0.75-step drift per frame. */
       CHECK(CalScenario(3,0,&mean)==CAL_CAPTURE_CLIPPED && mean.clips==4096);
       CHECK(CalScenario(4,0,&mean)==-1 && record_count==0);
       CHECK(CalScenario(5,0,&mean)==-1 && record_count==2);
       CHECK(CalScenario(6,0,&mean)==0);
-      CHECK(CalScenario(0,0,&mean)==1 && record_count==25); /* Cancellation/timeout leaves no stale stability state. */
+      CHECK(CalScenario(0,0,&mean)==1 && record_count==4); /* Cancellation/timeout leaves no stale stability state. */
       fake_cycles=0xffff0000u;
       CHECK(CalScenario(0,0,&mean)==1); /* Deadline and block span survive DWT wrap. */
+      CHECK(CalScenario(14,0,&mean)==1 && mean.a==55*1024+1 && mean.b==55*1024+1);
+      CHECK(fifo_index==4096); /* First and last word both count; no extra prime/history. */
+      CHECK(CalScenario(15,1,&mean)==1 && mean.a==55*1024 && mean.b==55*1024 && !mean.clips);
+      {CalCaptureStats st;WildcatCalibration_Diagnostics(&st);
+       CHECK(st.clips_a==1 && st.clips_b==1 && st.min_a==0 && st.max_b==255);}
+      CHECK(CalScenario(17,0,&mean)==1 && mean.a==70*1024 && mean.b==95*1024);
+      CHECK(CalScenario(17,1,&mean)==1 && mean.a==70*1024 && mean.b==72*1024);
+      CHECK(CalScenario(17,0,&mean)==1 && mean.b==95*1024);
+      CHECK(CalScenario(18,0,&mean)==1 && mean.a==169908 && mean.b==168628 && !mean.clips);
+      {CalCaptureStats st;WildcatCalibration_Diagnostics(&st);
+       CHECK(st.clips_a==1 && st.clips_b==3 && st.min_a==87 && st.max_a==255 && st.min_b==72 && st.max_b==255);}
+      CHECK(CalScenario(19,0,&mean)==1 && mean.a==100*1024 && mean.b==120*1024 && !mean.clips);
+      {CalCaptureStats st;WildcatCalibration_Diagnostics(&st);CHECK(st.clips_a==4 && st.clips_b==4);}
+      CHECK(CalScenario(19,1,&mean)==1 && !mean.clips); /* Up to eight disjoint pair exclusions accepted. */
+      CHECK(CalScenario(20,0,&mean)==CAL_CAPTURE_CLIPPED && mean.clips==5);
+      CHECK(CalScenario(21,1,&mean)==CAL_CAPTURE_CLIPPED && mean.clips==5);
+      CHECK(CalScenario(22,1,&mean)==1 && mean.a==100*1024 && mean.b==120*1024 && !mean.clips);
+      CHECK(CalScenario(23,1,&mean)==CAL_CAPTURE_CLIPPED && mean.clips==4096 && !mean.a && !mean.b);
+      CHECK(CalScenario(24,0,&mean)==CAL_CAPTURE_CLIPPED && !mean.clips);
+      CHECK(CalScenario(25,1,&mean)==CAL_CAPTURE_CLIPPED && !mean.clips);
+      CHECK(CalScenario(26,1,&mean)==1 && mean.a==10*1024 && mean.b==245*1024);
       CHECK(!WildcatCalibration_Capture(8,0,79,79,&mean));
       { CalCaptureStats stats;WildcatCalibration_Diagnostics(&stats);CHECK(!stats.records && !stats.blocks && !stats.elapsed_ms); }
     }
@@ -188,46 +686,119 @@ int main(void)
     KeyEvent(KEY4);CHECK(Detail[0]==RANGE);
     KeyEvent(K_INDEX_INC);CHECK(adc_a==5 && Title[0][RANGE].Value==5);
     SelectGroup(OUTPUT);CHECK(Current==OUTPUT);CHECK(!files);
-    Detail[OUTPUT]=KIND;KeyEvent(K_INDEX_INC);CHECK(Title[OUTPUT][KIND].Value==0 && outputs==1);
+    Detail[OUTPUT]=KIND;KeyEvent(K_INDEX_INC);CHECK(Title[OUTPUT][KIND].Value==6 && outputs==1);
+    Detail[OUTPUT]=KIND;KeyEvent(K_INDEX_DEC);CHECK(_Kind==6);
+    KeyEvent(K_INDEX_DEC);CHECK(_Kind==5);
     KeyEvent(K_ITEM_INC);CHECK(Current==T_BASE);
-    Detail[T_BASE]=BASE;KeyEvent(K_INDEX_INC);CHECK(Title[T_BASE][BASE].Value==20);
+    Detail[T_BASE]=BASE;KeyEvent(K_INDEX_INC);CHECK(Title[T_BASE][BASE].Value==19);
     KeyEvent(KEY1);CHECK(Title[RUNNING][STATE].Value==RUN);CHECK(draws==1);CHECK(adc_mode==INTERLACE);
-    KeyEvent(KEY1);CHECK(Title[RUNNING][STATE].Value==HOLD);
+    CHECK(fifo_index==4097); /* One prime, 4096 data words, no sample copy. */
+    CHECK((DataBuf[200]&0x30000)==(((201/32)&3)<<16) && !(DataBuf[200]&~0x3ffffu));
+    held_epoch=last_frame->capture.epoch;held_hash=Scope144_RealCrc(DataBuf,sizeof DataBuf);
+    { unsigned reads=fifo_index,records=record_count;
+      KeyEvent(KEY1);CHECK(Title[RUNNING][STATE].Value==HOLD);
+      CHECK(fifo_index==reads && record_count==records && last_frame->capture.epoch==held_epoch);
+      CHECK(last_frame->capture.flags & CAPTURE_WINDOW_FROZEN);
+      KeyEvent(KEY3);KeyEvent(KEY3);KeyEvent(KEY3); /* Panel changes redraw the same frame. */
+      CHECK(fifo_index==reads && record_count==records && last_frame->capture.epoch==held_epoch);
+      CHECK(Scope144_RealCrc(DataBuf,sizeof DataBuf)==held_hash); }
+    BrowseHeld();
+    {unsigned records=record_count;uint32_t epoch=last_frame->capture.epoch,start;
+     Current=T_BASE;Detail[T_BASE]=XPOSI;KeyEvent(K_INDEX_INC);start=last_view.window_start_q16;
+     KeyEvent(KEY1);CHECK(_State.Value==RUN && record_count==records+1 && last_frame->capture.epoch!=epoch);
+     CHECK(last_view.window_start_q16==start);CheckWindow();
+     KeyEvent(KEY1);CHECK(_State.Value==HOLD && record_count==records+1);
+     KeyEvent(K_INDEX_DEC);CHECK(!last_view.window_start_q16);}
+    held_epoch=last_frame->capture.epoch;held_hash=Scope144_RealCrc(DataBuf,sizeof DataBuf);
     /* Every tick must return: native main loop remains the owner. */
-    for(i=0;i<30;++i){KeyEvent(K_ITEM_INC);CHECK(Current!=RUNNING && Current<=21);if(Current>=13)KeyEvent(K_ITEM_S);}
+    for(i=0;i<30;++i){KeyEvent(K_ITEM_INC);CHECK(Current!=TRACK2 && Current!=RUNNING && Current<=21);if(Current>=13)KeyEvent(KEY4);}
     CHECK(!files);
     /* Disabled controls remain focusable, but no key may mutate them. */
     { unsigned g,d,k;const unsigned keys[]={KEY2,KEY3,K_INDEX_INC,K_INDEX_DEC};
       for(g=TRACK2;g<=TRACK4;++g)for(d=0;d<4;++d)for(k=0;k<4;++k) {
         s16 before[13][4];unsigned a,b,old_outputs=outputs,old_files=files;
+        if(Scope144_Available(g,d,_Kind))continue;
         Current=(u8)g;Detail[g]=(u8)d;
         for(a=0;a<13;++a)for(b=0;b<4;++b)before[a][b]=Title[a][b].Value;
         KeyEvent(keys[k]);
         for(a=0;a<13;++a)for(b=0;b<4;++b)CHECK(Title[a][b].Value==before[a][b]);
         CHECK(outputs==old_outputs && files==old_files);
       }
-      Current=T_BASE;Detail[T_BASE]=2;KeyEvent(K_INDEX_INC);CHECK(_X_posi.Value==0);
+      Current=TRACK1;while(FlagMeter!=1)KeyEvent(KEY3);
+      Current=T_BASE;Detail[T_BASE]=2;KeyEvent(K_INDEX_INC);CHECK(_X_posi.Value>0);
+      KeyEvent(K_INDEX_DEC);CHECK(_X_posi.Value==0);
       Current=TRIGG;Detail[TRIGG]=3;KeyEvent(K_INDEX_INC);CHECK(Title[TRIGG][3].Value==0);
-      Current=FILE;Detail[FILE]=3;KeyEvent(KEY3);CHECK(!files);
+      Current=FILE;Detail[FILE]=2;KeyEvent(KEY4);CHECK(Detail[FILE]==0 && !files);
+      KeyEvent(K_ITEM_S);CHECK(Wildcat144_Active());
       Current=V_VERNIE;Detail[V_VERNIE]=0;a=Title[V_VERNIE][0].Value;KeyEvent(K_INDEX_DEC);CHECK(Title[V_VERNIE][0].Value==(s16)a-1);
-      Current=T_VERNIE;Detail[T_VERNIE]=0;for(a=0;a<350;++a)KeyEvent(K_INDEX_INC);CHECK(_T1==300);
-      Current=METER_0;Meter[0].Item=VPP;KeyEvent(K_INDEX_INC);CHECK(Meter[0].Item==CIR && Meter[0].Track==TRACK1);
+      Current=T_VERNIE;Detail[T_VERNIE]=0;for(a=0;a<350;++a)KeyEvent(K_INDEX_INC);CHECK(_T1==299);
+      Current=METER_0;Detail[13]=0;Meter[0].Item=VPP;KeyEvent(K_INDEX_INC);CHECK(Meter[0].Item==CIR && Meter[0].Track==TRACK1);
     }
     CHECK(!app_clears && !screen_clears && Meter[1].Item==FRQ && Meter[1].Track==TRACK2);
     Current=FILE;Detail[FILE]=1;KeyEvent(K_INDEX_INC);KeyEvent(KEY3);CHECK(files==1);
-    Current=0;Detail[0]=COUPLE;
-    KeyEvent(K_INDEX_INC);CHECK(Title[0][COUPLE].Value==3);CHECK(adc_mode==SEPARATE);
-    CHECK(!Wildcat144_Service());CHECK(files==1);
+    Current=TRACK1;Detail[TRACK1]=RANGE;
+    KeyEvent(K_ITEM_S);CHECK(Title[0][COUPLE].Value==AC);CHECK(adc_mode==SEPARATE);
+    CHECK(!FlagFrameMode && !FrameMode && !OSBuffer && !OSAvg && !FPGAosFlag);
+    CHECK(_T_base==20);
+    CHECK(!Wildcat144_Service());CHECK(files==1 && native_releases==1);
     CHECK(Meter[1].Item==FRQ && Meter[1].Track==TRACK2 && FlagMeter==1);
     /* Re-enter without forcing a different panel style or page. */
-    FlagMeter=2;Title[0][COUPLE].Value=SCOPE144_DC;CHECK(Wildcat144_Service());CHECK(FlagMeter==2);
-    Current=TRACK1;Detail[0]=COUPLE;KeyEvent(K_INDEX_DEC);CHECK(!Wildcat144_Active() && FlagMeter==2);
-    FlagMeter=0;MAX_X=397;Title[0][COUPLE].Value=SCOPE144_DC;CHECK(Wildcat144_Service());CHECK(!FlagMeter && MAX_X==397);
-    Current=TRACK1;Detail[0]=COUPLE;KeyEvent(K_INDEX_DEC);CHECK(!Wildcat144_Active() && !FlagMeter);
-    CHECK(Title[0][RANGE].Value==5 && Title[T_BASE][BASE].Value==20 && Title[OUTPUT][KIND].Value==0);
+    FlagMeter=2;_Mode=SCAN;Title[0][COUPLE].Value=SCOPE144_DC;CHECK(Wildcat144_Service());CHECK(FlagMeter==2);
+    Current=T_BASE;Detail[T_BASE]=MODE;KeyEvent(K_ITEM_S);CHECK(!Wildcat144_Active() && FlagMeter==2 && _Mode==SCAN);
+    FlagMeter=0;MAX_X=397;Title[0][COUPLE].Value=AC;
+    Title[T_BASE][BASE].Value=8;
+    FlagFrameMode=1;OSBuffer=1;OSAvg=0;FPGAosFlag=1;
+    Current=OUTPUT;Detail[OUTPUT]=KIND;Key_Buffer=K_ITEM_S;
+    CHECK(Wildcat144_ModeKey() && Title[0][COUPLE].Value==SCOPE144_AC);
+    CHECK(Wildcat144_Service());CHECK(!FlagMeter && MAX_X==397);
+    CHECK(_T_base==20); /* Last 144 base, not an automatic jump to 0.1 us. */
+    Current=T_BASE;Detail[T_BASE]=BASE;KeyEvent(K_INDEX_DEC);CHECK(_T_base==21);
+    Current=METER_0;KeyEvent(K_ITEM_S);CHECK(!Wildcat144_Active() && !FlagMeter);
+    CHECK(Title[0][COUPLE].Value==AC);
+    CHECK(Title[0][RANGE].Value==5 && Title[T_BASE][BASE].Value==8 && Title[OUTPUT][KIND].Value==5);
+    /* Repeated switching remembers the last 144 base only in RAM; no save call. */
+    Title[T_BASE][BASE].Value=7;Title[TRACK1][COUPLE].Value=SCOPE144_DC;
+    CHECK(Wildcat144_Service());CHECK(_T_base==21);
+    Current=TRACK1;KeyEvent(K_ITEM_S);CHECK(_T_base==7 && files==1);
     WildcatFpga=FpgaProfile_Decode(0x5731,0x0101,0);
-    Title[0][COUPLE].Value=6;Key_Buffer=K_INDEX_INC;
-    CHECK(Wildcat144_CouplingKey());CHECK(Title[0][COUPLE].Value==DC);
+    FlagFrameMode=1;OSBuffer=1;OSAvg=0;FPGAosFlag=1;
+    Title[0][COUPLE].Value=DC;Key_Buffer=K_ITEM_S;
+    CHECK(!Wildcat144_ModeKey());CHECK(Title[0][COUPLE].Value==DC);
+    HardwareTriggers();
+    HoldDuringPoll();
+    TriggerNavigation();
+    DigitalUI();
+    AllTriggerKinds();
+    AutoLevels();
+    NoiseCaptures();
+    FailedTransfer();
+    /* Real cooperative preview: settling/FIFO waits yield, reads are bounded,
+     * first full record is discarded, all 4096 words are included, and cancellation is a phase reset. */
+    {
+        CalPreview p={0};CalMean mean={0,0,0};unsigned calls=0,configured;int result=0;
+        WildcatFpga=FpgaProfile_Decode(0x5731,0x0101,0x0102); /* Match live mocked ID. */
+        history=1;record_count=0;capture_case=0;
+        do {
+            unsigned before_fifo=fifo_index,before_records=record_count;
+            result=WildcatCalibration_Preview(&p,0,79,79,&mean);
+            CHECK(++calls<100000 && result>=0);
+            if(record_count==before_records)CHECK(fifo_index-before_fifo<=32);
+        } while(!result);
+        CHECK(calls>100 && record_count==2 && mean.a==55*1024 && mean.b==55*1024 && !mean.clips);
+        CHECK(p.phase==5);configured=range_sets;capture_case=2;
+        CHECK(WildcatCalibration_Preview(&p,0,79,79,&mean)==0 && p.phase==4);
+        do{result=WildcatCalibration_Preview(&p,0,79,79,&mean);CHECK(++calls<100000);}while(!result);
+        CHECK(result==1 && record_count==3 && mean.a==55*1024 && mean.b==57*1024 && !mean.clips && range_sets==configured);
+        capture_case=13;
+        do{result=WildcatCalibration_Preview(&p,0,79,79,&mean);CHECK(++calls<100000);}while(!result);
+        CHECK(result==1 && !mean.clips && mean.a==165*1024 && mean.b==163*1024 && p.clips==2 && p.clips_a==1 && p.clips_b==1 && range_sets==configured);
+        history=0;record_count=0;p.phase=0;capture_case=6;calls=0;
+        do{result=WildcatCalibration_Preview(&p,0,79,79,&mean);CHECK(++calls<250000);}while(!result);
+        CHECK(result==-1 && !p.phase);capture_case=0;
+        CHECK(WildcatCalibration_Preview(&p,0,79,79,&mean)==0 && p.phase==1);
+        p.phase=0; /* Wizard processes a key immediately, with no synchronous wait. */
+        CHECK(WildcatCalibration_Preview(&p,1,78,80,&mean)==0 && p.range==1 && p.commands[1]==80);
+    }
     printf("PASS native Wildcat service: %u checks; menu entry, DC/AC, range, generator, RUN/HOLD, navigation, exit; mock HW\n",checks);
     return 0;
 }

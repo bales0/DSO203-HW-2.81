@@ -17,8 +17,8 @@ static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,C
     if(captures==fail_capture)return 0;
     if(captures==cancel_capture)return -1;
     if(capture_status){m->a=99*1024;m->b=101*1024;m->clips=0;return capture_status;}
-    m->a=((int32_t)ao+(mode?100:5)+signal)*1024;
-    m->b=((int32_t)bo+(mode?103:7)+signal)*1024;
+    m->a=((int32_t)ao+(mode?10:5)+signal)*1024;
+    m->b=((int32_t)bo+(mode?13:7)+signal)*1024;
     if(!mode && curve) {
         int ca=(int)ao-94,cb=(int)bo-94;
         m->a+=curve*ca*ca*1024/500;m->b-=curve*cb*cb*1024/500;
@@ -28,7 +28,7 @@ static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,C
         int shift=((captures-3)/2)%2?-1536:1536;m->a+=shift;m->b+=shift;
     }
     if(flat_b && !mode)m->b=((int32_t)bo*820+7*1024)+signal*1024;
-    if(missing_b)m->b=((int32_t)bo+(mode?103:7))*1024;
+    if(missing_b)m->b=((int32_t)bo+(mode?13:7))*1024;
     m->clips=captures==clip_capture;return 1;
 }
 static int Gen(void *user,int on){(void)user;CHECK(on==0);++generators;return 1;}
@@ -62,12 +62,12 @@ int main(void)
 {
     unsigned r,ch,i;int8_t z,k;uint16_t gain;CalKeyGate gate={0};UnifiedCal before;
     for(i=0;i<2;++i) {
-        Init(i);Ground();CHECK(captures==(i?56:48));
-        References();CHECK(captures==(i?72:56));
+        Init(i);Ground();CHECK(captures==(i?120:48));
+        References();CHECK(captures==(i?208:56));
         for(r=0;r<8;++r)for(ch=0;ch<2;++ch) {
             CHECK(state.native[ch].zero[r]==(ch?-7:-5));CHECK(state.native[ch].offset[r]==0);
             CHECK(state.native[ch].gain[r]==1024);CHECK(state.voltage_used[r][ch]==(int32_t)scale[r]*75);
-            if(i){CHECK(Scope144_Valid(&state.bank.range[r]));CHECK(state.bank.range[r].bias_q10==-3072);}
+            if(i){CHECK(Scope144_Valid(&state.pending144[r]));CHECK(state.pending144[r].bias_q10==-3072);}
         }
         UnifiedCal_Step(&state,i?CAL_CHARGER:CAL_OK,&ops);CHECK(state.stage==CAL_DONE && writes==1 && charger==i);
         UnifiedCal_Step(&state,CAL_OK,&ops);CHECK(writes==1);
@@ -86,15 +86,23 @@ int main(void)
     UnifiedCal_Step(&state,CAL_BIG_UP,&ops);CHECK(state.reference==before.reference+1500);
     UnifiedCal_Step(&state,CAL_BIG_DOWN,&ops);CHECK(state.reference==before.reference);
     UnifiedCal_Step(&state,CAL_CANCEL,&ops);CHECK(state.stage==CAL_CANCELLED && !writes);
-    for(i=1;i<=56;++i) {
+    for(i=1;i<=120;++i) {
         Init(1);fail_capture=i;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
         CHECK(state.stage==CAL_ERROR && state.retry==CAL_GROUND && writes==0);
         UnifiedCal_Step(&state,CAL_CANCEL,&ops);CHECK(writes==0);
     }
+    for(i=121;i<=208;++i) {
+        Init(1);Ground();fail_capture=i;
+        while(state.stage==CAL_REFERENCE)UnifiedCal_Step(&state,CAL_OK,&ops);
+        CHECK(state.stage==CAL_ERROR && state.retry==CAL_REFERENCE && !writes);
+        UnifiedCal_Step(&state,CAL_CANCEL,&ops);CHECK(state.stage==CAL_CANCELLED && !writes);
+    }
     Init(1);Ground();References();save_fail=9;
     UnifiedCal_Step(&state,CAL_OK,&ops);CHECK(state.stage==CAL_ERROR && state.error==10 && writes==1);
+    CHECK(!state.bank.range[0].valid && !state.bank.battery[0]);
     save_fail=0;UnifiedCal_Step(&state,CAL_OK,&ops);CHECK(state.stage==CAL_SAVE && writes==1);
     UnifiedCal_Step(&state,CAL_CHARGER,&ops);CHECK(state.stage==CAL_DONE && writes==2 && charger);
+    CHECK(!state.bank.range[0].valid && state.bank.high[0].valid && state.bank.battery[1]==3700);
     Init(1);clip_capture=2;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
     CHECK(state.stage==CAL_ERROR && state.error==3 && writes==0);
     Init(1);Ground();state.reference=1000;UnifiedCal_Step(&state,CAL_OK,&ops);
@@ -123,10 +131,10 @@ int main(void)
     Init(1);curve=1;Ground();References();CHECK(!writes);
     for(r=0;r<8;++r) {
         CHECK(state.native[0].offset[r]!=0 && state.native[1].offset[r]!=0);
-        CHECK(Scope144_Valid(&state.bank.range[r]));
+        CHECK(Scope144_Valid(&state.pending144[r]));
     }
     /* A biased initial pair must be corrected using fresh working-point data. */
-    Init(1);initial_bias=4;Ground();CHECK(captures>56);
+    Init(1);initial_bias=4;Ground();CHECK(captures>120);
     CHECK(state.native[0].zero[0]==-5 && state.native[1].zero[0]==-7);
     References();CHECK(!writes);
     /* Within-tolerance, alternating means must NOT pass as stable calibration. */

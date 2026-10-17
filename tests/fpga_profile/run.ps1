@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$compiler = 'C:/MinGW/bin/gcc.exe'
+$compiler = Join-Path $repo 'tools/host-toolchain/bin/gcc.exe'
 if (-not (Test-Path $compiler)) { throw '32-bit MinGW GCC required for the 32-bit Pawn VM.' }
 $output = Join-Path $repo 'build/fpga_profile_tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null

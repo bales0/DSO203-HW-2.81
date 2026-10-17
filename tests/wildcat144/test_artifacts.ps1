@@ -1,7 +1,8 @@
+param([string]$FirmwareDirectory)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$source = Join-Path $repo 'bin/WildcatV6.6'
-$verifier = Join-Path $repo 'WildcatV6.6/verify-artifacts.ps1'
+$source = if ($FirmwareDirectory) { (Resolve-Path -LiteralPath $FirmwareDirectory).Path } else { Join-Path $repo 'bin/WildcatV6_6' }
+$verifier = Join-Path $repo 'WildcatV6_6/verify-artifacts.ps1'
 $fixture = Join-Path $repo 'build/wildcat144_tests/artifact_fixture'
 New-Item -ItemType Directory -Path $fixture -Force | Out-Null
 $files = @('app1.hex', 'APP1A.BIN', 'APP1A.ADR', 'APP1B.BIN', 'APP1B.ADR', 'APP1C.BIN', 'APP1C.ADR')
@@ -34,7 +35,7 @@ $script:checks++
 $hex = [IO.File]::ReadAllLines((Join-Path $source 'app1.hex'))
 $bin = [IO.File]::ReadAllBytes((Join-Path $source 'APP1A.BIN'))
 # Reproduce the actual omitted ARM metadata bug using the current linker map.
-$map = [IO.File]::ReadAllText((Join-Path $repo 'WildcatV6.6/build/app1.map'))
+$map = [IO.File]::ReadAllText((Join-Path $repo 'WildcatV6_6/build/app1.map'))
 $metadata = [regex]::Match($map, '(?m)^\.ARM\.exidx\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)')
 if (-not $metadata.Success) { throw 'Current ARM metadata section missing from linker map; regression was not run.' }
 $offset = [Convert]::ToUInt32($metadata.Groups[1].Value, 16) - 0x0800C000

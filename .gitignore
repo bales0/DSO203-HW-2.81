@@ -1,1 +1,6 @@
 build/
+/tools/
+.vscode/
+.gitnore
+tests/
+specification/

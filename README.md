@@ -1,22 +1,18 @@
-# DS203 firmware pro HW 2.81/2.82
+# DS203 Firmware - HW 2.81/2.82
 
-Aktuální vývoj: [Wildcat V6.6 s 144 MSa/s](WildcatV6.6/README.md),
-[instalační FPGA W1.2](bin/FPGAW1_2/README.md) a navazující
-[QuadPawn 2026.10.14.2](bin/QuadPawnW12/README.md). PC kontroly prošly;
-nové běžné položky 144D/144A a společná kalibrace WPT čekají na test
-na zařízení. Společná kalibrace A+B+144: při vybraném A nebo B dlouze K2.
+Active development; latest component versions only.
 
-Původní zdrojové projekty jsou zachované vedle sebe:
+| Component | Status |
+| --- | --- |
+| [SYS 1.64 + AlterBIOS](SYS_V1.64_AlterBIOS/) | Preserved system firmware. |
+| [FPGA W1.2](FPGAW1_2/) | Supports 144 MS/s; simulation and timing checks pass. |
+| [QuadPawn 2026.10.17.1](QuadPawn/) | Updated FPGA loader and file selector. |
+| [Wildcat 6.6](WildcatV6_6/) | Normal and 144 MS/s modes, shared UI and calibration. |
 
-- [Wildcat V6.5b](WildcatV6.5b/README.md) – osciloskopická aplikace.
-- [SYS 1.64 + AlterBIOS](SYS_V1.64_AlterBIOS/gcc/README.md) – systémový firmware.
-- [QuadPawn](QuadPawn/) – samostatný Pawn runtime a programy.
-- [FPGA W1.1](W1.1%20FPGA/README.TXT) – zdroje FPGA pro Wildcat a HW 2.81/2.82.
+**144 MS/s:** both ADCs sample channel A; analog B is unavailable. Select via the right rocker scan-mode cycle (purple overview). Calibration has passed on hardware; latest UI changes still need device testing.
 
-Finální obrazy jsou v [`bin/`](bin/README.md), referenční obrazy v
-[`reference_builds/`](reference_builds/README.md). Postupy sestavení jsou v
-[BUILDING.md](BUILDING.md) a původ zdrojů v
-[FIRMWARE_SOURCES.md](FIRMWARE_SOURCES.md).
+Firmware and AMX programs: [bin/](bin/). Build:
 
-Aktuální [manuál Wildcat V6.5b](WildcatV6.5b/Manual-V6.5b.html) je dostupný
-také jako [PDF](WildcatV6.5b/Manual-V6.5b.pdf).
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-all.ps1
+```
