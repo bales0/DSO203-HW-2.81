@@ -23,6 +23,7 @@ u8  SweepResetFlag;
 vs16 NoiseIP[100];
 vs16 FilterOut;
 vu32 LimitTransfer;
+vu32 Key1PressCount;
 vu8  FineAdjust=2;
 u8   FineAdjustLimit=4;
 vu16 FineAdjustFactor[17]={10000,5000,2000,1000,500,200,100,50,20,10,5,2,1,1,1,1,1};
@@ -400,6 +401,7 @@ void TIM3_IRQHandler(void)
     if(Key_Repeat_Cnt)  Key_Repeat_Cnt--;
     KeyCode=Read_Keys();
     if(KeyCode !=0) {
+      if(KeyCode==KEY1)++Key1PressCount;
       Key_Buffer = KeyCode;
       if(SetLowVolume){
         __Set(BEEP_VOLUME,((9-LoBeepLevel)*5*(Title[VOLUME][CLASS].Value-1))/9);    // Fast key repeat volume

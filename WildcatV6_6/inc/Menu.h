@@ -275,6 +275,7 @@ void MeterDefaults(void);
 u32 UpScale(u32 Tmp, u16 limit);
 void DisplaySamples(void);
 void FFTlevel(u8 service);
+int NativeHoldoffAvailable(void);
 void OutputAdjust(void);
 void TIM_2IRQControl(void);
 void GenTrigColor(void);

@@ -14,7 +14,7 @@ extern char x10[8][6];
 static Scope144Measurements shown;
 static int32_t cursor_dt,cursor_dv;
 static unsigned ready,frame_rate,calibration_status=2;
-static unsigned trigger_waiting,wait_visible,presentation_available;
+static unsigned trigger_waiting,wait_visible,presentation_available,frozen_frame,last_run_state;
 static u16 wait_started;
 static u16 Tick(void){return (u16)(Sec_Cnt*51u+Cnt_20mS);}
 void Menu144_TriggerWait(unsigned stage)
@@ -25,15 +25,21 @@ void Menu144_TriggerWait(unsigned stage)
 void Menu144_Presentation(unsigned available){presentation_available=available;}
 void Menu144_Calibration(unsigned status){calibration_status=status;}
 static unsigned repaint,refresh_values,refresh_slow;
-static unsigned header_detail_shown;
+static unsigned header_detail_shown,fft_gain_shown;
 static u16 last_second;static u8 last_phase,last_twink;
 static char meter_text[9][12];static u8 meter_item[9],meter_track[9],meter_enabled[9];
 extern u8 FlagMeter,UpdateMeter;
+static unsigned Available(unsigned group,unsigned detail)
+{
+    if(group==TRACK4 && detail==RANGE)return Scope144_IsFft((unsigned)_4_source);
+    if(group==TRACK4 && detail==POSI && Scope144_IsFft((unsigned)_4_source))return 0;
+    return Scope144_Available(group,detail,(unsigned)_Kind);
+}
 static u16 Tone(unsigned group,unsigned detail)
 {
     menu *e=&Title[group][detail];
     if(group==TRIGG && detail==2 && _Tr_source>=TRACK3)return 0x0905;
-    if(group!=RUNNING && !Scope144_Available(group,detail,(unsigned)_Kind))return 0x0905;
+    if(group!=RUNNING && !Available(group,detail))return 0x0905;
     if(group==OUTPUT)return detail==FRQN?Generator_ValueColor():Generator_Color();
     return e->Color?e->Color[group==RUNNING?e->Value:group==TRIGG?Title[group][0].Value:0]:0x0405;
 }
@@ -75,15 +81,23 @@ static const char *Word(unsigned group,unsigned detail)
 static void Entry(unsigned group,unsigned detail,const char *override)
 {
     menu *e=&Title[group][detail];
-    unsigned selected=Current==group && Detail[group]==detail && Scope144_Available(group,detail,_Kind);
-    Paint(e->XPOS,e->YPOS,Tone(group,detail),selected,override?override:Word(group,detail));
+    unsigned selected=Current==group && Detail[group]==detail && Available(group,detail);
+    if(!(e->Flag&UPDAT) && Current!=group && repaint!=2)return;
+    e->Flag&=~UPDAT;
+    if(!override && detail==1 && (group==BK_LIGHT || group==VOLUME))
+        UiCommon_PercentTitle(group,selected?Twink:PRN);
+    else if(!override && (e->MARK&FIX) && group!=TRIGG && group!=RUNNING &&
+        Available(group,detail))
+        UiCommon_FixedTitle(group,detail,selected?Twink:PRN);
+    else Paint(e->XPOS,e->YPOS,Tone(group,detail),selected,override?override:Word(group,detail));
 }
 static void RunStatus(void)
 {
     char cell[5];const char *text=!calibration_status?"CAL?":wait_visible?"WAIT":_State.Value==RUN?"RUN":"HOLD";
     unsigned n=(unsigned)strlen(text);if(n>4)n=4;
     memset(cell,' ',4);memcpy(cell,text,n);cell[4]=0;
-    Paint(0,228,Tone(RUNNING,STATE),0,cell);
+    unsigned state=_State.Value==RUN?RUN:(frozen_frame?2u:HOLD);
+    Paint(0,228,Title[RUNNING][STATE].Color[state],0,cell);
 }
 static void Number(char out[16],int32_t v)
 {
@@ -104,7 +118,8 @@ static void HeaderDetail(u16 color,unsigned selected,const char *text)
 }
 void Menu144_NativeTitle(void)
 {
-    unsigned g;char number[16];
+    unsigned g,gen_dirty=Current==OUTPUT || repaint==2;
+    for(g=0;g<4;++g)gen_dirty|=Title[OUTPUT][g].Flag&UPDAT;
     Entry(TRACK1,SOURCE,0);
     Entry(TRACK1,COUPLE,Title[TRACK1][COUPLE].Value==SCOPE144_AC?"AC":"DC");
     Entry(TRACK1,RANGE,_1_source>=3?x10[_A_Range]:0);
@@ -113,8 +128,9 @@ void Menu144_NativeTitle(void)
     for(g=TRACK3;g<=TRACK4;++g)Entry(g,SOURCE,0);
     Entry(TRACK2,COUPLE,0);Entry(TRACK2,RANGE,0);
     RunStatus();
-    Generator_KindTitle();Entry(OUTPUT,FRQN,0);Entry(T_BASE,MODE,0);Entry(T_BASE,BASE,0);
-    Generator_FrequencyTitle();
+    if(gen_dirty){Generator_KindTitle();Generator_FrequencyTitle();
+        for(g=0;g<4;++g)Title[OUTPUT][g].Flag&=~UPDAT;}
+    Entry(T_BASE,MODE,0);Entry(T_BASE,BASE,0);
     Entry(TRIGG,SOURCE,0);Entry(TRIGG,TR_KIND,0);
     Menu_TriggerLevel(1);
     /* Voltage/duty remain visible when leaving GEN. FILE status owns its
@@ -123,8 +139,7 @@ void Menu144_NativeTitle(void)
     if(Current==FILE && UiCommon_Message()[0]) {
         HeaderDetail(0x0405,0,UiCommon_Message());
     } else if(Current==OUTPUT || _Kind<=PWM) {
-        char cell[9];Generator_Text(cell);
-        HeaderDetail(Generator_AuxColor(),Generator_AuxSelected(),cell);
+        Generator_Draw();header_detail_shown=1;
     } else if(_Tr_kind>=4 && _Tr_kind<=7) {
         char interval[16],cell[9];unsigned length;
         uint32_t ticks=Scope144_TriggerTicks(21-_T_base,(unsigned)_T1,(unsigned)_T2);
@@ -139,15 +154,22 @@ void Menu144_NativeTitle(void)
     }
     if(FlagMeter && (FlagMeter==1 || UpdateMeter==4)) {
         Entry(BK_LIGHT,0,0);Entry(VOLUME,0,0);
-        Number(number,(Title[BK_LIGHT][1].Value+1)*10);strcat(number,"%");Entry(BK_LIGHT,1,number);
-        Number(number,(Title[VOLUME][1].Value+1)*10);strcat(number,"%");Entry(VOLUME,1,number);
+        Entry(BK_LIGHT,1,0);Entry(VOLUME,1,0);
     }
     /* Preserve the native cursor controls on both sides of the buffer graphic. */
+    if(fft_gain_shown && !(Current==TRACK4 && Scope144_IsFft((unsigned)_4_source))) {
+        Paint(0,0,0x0505,0,"    ");Title[TRACK1][POSI].Flag|=UPDAT;fft_gain_shown=0;
+    }
     Entry(TRACK1,POSI,"YPOS");
-    if(Current==TRACK3 || Current==TRACK4)Entry(Current,POSI,"YPOS");
-    Entry(V_VERNIE,V1,"!V1!");Entry(V_VERNIE,V2,"!V2!");
-    Entry(T_VERNIE,T1,"!T1!");Entry(T_VERNIE,T2,"!T2!");
-    Entry(T_BASE,XPOSI,"XPOS");
+    if(Current==TRACK3 || (Current==TRACK4 && !Scope144_IsFft((unsigned)_4_source)))Entry(Current,POSI,"YPOS");
+    if(Current==TRACK4 && Scope144_IsFft((unsigned)_4_source)) {
+        static const char gain[10][5]={"LOG ","AUTO"," 0dB"," 6dB","12dB","18dB","24dB","30dB","36dB","42dB"};
+        unsigned setting=Title[TRACK4][RANGE].Value;
+        Paint(0,0,Tone(TRACK4,RANGE),Detail[TRACK4]==RANGE,gain[setting<10?setting:0]);fft_gain_shown=1;
+    }
+    Entry(V_VERNIE,V1,0);Entry(V_VERNIE,V2,0);
+    Entry(T_VERNIE,T1,0);Entry(T_VERNIE,T2,0);
+    Entry(T_BASE,XPOSI,0);
     if(Current!=FILE) {
         if(repaint)Update_View_Area();
         return;
@@ -222,7 +244,8 @@ void Menu144_Meters(const Scope144Measurements *unused)
             Title[m->Track][SOURCE].Value==1 &&
             (m->Item==FRQ || m->Item==CIR || m->Item==DUT || m->Item==TH || m->Item==TL) &&
             Wildcat144_DigitalMeasurement(m->Track-TRACK3,&digital)) {enabled=1;measurement=&digital;}
-        unsigned changed=meter_item[i]!=m->Item || meter_track[i]!=m->Track || meter_enabled[i]!=enabled;
+        unsigned changed=(m->Flag&UPDAT) || meter_item[i]!=m->Item || meter_track[i]!=m->Track || meter_enabled[i]!=enabled;
+        m->Flag&=~UPDAT;
         unsigned small=FlagMeter==1 || (FlagMeter==2 && UpdateMeter==4 && i==0);
         if(FlagMeter==2 && UpdateMeter==4 && i==1)continue;
         u16 color=enabled?(m->Item<=FPS?0x0405:(m->Track<<8)|5):0x0905;
@@ -258,12 +281,14 @@ void Menu144_View(const Scope144Measurements *m,int32_t dt,int32_t dv,unsigned v
     unsigned changed=visible!=old_visible || (visible && (first!=old_first || last!=old_last));
     unsigned waiting=trigger_waiting==1 && (u16)(Tick()-wait_started)>=10u;
     unsigned wait_changed=waiting!=wait_visible;
+    unsigned run_changed=last_run_state!=(unsigned)_State.Value || frozen_frame!=(valid && _State.Value==HOLD);
+    last_run_state=(unsigned)_State.Value;frozen_frame=valid && _State.Value==HOLD;
     wait_visible=waiting;
     repaint=refresh;refresh_slow=refresh==2 || Sec_Cnt!=last_second;
     refresh_values=refresh_slow || (phase && phase!=last_phase);
     shown=*m;cursor_dt=dt;cursor_dv=dv;ready=valid || presentation_available;frame_rate=fps;
     if(refresh || Twink!=last_twink)Display_Title();
-    else if(wait_changed)RunStatus();
+    else if(wait_changed || run_changed)RunStatus();
     /* New captures can move the window even without a menu refresh. Update
      * only the graphic, preserving Title blink and non-waveform footers. */
     if(!refresh && changed && Current!=FILE)Update_View_Area();

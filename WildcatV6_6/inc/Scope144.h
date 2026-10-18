@@ -43,7 +43,10 @@ unsigned Scope144_CsvPoint(char out[80],const Scope144Cal *,unsigned sample,
     uint32_t time_ps,int32_t q,unsigned clip,int factor,char adc);
 /* Snapshot of native saved clock correction; positive PPM means CPU clock high. */
 int Scope144_SetClock(int ppm);
-void Scope144_RunKey(int down,int event,int *was_down,int *held);
+int Scope144_RunPresses(uint32_t published,uint32_t *seen,int *held);
+typedef struct {uint32_t acquisition,processing,drawing,draws;} Scope144Performance;
+extern Scope144Performance Wildcat144Performance;
+extern char Wildcat144Timing[40];
 unsigned Scope144_ClockLine(char out[40]);
 unsigned Scope144_ClockValueLine(char out[40],int ppm);
 uint32_t Scope144_Crc(const void *data, uint32_t count);
@@ -102,7 +105,11 @@ int Wildcat144_TriggerColumn(void);
 void Process144_ReleaseBuffer(void);
 int Process144_NativePending(void);
 unsigned Scope144_DetailLimit(unsigned group);
+int Scope144_IsFft(unsigned source);
+unsigned Scope144_DSourceStep(unsigned source,int delta);
 unsigned Scope144_Field(unsigned group,unsigned detail);
+/* Called once at application startup; failure disables only interlace. */
+void Wildcat144_CheckImage(void);
 int Wildcat144_Service(void);
 int Wildcat144_ModeKey(void);
 void Process144_Draw(const Scope144Cal *cal, const int32_t *samples, unsigned start,

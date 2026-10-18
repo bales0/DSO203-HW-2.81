@@ -14,6 +14,7 @@
 #include "UnifiedCal.h"
 #include "CalStable.h"
 #include "Clock144.h"
+#include "Fft144.h"
 #include "File.h"
 #include <string.h>
 
@@ -34,6 +35,18 @@ static unsigned digital_ready;
 /* Last complete measurements survive cooperative re-arming. Raw DataBuf and
  * view_valid still describe only the current, completely transferred epoch. */
 static unsigned measurement_available;
+static int scope_active;
+static uint32_t run_seen,run_cancelled,capture_work;
+Scope144Performance Wildcat144Performance;
+char Wildcat144Timing[40];
+/* Flash is not modified by Wildcat. Cache only the startup verdict, never the
+ * CRC or the bitstream; a missing/failed check leaves 144 disabled. */
+static u8 installed_image_valid;
+void Wildcat144_CheckImage(void)
+{
+    installed_image_valid=WildcatFpga.kind==FPGA_W12 &&
+        Scope144_Crc((const void *)0x0805c800u,135096)==SCOPE144_IMAGE_CRC;
+}
 int Wildcat144_DigitalMeasurement(unsigned channel,Scope144Measurements *out)
 {
     if(!out || channel>1 || !measurement_available || !(digital_ready&(1u<<channel)))return 0;
@@ -68,6 +81,20 @@ static void Number(unsigned y, const char *label, int32_t value)
     while (*label && length < 30) line[length++] = *label++;
     AppendNumber(line, length, value);
     Text(y, line);
+}
+/* A/P/D are elapsed cycles inside acquisition calls, measurements and
+ * conversion/LCD draw. They include IRQ time, not gaps between async polls. */
+static void TimingLine(void)
+{
+    uint32_t values[3];unsigned i,n=0;char *text=Wildcat144Timing;
+    values[0]=Wildcat144Performance.acquisition;values[1]=Wildcat144Performance.processing;
+    values[2]=Wildcat144Performance.drawing;
+    for(i=0;i<3;++i) {
+        text[n++]="APD"[i];text[n++]=' ';
+        n=AppendNumber(text,n,(int32_t)(values[i]/CYCLES_MS));
+        text[n++]='.';text[n++]=(char)('0'+(values[i]/7200u)%10u);text[n++]=' ';
+    }
+    memcpy(text+n,"ms",3);
 }
 static uint16_t ReadId(unsigned selector)
 {
@@ -111,8 +138,14 @@ static int ReadWord(void *unused,uint32_t *word)
     (void)unused;*word=__Read_FIFO();GPIOC->BRR=0x30;return 1;
 }
 static uint32_t Now(void *unused) { (void)unused; return DWT_CYCLES; }
-static int Cancel(void *unused) { (void)unused; return calibrating && Key(KEY4_STATUS); }
-static int RuntimeCancel(void *unused) { (void)unused; return Key(KEY1_STATUS); }
+static int RuntimeCancel(void *unused)
+{
+    uint32_t sequence=Key1PressCount;(void)unused;
+    if((sequence-run_seen)&1u){run_cancelled=sequence;return 1;}
+    return 0;
+}
+static int Cancel(void *unused)
+{ return calibrating?Key(KEY4_STATUS):(scope_active?RuntimeCancel(unused):0); }
 static int RuntimeConfigure(void *unused)
 {
     unsigned interlace=1;(void)unused;
@@ -144,7 +177,6 @@ static void CaptureError(Capture144Status status)
 /* Shared native acquisition state; the main loop calls the service once per
  * frame. Modal loops are used only by the ordinary calibration wizard. */
 static Scope144Bank scope_bank;
-static int scope_active;
 int Wildcat144_Active(void){return scope_active;}
 int Wildcat144_Overview(unsigned *first,unsigned *last)
 {
@@ -343,12 +375,13 @@ int Wildcat144_Service(void)
     static unsigned range,base=2,coupling,mode,trigger_kind;
     static unsigned last_range=8,last_coupling=2;
     static int measurement_offset;
-    static unsigned position=100,invert=0,probe=1,cursor1=30,cursor2=180,csvnumber=0,capture_mode=1;
-    static int32_t threshold=0; static int held=0,valid=0,redraw=1,last_run_key=0;
-    static u8 saved_flags[14]; static uint32_t saved_demcr,saved_dwt;
+    static unsigned position=100,invert=0,probe=1,cursor1=30,cursor2=180,capture_mode=1;
+    static int32_t threshold=0; static int held=0,valid=0,redraw=1;
+    static u8 saved_flags[16]; static uint32_t saved_demcr,saved_dwt;
 
     ViewWindowGeometry view,origin;
-    unsigned adjust_xpos=0,use_hw;
+    unsigned adjust_xpos=0,use_hw,fft_updated=0;
+    static uint32_t plotted_epoch;static unsigned plotted_twink;
     uint32_t trigger_mode,trigger_time;
     static Scope144Measurements measure,display_measure;
     static Capture144WordOps ops={&capture_mode,Configure,Start,Status,ReadWord,Now,Cancel};
@@ -363,7 +396,7 @@ int Wildcat144_Service(void)
     exit_coupling=Title[TRACK1][COUPLE].Value==SCOPE144_AC?AC:DC;
     FpgaProfile detected=FpgaProfile_Decode(ReadId(0),ReadId(1),ReadId(2));
     __Set(32+5,0); __Set(32+5,0); GPIOC->BRR=0x30;
-    if(detected.kind!=FPGA_W12 || Scope144_Crc((const void *)0x0805c800u,135096)!=SCOPE144_IMAGE_CRC) {
+    if(detected.kind!=FPGA_W12 || !installed_image_valid) {
         __Clear_Screen(BLACK); Text(160,"144 scope requires installed FPGA W1.2");
         Text(140,"Install bin/FPGAW1_2 image first"); Text(100,"K1 return / K4 cancel");
         ScopeConfirm(); Title[TRACK1][COUPLE].Value=(s16)exit_coupling; App_init(1); Key_Buffer=0; return 1;
@@ -384,7 +417,7 @@ int Wildcat144_Service(void)
     saved_flags[3]=OSBuffer; saved_flags[4]=OSAvg; saved_flags[5]=OsBufferLogicFlag;
     saved_flags[6]=ShowFFT; saved_flags[7]=Det; saved_flags[8]=TrgAuto; saved_flags[9]=CurDefTime;
     saved_flags[10]=OsChartFlag;saved_flags[11]=EnableCursorDisplay;saved_flags[12]=DigChLockout;
-    saved_flags[13]=FPGAosFlag;
+    saved_flags[13]=FPGAosFlag;saved_flags[14]=AutoFFT;saved_flags[15]=FFTGain;
     range=(_A_Range>=0 && _A_Range<8)?(unsigned)_A_Range:4;
     coupling=exit_coupling;
     if(_T_base>=19 && _T_base<=21)base=21-_T_base;
@@ -392,7 +425,7 @@ int Wildcat144_Service(void)
     trigger_kind=_Tr_kind>=0 && _Tr_kind<=8?(unsigned)_Tr_kind:1;
     position=(_1_posi>=10 && _1_posi<=190)?(unsigned)_1_posi:100;
     probe=_1_source>=3?10:1;invert=_1_source==2 || _1_source==4;
-    threshold=0;held=_State.Value!=RUN;valid=0;redraw=2;last_run_key=0;k2_down=k2_fired=0;
+    threshold=0;held=_State.Value!=RUN;valid=0;redraw=1;run_seen=Key1PressCount;run_cancelled=run_seen;k2_down=k2_fired=0;
     measurement_available=0;measurement_offset=ADCoffset;Menu144_Presentation(0);Menu144_TriggerWait(0);
     last_range=8;last_coupling=2;xpos_q16=0;view_valid=0;Frame144_Reset(&frame,++frame_epoch);
     saved_demcr=DEMCR; saved_dwt=DWT_CTRL; DEMCR|=0x01000000u; DWT_CTRL|=1;
@@ -401,13 +434,14 @@ int Wildcat144_Service(void)
       for(spin=0;spin<64;++spin) { }
       if(before==DWT_CYCLES)goto scope_cleanup;
     }
-    fps_started=DWT_CYCLES;fps_frames=fps=0;
+    fps_started=DWT_CYCLES;fps_frames=fps=0;Fft144_Reset();
+    memset(&Wildcat144Performance,0,sizeof Wildcat144Performance);capture_work=0;TimingLine();
+    plotted_epoch=0xffffffffu;plotted_twink=Twink;
     FlagFrameMode=0; FrameMode=0; OSBuffer=0; OSAvg=0;FPGAosFlag=0;
     OsBufferLogicFlag=0; ShowFFT=0; Det=0; CurDefTime=0;
     OsChartFlag=0;EnableCursorDisplay=0;CursorDisplayTimer=0;DigChLockout=0;
     Current=saved_current==TRACK2?TRACK1:saved_current;
     MAX_X=(FlagMeter?300:386)+MIN_X;_X_posi.Flag&=~HID;
-    if(FlagMeter)Clear_Meter_Area();
     Title[V_VERNIE][V1].Flag&=~HID;Title[V_VERNIE][V2].Flag&=~HID;
     Title[T_VERNIE][T1].Flag&=~HID;Title[T_VERNIE][T2].Flag&=~HID;
     if(_V1_Vernie<1 || _V1_Vernie>199)_V1_Vernie=180;
@@ -416,19 +450,23 @@ int Wildcat144_Service(void)
     if(cursor2>=(unsigned)(MAX_X-MIN_X))cursor2=180;
     if(_T1>=0 && _T1<MAX_X-MIN_X)cursor1=(unsigned)_T1;
     if(_T2>=0 && _T2<MAX_X-MIN_X)cursor2=(unsigned)_T2;
-    _1_source=1; _2_source=0; _3_source=_3_source==CH_C; _4_source=_4_source==CH_D;
+    _1_source=1; _2_source=0; _3_source=_3_source==CH_C;
+    if(!Scope144_IsFft((unsigned)_4_source))_4_source=_4_source==CH_D;
     Title[TRACK2][COUPLE].Value=DC; _Mode=AUTO;
     if(_Tr_source!=TRACK3 && _Tr_source!=TRACK4)_Tr_source=TRACK1;
     _Tr_kind=3; _X_posi.Value=0;digital_ready=0;display_had_frame=1;
     UiFile_Enter();UiCommon_Status(0);
     memset(&measure,0,sizeof(measure));buffer_owned=1;File144_CalLoad(&scope_bank);
-    App_init(0);Key_Buffer=0;scope_active=1;
+    App_ModeTransition();Key_Buffer=0;scope_active=1;
+    UiCommon_ModeTransition();
     }
     {
         unsigned key=Key_Buffer; Key_Buffer=0;
         PD_Cnt=600;
-        /* Latch physical press, but retain a short event between frames. */
-        Scope144_RunKey(Key(KEY1_STATUS),key==KEY1,&last_run_key,&held);
+        if(key && Current<13)Title[Current][Detail[Current]<4?Detail[Current]:0].Flag|=UPDAT;
+        /* Only newly published presses toggle. A resume press still down
+         * must not cancel the acquisition it just started. */
+        if(Scope144_RunPresses(Key1PressCount,&run_seen,&held))redraw=1;
         if(hw_session.stage && held) {
             Capture144_Abort(&hw_session);valid=0;held=1;redraw=2;
             measurement_available=0;
@@ -479,7 +517,9 @@ int Wildcat144_Service(void)
         if(key==KEY4 || key==K_ITEM_S) {
             while(key==KEY4 && Key(KEY4_STATUS)) { }
             Key_Buffer=0;
-            detail=Current==TRIGG?TriggerMenu_Next(detail,_Tr_source==TRACK1,0):
+            if(Current==TRACK4)detail=detail==0?(Scope144_IsFft((unsigned)_4_source)?RANGE:POSI):0;
+            else if(UiCommon_NextDetail(1))detail=Detail[Current];
+            else detail=Current==TRIGG?TriggerMenu_Next(detail,_Tr_source==TRACK1,0):
                 (detail+1)%Scope144_DetailLimit(Current);
             redraw=1;
         }
@@ -500,9 +540,9 @@ int Wildcat144_Service(void)
                     if(Current==TRACK1 || Current==TRACK2) {
                         Capture144_Abort(&hw_session);
                         measurement_available=0;
-                        valid=0;Frame144_Reset(&frame,++frame_epoch);
+                        valid=0;Frame144_Reset(&frame,++frame_epoch);Fft144_Reset();ShowFFT=0;
                         scope_active=0;Key_Buffer=0;Calibrat(TRACK1);scope_active=1;
-                        File144_CalLoad(&scope_bank);Scope144_SetClock(PPM_Comp);
+                        File144_CalLoad(&scope_bank);Scope144_SetClock(PPM_Comp);run_seen=Key1PressCount;
                         valid=0;last_range=8;last_coupling=2;redraw=2;
                     }
                 }
@@ -563,12 +603,22 @@ int Wildcat144_Service(void)
             case 4:trigger_kind=(trigger_kind+9+delta)%9;break;
             case 5:mode=(mode+3+delta)%3;break;
             case 6:
+                if(Current==TRACK4 && Scope144_IsFft((unsigned)_4_source))break;
                 if(Current==TRACK3 || Current==TRACK4) {
                     s16 *p=&Title[Current][POSI].Value;
                     if((*p<179 && delta>0)||(*p>1 && delta<0))*p+=delta;
                 } else if((delta>0 && position<190)||(delta<0 && position>10))position+=delta;
                 break;
-            case 46:Title[Current][SOURCE].Value=1-Title[Current][SOURCE].Value;break;
+            case 46:
+                if(Current==TRACK4) {
+                    _4_source=(s16)Scope144_DSourceStep((unsigned)_4_source,delta);
+                    Fft144_Reset();ShowFFT=0;
+                } else Title[Current][SOURCE].Value=1-Title[Current][SOURCE].Value;
+                break;
+            case 48:
+                if(Current==TRACK4 && Scope144_IsFft((unsigned)_4_source))
+                    Title[TRACK4][RANGE].Value=(Title[TRACK4][RANGE].Value+10+delta)%10;
+                break;
             case 31:
                 if(_Tr_source==TRACK1)_Tr_source=delta>0?TRACK3:TRACK4;
                 else if(_Tr_source==TRACK3)_Tr_source=delta>0?TRACK4:TRACK1;
@@ -596,7 +646,6 @@ int Wildcat144_Service(void)
                 else m->Track=delta>0?TRACK1:TRACK3;
                 break;
             }
-            case 14:csvnumber=(csvnumber+1000+delta)%1000;break;
             default:break;
             }
             redraw=1;
@@ -627,22 +676,23 @@ int Wildcat144_Service(void)
         }
         if(!hw_session.stage)ScopeInputs(range,coupling);
         if(range!=last_range || coupling!=last_coupling) {
-            measurement_available=0;valid=0;
+            measurement_available=0;valid=0;Fft144_Reset();ShowFFT=0;
             if(!Settle(120))goto scope_cleanup;
             last_range=range;last_coupling=coupling;
         }
         if(!hw_session.stage && (!held || !valid))
             cal_status=Scope144_Select(&scope_bank,range,ADCoffset,__Get(V_BATTERY),&active_cal);
         if(ADCoffset!=measurement_offset) {
-            measurement_available=0;valid=0;measurement_offset=ADCoffset;
+            measurement_available=0;valid=0;measurement_offset=ADCoffset;Fft144_Reset();ShowFFT=0;
         }
-        if(!cal_status){measurement_available=0;valid=0;Frame144_Reset(&frame,frame_epoch);memset(&measure,0,sizeof(measure));}
+        if(!cal_status){measurement_available=0;valid=0;Fft144_Reset();ShowFFT=0;Frame144_Reset(&frame,frame_epoch);memset(&measure,0,sizeof(measure));}
         /* A changed input cannot reinterpret a frozen record with a different
          * analog range/coupling. Wait for RUN to acquire a new epoch. */
         if(!valid && !hw_session.stage)CaptureWindow_Reset(&frame.capture,frame_epoch,CAPTURE_WINDOW_EMPTY);
         if(!held && cal_status) {
             Capture144Status capture;
-            unsigned wait_timeout=0;
+            unsigned wait_timeout=0;uint32_t phase_started=DWT_CYCLES;
+            if(!hw_session.stage)capture_work=0;
             if(!hw_session.stage) {
                 valid=0;Frame144_Reset(&frame,++frame_epoch);
                 frame.words=(const uint32_t *)DataBuf;frame.calibration=active_cal;frame.range=range;
@@ -687,11 +737,13 @@ int Wildcat144_Service(void)
                 }
             } else capture=Capture144_RecordWindow(&WildcatFpga,&ops,(uint32_t *)DataBuf,4096,
                 1000u*CYCLES_MS,frame_epoch,Scope144_TimePs(65536),&frame.capture);
+            capture_work+=(uint32_t)(DWT_CYCLES-phase_started);
+            Wildcat144Performance.acquisition=capture_work;
             if(capture!=CAPTURE144_OK && capture!=CAPTURE144_PENDING) {
                 valid=0;
                 /* K1 can arrive inside Poll. Consume that press once, so its
                  * queued event cannot toggle HOLD back to RUN on the next pass. */
-                if(capture==CAPTURE144_CANCELLED)last_run_key=1;
+                if(capture==CAPTURE144_CANCELLED){run_seen=run_cancelled;redraw=1;}
                 if(!(mode==1 && wait_timeout)) {
                     measurement_available=0;memset(&measure,0,sizeof(measure));
                 }
@@ -701,6 +753,7 @@ int Wildcat144_Service(void)
                 if(capture!=CAPTURE144_CANCELLED && capture!=CAPTURE144_ARGUMENT &&
                     !(mode==1 && wait_timeout))CaptureError(capture);
             } else if(capture==CAPTURE144_OK) {
+                phase_started=DWT_CYCLES;
                 if(!Frame144_Measure(&frame,&measure))goto scope_cleanup;
                 measurement_available=1;
                 digital_ready=0;
@@ -721,6 +774,7 @@ int Wildcat144_Service(void)
                     valid=1; if(mode==2)held=1;
                 } else if(mode==0)valid=1;
                 else valid=0;
+                Wildcat144Performance.processing=(uint32_t)(DWT_CYCLES-phase_started);
             }
         }
         _State.Value=held?HOLD:RUN;
@@ -729,7 +783,7 @@ int Wildcat144_Service(void)
         Menu144_Presentation(measurement_available);
         view_valid=0;
         if(!valid && display_had_frame && (!measurement_available || held || adjust_xpos)) {
-            Process144_ClearFrame();display_had_frame=0;redraw=2;
+            Process144_ClearFrame();display_had_frame=0;redraw=1;
         }
         if(valid) {
             if(!Frame144_Window(&frame,(unsigned)(MAX_X-MIN_X),base,xpos_q16,&view))goto scope_cleanup;
@@ -743,7 +797,19 @@ int Wildcat144_Service(void)
             if(held)frame.capture.flags|=CAPTURE_WINDOW_FROZEN;
             else frame.capture.flags &= ~CAPTURE_WINDOW_FROZEN;
             Menu144_Cursor(base);
-            Process144_DrawFrame(&frame,&view,position,invert);
+            if(Scope144_IsFft((unsigned)_4_source) && frame.capture.time_samples>=512) {
+                unsigned first=view.window_start_q16>0?(unsigned)((uint64_t)view.window_start_q16/65536u):0;
+                if(first>frame.capture.time_samples-512u)first=frame.capture.time_samples-512u;
+                fft_updated=Fft144_Update(&frame,first,(unsigned)_4_source,(unsigned)Title[TRACK4][RANGE].Value,DWT_CYCLES);
+                ShowFFT=(u8)Fft144.ready;Fft144_Labels((unsigned)_T1);
+            } else {Fft144.enabled=0;ShowFFT=0;}
+            if(!held || redraw || adjust_xpos || plotted_epoch!=frame.capture.epoch || plotted_twink!=Twink || fft_updated) {
+                uint32_t drawing_started=DWT_CYCLES;
+                Process144_DrawFrame(&frame,&view,position,invert);
+                Wildcat144Performance.drawing=(uint32_t)(DWT_CYCLES-drawing_started);
+                ++Wildcat144Performance.draws;plotted_epoch=frame.capture.epoch;plotted_twink=Twink;
+            }
+            TimingLine();
             display_had_frame=1;
             /* Draw_Window renders T1/T2 and V1/V2 using the shared Title values. */
         } else if(!cal_status) {
@@ -768,10 +834,12 @@ int Wildcat144_Service(void)
     }
     return 1;
 scope_cleanup:
-    view_valid=0;
+    view_valid=0;Fft144_Reset();ShowFFT=0;
     measurement_available=0;Menu144_Presentation(0);Menu144_TriggerWait(0);
     Capture144_Abort(&hw_session);
     Frame144_Reset(&frame,++frame_epoch);
+    /* Erase only the old waveform before restoring Normal display state. */
+    if(buffer_owned)Process144_ClearFrame();
     scope_active=0;
     saved_title[TRACK1][COUPLE]=(s16)coupling;
     saved_title[TRACK1][RANGE]=(s16)range;saved_title[TRACK1][POSI]=(s16)position;
@@ -802,7 +870,7 @@ scope_cleanup:
     OSBuffer=saved_flags[3]; OSAvg=saved_flags[4]; OsBufferLogicFlag=saved_flags[5];
     ShowFFT=saved_flags[6]; Det=saved_flags[7]; CurDefTime=saved_flags[9];
     OsChartFlag=saved_flags[10];EnableCursorDisplay=saved_flags[11];DigChLockout=saved_flags[12];
-    FPGAosFlag=saved_flags[13];
+    FPGAosFlag=saved_flags[13];AutoFFT=saved_flags[14];FFTGain=saved_flags[15];
     if(cycle_exit) {
         FlagFrameMode=0;FrameMode=0;
         OSBuffer=0;OSAvg=0;OsBufferLogicFlag=0;FPGAosFlag=0;
@@ -810,8 +878,9 @@ scope_cleanup:
     DWT_CTRL=saved_dwt; DEMCR=saved_demcr;
 
     if(buffer_owned)Process144_ReleaseBuffer();
-    App_init(buffer_owned?1:0);buffer_owned=0;Update_Range(); Update_Base();
+    App_ModeTransition();buffer_owned=0;Update_Range(); Update_Base();
     Update_Trig(_Tr_source==4?0:1);
+    UiCommon_ModeTransition();
 
     while(Key(KEY1_STATUS)||Key(KEY2_STATUS)||Key(KEY3_STATUS)||Key(KEY4_STATUS)||Key(K_ITEM_S_STATUS)) { }
     Key_Buffer=0;

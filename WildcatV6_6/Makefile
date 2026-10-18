@@ -15,7 +15,7 @@ ASFLAGS += $(CPUFLAGS)
 LDFLAGS += $(CPUFLAGS) -nostartfiles -Wl,-Map,$(BUILD)/app1.map
 LDLIBS += -lc
 
-C_SOURCES := UiCommon.c UI144.c UnifiedCal.c Calibrat.c Draw.c Files.c Files144.c Function.c Interrupt.c Main.c Menu.c Process.c NativeWindow.c Digital144.c FpgaProfile.c Interlace144.c Phase144.c Capture144.c CaptureWindow.c ViewWindowGeometry.c Frame144.c Scope144.c Wildcat144.c startup.c stm32f10x_nvic.c
+C_SOURCES := Fft144.c UiCommon.c UI144.c UnifiedCal.c Calibrat.c Draw.c Files.c Files144.c Function.c Interrupt.c Main.c Menu.c Process.c NativeWindow.c Digital144.c FpgaProfile.c Interlace144.c Phase144.c Capture144.c CaptureWindow.c ViewWindowGeometry.c Frame144.c Scope144.c Wildcat144.c startup.c stm32f10x_nvic.c
 OBJECTS := $(addprefix $(BUILD)/,$(C_SOURCES:.c=.o)) $(BUILD)/BIOS.o $(BUILD)/cortexm3_macro.o
 DEPS := $(OBJECTS:.o=.d)
 

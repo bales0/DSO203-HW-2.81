@@ -12,6 +12,7 @@
 #include "Scope144.h"
 #include "Frame144.h"
 #include "UiCommon.h"
+#include "Fft144.h"
 #include "NativeWindow.h"
 #include <string.h>
 #include "Calibrat.h"
@@ -437,15 +438,29 @@ void BackGround_Reset(u8 clear)
 /*******************************************************************************
  App_init: Displays the window waveform data initialization
 *******************************************************************************/
-void App_init(u8 ClearScreen)
+static void App_HardwareInit(void)
 { 
   __Set(ADC_CTRL, EN );       
   __Set(ADC_MODE, SEPARATE);
   __Set(STANDBY, DN);          // exit the power saving state
   Delayms(20); 
-  __Set(FIFO_CLR, W_PTR); 
+  __Set(FIFO_CLR, W_PTR);
+}
+
+/* Keep the ordinary full reset unchanged for startup/recovery callers. */
+void App_init(u8 ClearScreen)
+{
+  App_HardwareInit();
   BackGround_Reset(ClearScreen);
-  PD_Cnt = 600;
+  PD_Cnt=600;
+}
+/* Successful Normal/interlace transitions preserve the LCD frame. Hardware
+ * reset and the existing settling interval remain identical to App_init. */
+void App_ModeTransition(void)
+{
+  App_HardwareInit();
+  Delayms(100);
+  InitXY=1;PD_Cnt=600;
 }
 
 /*******************************************************************************
@@ -1123,7 +1138,6 @@ void Process(void)
   s16  AWavCenter;                          
   s16  BWavCenter;
   s32  X=0,Y=0;
-  u16  LeftSkirt=0;
   s16 view_origin;
 
   if(native_buffer_pending) {
@@ -2122,46 +2136,9 @@ if (_T_base > 16){					//jitter compensation for interpolated modes
 
 
 	// FFT /////////////////////////////
-        u8 treshold=6;
-        if(AutoFFT==0)treshold=75;		//log mode, uses high gain
 	if((_4_source>10)&&(_Mode!=X_Y)&&   ((EnableFFT==1)||(_T_base>7)||(__Get(FIFO_START)==0)||(_Mode==SCAN))   ){
            EnableFFT=2;
-	   for(i=0; i<FFTSize;i++)	fi[i] = 0;
-	   fix_fft(fr, fi, FFTSize);
-
-           fr[1]=0; 
-           fr[0]=0; fi[0]=0;                            					            
-	   for (i=0; i < (FFTSize/2); i++)
-	     {
-		X= fr[i];      /* Real */		
-		Y= fi[i];      /* Imag */    
-                fi[ i ] = Int_sqrt((X*X)+(Y*Y));	//load in fi[x] instead of fr[x], so result can persist after loading input in fr[x]
-                if(fi[i]<0)fi[i]=0;        
-
-                if((_4_source==15)||(_4_source==13)){   //wide bandwidth, sums peak with adjacent bins, so need to leave space before next peak
-                  if(i>3){         			//was 5    3 now works with  i>5 on leftskirt conditional and fr[1] cleared 
-                    if((fi[i-2]>=fi[i-3])&&(fi[i-2]>fi[i-1])&&(fi[i-2]>treshold)){	        //detect peak (i= -2 =peak), threshold
-                      fi[i-2]=Int_sqrt((fi[i-2]*fi[i-2])+(fi[i-3]*fi[i-3])+(fi[i-1]*fi[i-1]));  //sum with neighbors
-                      fi[i-3]=2+(fi[i-2]>>2);					      		//suppress left skirt (was >>3 for hamming W)                      
-                      LeftSkirt=i-3;						      		//save it's position	 
-                    }
-                    if(((i-5)==LeftSkirt)&&(i>5)){fi[i-3]=fi[i-5];LeftSkirt=0;}  //suppress right skirt of summed peak if next bin skipped
-                  }  
-
-                  if(i>7){
-                    fi[i-7]=Log10Process(i-7);          //Processed bins in summing mode
-                  } 
-
-                }else{
-                    fi[i]=Log10Process(i);               //In Hann only mode
-                }
- 	     }
-
-             if((_4_source==15)||(_4_source==13)){
-                for(i=249;i<256;i++){
-                    fi[i]=Log10Process(i);                    //Rest of bins in summing mode
-                }
-             }
+	   Process_Fft((unsigned)_4_source,0);
           } 
 	//////////////////////////// FFT ///
 
@@ -3364,4 +3341,34 @@ void Process144_Draw(const Scope144Cal *cal,const int32_t *samples,unsigned star
     discard=0; Rdiscard=0; FrameEndFlag=1;
     GPIOC->BRR=0x30;
     Draw_Window();
+}
+
+/* Shared Normal/interlace transform, including original summed-bin rules.
+ * Widen squares before multiplying; large spectra saturate without overflow. */
+static u32 FftMagnitude(s32 x,s32 y,s32 z)
+{
+    uint64_t power=(uint64_t)((int64_t)x*x)+(uint64_t)((int64_t)y*y)+(uint64_t)((int64_t)z*z);
+    return Int_sqrt(power>0xffffffffu?0xffffffffu:(u32)power);
+}
+void Process_Fft(unsigned source,unsigned shift)
+{
+    u16 i,left_skirt=0;u8 threshold=AutoFFT==0?75:6;
+    s32 scale=(s32)(1u<<shift);
+    for(i=0;i<FFTSize;++i)fi[i]=0;
+    fix_fft(fr,fi,FFTSize);
+    fr[0]=fr[1]=fi[0]=0;
+    for(i=0;i<FFTSize/2;++i) {
+        fi[i]=(s32)FftMagnitude(fr[i]*scale,fi[i]*scale,0);
+        if(source==15 || source==13) {
+            if(i>3) {
+                if(fi[i-2]>=fi[i-3] && fi[i-2]>fi[i-1] && fi[i-2]>threshold) {
+                    fi[i-2]=(s32)FftMagnitude(fi[i-2],fi[i-3],fi[i-1]);
+                    fi[i-3]=2+(fi[i-2]>>2);left_skirt=i-3;
+                }
+                if(i>5 && i-5==left_skirt){fi[i-3]=fi[i-5];left_skirt=0;}
+            }
+            if(i>7)fi[i-7]=Log10Process(i-7);
+        } else fi[i]=Log10Process(i);
+    }
+    if(source==15 || source==13)for(i=249;i<256;++i)fi[i]=Log10Process(i);
 }

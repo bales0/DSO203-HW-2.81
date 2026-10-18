@@ -12,6 +12,8 @@
 extern vu8  Cursor_Cnt, Key_Wait_Cnt, Key_Repeat_Cnt, Key_Buffer, Cnt_20mS;
 extern vu16  Cnt_mS;
 extern vu32 LimitTransfer;
+/* Published once per new K1 event by the ordinary 20 ms key scanner. */
+extern vu32 Key1PressCount;
 
 extern vu8  Twink, Blink;
 extern u8   Volume, Light, LoBeepLevel;

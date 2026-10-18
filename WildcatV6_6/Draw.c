@@ -12,6 +12,7 @@
 #include "File.h"
 #include "Scope144.h"
 #include "NativeWindow.h"
+#include "Fft144.h"
 
 void LoadBuffer(u16 Row, u8 buffer,u8 *y,u8 *Dot_Hide,u8 service);	
 void LoadFFTbuffer(u16 Row,u8 buffer);
@@ -695,7 +696,7 @@ void Draw_Window(void)
    
       //if(_4_source>13)COLOR_INDEX=0x0500; else COLOR_INDEX=0x0501;    //sets fft values display to source channel color (need to change uc)
 
-	if(((ShowFFT==1)||(_4_source==SPEC_A))&&(_Mode!=X_Y)){
+	if(((ShowFFT==1)||(_4_source==SPEC_A))&&(_Mode!=X_Y)&&!Wildcat144_Active()){
                
                 if(_T_base==8){                         //special case to align with data flow and other timebases
                   Delayms(2);
@@ -1097,13 +1098,9 @@ void Update_View_Area(void)
           DrawPixel((u16)i,0,color);DrawPixel((u16)i,9,color);
         }
       }
-      if (((((FlagFrameMode==1)&&(_Mode!=SGL))||OSBuffer)) && (Options&1)) {
-        if (((_Mode==NORH)||(_Mode==NORHLD)||(_Mode==NORC))&&(_T_base < 10)&&(!OsBufferLogicFlag)){
-          Print_Str(Title[7][3].XPOS, 0,Title[7][3].Color[Title[7][0].Value], PRN,"T");	//active in this mode, normal color
-        }else{
-          Print_Str(Title[7][3].XPOS, 0,0x0905, PRN,"T");						//greyed out, not active
-        }
-      }
+      if(NativeHoldoffAvailable() && Current!=FILE && !NotificationTimer)
+        Print_Str(Title[TRIGG][3].XPOS,0,Title[TRIGG][3].Color[Title[TRIGG][0].Value],PRN,"T");
+
     }
     _X_View.Flag &= !UPDAT;
     if(!Wildcat144_Active())DisplaySamples();
@@ -2107,6 +2104,7 @@ void LoadFFTbuffer(u16 Row,u8 buffer){
 		}  	//if fftx
 	}      		//if show fft	
       }        		//if row
+
 
 }
 

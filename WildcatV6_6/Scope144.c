@@ -405,12 +405,15 @@ unsigned Scope144_ClockValueLine(char out[40],int ppm)
 }
 unsigned Scope144_ClockLine(char out[40]) { return Scope144_ClockValueLine(out,clock_ppm); }
 
-/* Accept short presses that ended between frames, ignore a held-key repeat. */
-void Scope144_RunKey(int down,int event,int *was_down,int *held)
+/* A monotonic press sequence distinguishes a new click from the same
+ * still-held key. Preserve two presses between frames and uint32 rollover. */
+int Scope144_RunPresses(uint32_t published,uint32_t *seen,int *held)
 {
-    if(!was_down || !held)return;
-    if(!*was_down && (down || event))*held=!*held;
-    *was_down=down!=0;
+    uint32_t pending;
+    if(!seen || !held)return 0;
+    pending=published-*seen;*seen=published;
+    if(pending&1u)*held=!*held;
+    return pending!=0;
 }
 
 const GeneratorCapability GeneratorCapabilities[9]={
@@ -464,7 +467,14 @@ uint32_t Scope144_TriggerTicks(unsigned base,unsigned x1,unsigned x2)
     return (uint32_t)(((uint64_t)delta*step+65536u)/131072u);
 }
 
-/* Native Current/Detail navigation, excluding separate analog B, XY, FFT
+int Scope144_IsFft(unsigned source){return source==14 || source==15;}
+unsigned Scope144_DSourceStep(unsigned source,int delta)
+{
+    static const unsigned choices[4]={0,1,14,15};unsigned i;
+    for(i=0;i<4;++i)if(choices[i]==source)return choices[(i+(delta<0?3:1))%4];
+    return 0;
+}
+/* Native Current/Detail navigation, excluding separate analog B, XY, FFT_B
  * and legacy file formats while both ADCs acquire the single input A. */
 unsigned Scope144_GroupStep(unsigned group,int delta)
 {
@@ -494,7 +504,8 @@ int Scope144_Available(unsigned group,unsigned detail,unsigned kind)
 {
     if(detail>=Scope144_DetailLimit(group))return 0;
     if(group==1 || group==4)return 0;
-    if(group==2 || group==3)return detail==0 || detail==3;
+    if(group==2)return detail==0 || detail==3;
+    if(group==3)return detail==0 || detail==2 || detail==3;
     if(group==5)return Generator_Detail(kind,detail)!=0;
     if(group==6 && detail==3)return 0;
     if(group==7 && detail==3)return 0;
@@ -508,7 +519,7 @@ unsigned Scope144_Field(unsigned group,unsigned detail)
     static const unsigned ycursor[]={35,36,37,38},cursor[]={8,9,39,40},file[]={32,14,33,34};
     if(detail>=Scope144_DetailLimit(group))return 34;
     if(group==0)return a[detail];
-    if(group==2 || group==3)return detail==0?46:detail==3?6:34;
+    if(group==2 || group==3)return detail==0?46:detail==3?6:group==3 && detail==2?48:34;
     if(group==5)return gen[detail];
     if(group==6)return time[detail];
     if(group==7)return trig[detail];

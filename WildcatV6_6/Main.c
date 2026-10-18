@@ -261,6 +261,7 @@ int main(void)
     u16 fpga_x = (400u - 8u * strlen(fpga_name)) / 2u;
     __Display_Str(fpga_x, 10, WHT, PRN, (char *)fpga_name);
   }
+  Wildcat144_CheckImage();
   Delayms(2000); 
   App_init(1);
 
@@ -676,7 +677,7 @@ ScopeService:
       PD_Cnt = 600;                         // 600 seconds
       if(UiCommon_ValueKey(Key_Buffer,0)){SelectiveUpdate|=0x1e;Update=1;goto BypassUpdate;}
       if(Key_Buffer!=KEY4 && Key_Buffer!=K_INDEX_S && Generator_Key(Key_Buffer,0)) {
-        Generator_Reconcile();SelectiveUpdate|=0x1e;Update=1;
+        SelectiveUpdate|=0x1e;Update=1;
         goto BypassUpdate;
       }
       {int action=Key_Buffer==KEY4?0:UiFile_Key(Key_Buffer,0);
@@ -1055,7 +1056,7 @@ if(Key_Buffer== KEY4){
     {
        if((__Get(KEY_STATUS)& KEY4_STATUS)!=0){
 
-	    _Curr[_Det].Flag |= UPDAT;
+	    if(Current < METER_0)_Curr[_Det].Flag |= UPDAT;
             if(NativeTriggerMenu(KEY4))goto bypasslongpress;
             if(Generator_Key(KEY4,0)){SelectiveUpdate|=0x1e;Update=1;goto BypassUpdate;}
             if(UiFile_Key(KEY4,0)){SelectiveUpdate|=0x08;goto bypasslongpress;}
@@ -1089,25 +1090,9 @@ if(Key_Buffer== KEY4){
              (_Mode==SCAN)||(_T_base>9))&&(Current == TRIGG)&&(_Det==2))_Det=3;	//skip over det3 (will go to 0)
 
 
-                      if((FlagMeter==0)&&((Current==V_VERNIE)||(Current==T_VERNIE))&&(_Det==V2)){ //skip meter select if meters off
-                        _Curr[_Det].Flag |= UPDAT;
-                        _Det=0;                                                                    //go to V1 or T1 = 0
-                      }else{
-			if(Current < METER_0){                                                     // change the Detail
-			  _Curr[_Det].Flag |= UPDAT;
-			  if(_Det < 3)    _Det += 1;
-			  else            _Det  = 0;
-                          if(Current == OUTPUT){if(Title[OUTPUT][KIND].Value==PWM){if(_Det==OUTATT)_Det=0;}else if(_Det==DUTYPWM)_Det+=1;} 
-			  if(_Curr[_Det].MARK & NOT)                        _Det  = 0; 
-			  if(_Curr[_Det].MARK & NUM2)                       _Det  = 0; 
-			  if((_Curr[_Det].MARK & NUM3)&&(Current != FILE)&& (Current != OUTPUT) )  _Det  = 0;  
-
-                          if((Current==FILE)&&(_Det==3)){
-                            if((_Curr[2].Value==7)&&(Title[FILE][0].Value==0))_Det=0;              //do not edit ROM backup file 
-                          }
-
- 			  _Curr[_Det].Flag |= BLINK;
-			} else {                                                                   // change the measurement object
+                      if(Current < METER_0) {
+                UiCommon_NextDetail(0);
+            } else {                                                                   // change the measurement object
 
                           if(Meter[Current-METER_0].Item>1){                     //don't change source for VBT AND FPS (items 0 and 1) 		
 			  Meter[Current-METER_0].Flag |= UPDAT;
@@ -1123,8 +1108,7 @@ if(Key_Buffer== KEY4){
                                 else Meter[Current-METER_0].Track=TRACK1;
                           }   
                         } 
-		      }//if current, else (if in meter section)
-                    }
+		      }
 
             if(EditListActive(0)){                                                           //filename edit 
               CharValue=EditChar[CharIndex][0];
@@ -1139,7 +1123,7 @@ if(Key_Buffer== KEY4){
          while ((Delay_Cnt >0)&&(Delay_Cnt <=1000)){					// long press
            if(Delay_Cnt<875)BackLight(0);
            if((__Get(KEY_STATUS)& KEY4_STATUS)!=0){
-		_Curr[_Det].Flag |= UPDAT;
+		if(Current < METER_0)_Curr[_Det].Flag |= UPDAT;
 
 
              if((_4_source>11)&&((DownConvertMode)||(FFTt1Mode))){
@@ -1556,7 +1540,7 @@ if(Key_Buffer== KEY4){
       	while (Delay_Cnt > 1000){
                                                 
             if((__Get(KEY_STATUS)& K_INDEX_S_STATUS)!=0){
-                  if(Generator_Key(K_INDEX_S,0)){Generator_Reconcile();SelectiveUpdate|=0x1e;Update=1;goto BypassUpdate;}
+                  if(Generator_Key(K_INDEX_S,0)){SelectiveUpdate|=0x1e;Update=1;goto BypassUpdate;}
 
                   if(OffsetSelect){
                     OffsetSelect^=0x03;                                                 //toggle between =1 and =2
@@ -2791,7 +2775,10 @@ BypassExclusions:
           else if(_Det==1)AlignTbaseSweep(2);       //if changing frequencies, if in sweep/detector mode
 BypassUpdate:
 
-      if((Current==OUTPUT)&&(_Det==0)&&((Key_Buffer==K_INDEX_DEC)||(Key_Buffer==K_INDEX_INC)))Update_Output();
+      /* Shared GEN actions set the output exclusion bit. Only the native
+       * sweep/special-editor fallback needs this legacy KIND update. */
+      if(!(SelectiveUpdate&0x08)&&(Current==OUTPUT)&&(_Det==0)&&((Key_Buffer==K_INDEX_DEC)||(Key_Buffer==K_INDEX_INC)))Update_Output();
+      Generator_Reconcile();
 
       if((OSBufferLogic()!=OSStatus)){
         if(OSBufferLogic()){

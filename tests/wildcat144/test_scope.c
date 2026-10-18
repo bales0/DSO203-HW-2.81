@@ -109,13 +109,15 @@ int main(void)
     CHECK(Scope144_ClockLine(row));CHECK(!strcmp(row,"# clock_ppm=100\r\n"));
     CHECK(Scope144_SetClock(-100)==-100);CHECK(Scope144_TimePs(144)==1000100);
     CHECK(Scope144_SetClock(1000)==0);CHECK(Scope144_TimePs(144)==1000000);
-    { int held=0,down=0;
-      Scope144_RunKey(1,1,&down,&held);CHECK(held==1 && down==1);
-      Scope144_RunKey(1,1,&down,&held);CHECK(held==1);
-      Scope144_RunKey(0,1,&down,&held);CHECK(held==1 && down==0);
-      Scope144_RunKey(0,1,&down,&held);CHECK(held==0); /* A short new press. */
-      Scope144_RunKey(1,1,&down,&held);CHECK(held==1);
-      held=1;Scope144_RunKey(1,1,&down,&held);CHECK(held==1); /* SGL must stay held. */
+    { int held=0;uint32_t seen=0;
+      CHECK(Scope144_RunPresses(1,&seen,&held) && held==1 && seen==1);
+      CHECK(!Scope144_RunPresses(1,&seen,&held) && held==1); /* held/queued repeat */
+      CHECK(Scope144_RunPresses(3,&seen,&held) && held==1); /* double click */
+      CHECK(Scope144_RunPresses(4,&seen,&held) && held==0);
+      held=1;CHECK(!Scope144_RunPresses(4,&seen,&held) && held==1); /* SGL */
+      seen=0xfffffffeu;held=0;CHECK(Scope144_RunPresses(0,&seen,&held) && !held);
+      CHECK(Scope144_RunPresses(1,&seen,&held) && held);
+      CHECK(!Scope144_RunPresses(2,0,&held) && !Scope144_RunPresses(2,&seen,0));
     }
     /* Traverse every native menu: no inaccessible channel or legacy file
      * handler can be reached while the interlace service owns acquisition. */
@@ -132,7 +134,7 @@ int main(void)
         group=0;
         for(n=0;n<20;++n) {
             CHECK(group!=1 && group!=4 && group<=21);
-            for(d=0;d<Scope144_DetailLimit(group);++d)CHECK(Scope144_Field(group,d)<=47);
+            for(d=0;d<Scope144_DetailLimit(group);++d)CHECK(Scope144_Field(group,d)<=48);
             CHECK(Scope144_Field(group,Scope144_DetailLimit(group))==34);
             CHECK(Scope144_GroupStep(Scope144_GroupStep(group,1),-1)==group);
             group=Scope144_GroupStep(group,1);
@@ -151,7 +153,7 @@ int main(void)
       CalReference_Text(text,0,150005);CHECK(!strcmp(text,"150.01 mV"));
       CalReference_Text(text,7,15000500);CHECK(!strcmp(text,"15.001 V"));
       for(group=0;group<4;++group)CHECK(!Scope144_Available(1,group,0));
-      for(n=2;n<=3;++n)for(group=0;group<4;++group)CHECK(Scope144_Available(n,group,0)==(group==0 || group==3));
+      for(n=2;n<=3;++n)for(group=0;group<4;++group)CHECK(Scope144_Available(n,group,0)==(group==0 || group==3 || (n==3 && group==2)));
       CHECK(Scope144_Available(6,2,0) && Scope144_Field(6,2)==2 && !Scope144_Available(6,3,0));
       CHECK(!Scope144_Available(7,3,0) && Scope144_Available(9,3,0));
       CHECK(!Scope144_Available(5,2,0) && Scope144_Available(5,2,4));

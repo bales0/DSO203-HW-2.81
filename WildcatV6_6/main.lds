@@ -42,6 +42,7 @@ SECTIONS
         /*  Files.o(.text) */
 
           *Function.o(.text)
+          *UI144.o(.text)
           *Calibrat.o(.text)
           *Interrupt.o(.text)
         /*  Draw.o(.text) */
@@ -63,6 +64,7 @@ SECTIONS
           *NativeWindow.o(.text)
           *Digital144.o(.text)
           *Frame144.o(.text)
+          *Fft144.o(.text)
     } >spare
 
 

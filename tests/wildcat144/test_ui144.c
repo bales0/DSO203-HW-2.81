@@ -32,6 +32,8 @@ static char edge[9][10]={":!\\!",":!^!","<Vt",">Vt","L<[","L>[","H<[","H>[","GEN
 static char dt_label[2][4]={"dT","1/d"};
 static char labels[12][5]={"Vbat","fps","Vdc","RMS","Freq","Max","Min","Vpp","T","Duty","Th","Tl"};
 #define E(s,x,y,l,v) {(char *)(s),colors,l,0,x,y,v,0}
+#define F(s,x,y,l,v) {(char *)(s),colors,l,FIX,x,y,v,0}
+#define P(s,x,y,l,v) {(char *)(s),colors,l,NUM2,x,y,v,0}
 menu Title[13][4]={
  {E(sources,35,228,4,1),E(couples,35,216,8,7),E(ranges,51,216,8,0),E("YPOS",0,0,200,100)},
  {E(sources,86,228,4,0),E(couples,86,216,4,0),E(ranges,102,216,8,1),E("YPOS",0,0,200,100)},
@@ -39,13 +41,13 @@ menu Title[13][4]={
  {E(sources,188,228,15,0),E("",233,0,0,0),E("",217,0,0,0),E("YPOS",0,0,200,20)},
  {E(states,0,228,2,0),E(states,0,216,2,0),E("",0,0,0,0),E("",0,0,0,0)},
  {E(kinds,239,228,8,0),E(rates,239,216,22,0),E("DUTY",212,216,30000,15000),E("AMPL",196,216,100,50)},
- {E(mode_str,290,228,6,AUTO),E(ranges,290,216,21,0),E("XPOS",366,0,3703,0),E("VIEW",159,0,253,32)},
+ {E(mode_str,290,228,6,AUTO),E(ranges,290,216,21,0),F("XPOS",366,0,3703,0),E("VIEW",159,0,253,32)},
  {E(sources,333,228,4,0),E(edge,373,228,8,1),E("LEV",333,216,200,100),E("T",92,0,3400,0)},
- {E("V1",35,0,200,180),E("V2",62,0,200,40),E("dV",314,197,1,0),E("",342,197,240,0)},
+ {F("!V1!",35,0,200,180),F("!V2!",62,0,200,40),E("dV",314,197,1,0),E("",342,197,240,0)},
  {E("SAVE",126,0,1,0),E("",206,0,999,0),E("CSV",230,0,7,3),E("DIR",166,0,15,0)},
- {E("T1",312,0,300,30),E("T2",339,0,300,180),E(dt_label,314,182,1,0),E("",342,182,400,0)},
- {E("LIGHT",314,167,0,0),E("",342,167,9,5),E("",0,0,0,0),E("",0,0,0,0)},
- {E("VOLUME",314,152,0,0),E("",342,152,9,5),E("",0,0,0,0),E("",0,0,0,0)}
+ {F("!T1!",312,0,300,30),F("!T2!",339,0,300,180),E(dt_label,314,182,1,0),E("",342,182,400,0)},
+ {F("LIGHT",314,167,0,0),P("",342,167,9,5),E("",0,0,0,0),E("",0,0,0,0)},
+ {F("VOLUME",314,152,0,0),P("",342,152,9,5),E("",0,0,0,0),E("",0,0,0,0)}
 };
 meter Meter[9]={
  {labels[0],0,FRQ,314,342,137,0},{labels[0],0,CIR,314,342,122,0},{labels[0],0,VPP,314,342,107,0},
@@ -53,7 +55,8 @@ meter Meter[9]={
  {labels[0],0,MAX,314,342,47,0},{labels[0],0,DUT,314,342,32,0},{labels[0],0,TH,314,342,17,0}
 };
 trigg V_Trigg[4];
-u8 Current,Detail[14],TrgAuto,FlagMeter=1,UpdateMeter=4,BTwink,EnablePaS;vu8 Twink,Cnt_20mS;vu16 Sec_Cnt;
+u8 ShowFFT;
+u8 Current,Detail[14],TrgAuto,FlagMeter=1,Update=0,SelectiveUpdate=0,ClearMeterAreaFlag,UpdateMeter=4,BTwink,EnablePaS;vu8 Twink,Cnt_20mS;vu16 Sec_Cnt;
 u8 EnableCursorDisplay,DisableCursorDisplay,CursorDisplaySelect,MinBypass;
 vu16 CursorDisplayTimer;
 char CursorDisplayStr[12];
@@ -75,7 +78,11 @@ void ClearScreenArea(u16 x1,u16 x2,u8 y1,u8 y2)
     if(x1==172 && x2==237 && y1==216)++header_clears;
     for(x=x1;x<x2;++x)for(y=y1;y<y2;++y)screen[x][y]=0;
 }
-const char F_UNIT[12]="Hz",T_UNIT[12]="ns",V_UNIT[12]="uV",P_UNIT[12]="%";
+const char F_UNIT[12]="Hz",T_UNIT[12]="ns",V_UNIT[12]="uV";
+const char P_UNIT[12]={'%',' ',0,'%',' ',0,'%',' ',0,0,0,0};
+#ifdef REAL_UI_PERCENT
+void Native_Int2Str(char *,s32,const char *,u8,u8,s8);
+#endif
 static Y_attr attrs[8];Y_attr *Y_Attr=attrs;
 static struct {unsigned x,y,color,mode;char text[64];} painted[128];
 static struct {int32_t value;const char *unit;} formats[32];
@@ -99,10 +106,20 @@ void Print_Str(u16 x,u16 y,u16 color,u8 mode,char *text)
     strncpy(painted[draws].text,text,63);painted[draws++].text[63]=0;
 }
 void Int2Str(char *out,s32 value,const char *unit,u8 precision,u8 mode,s8 shift)
-{CHECK(formatted<32);(void)precision;(void)mode;(void)shift;formats[formatted].value=value;formats[formatted++].unit=unit;strcpy(out,unit==V_UNIT && precision==2 && mode==UNSIGN?"1.4V ":"12.3mV");}
+{
+    CHECK(formatted<32);formats[formatted].value=value;formats[formatted++].unit=unit;
+    if(unit==P_UNIT && mode==STD) {
+#ifdef REAL_UI_PERCENT
+        Native_Int2Str(out,value,unit,precision,mode,shift);
+#else
+        (void)shift;sprintf(out," %ld%% ",(long)value);
+#endif
+    } else strcpy(out,unit==V_UNIT && precision==2 && mode==UNSIGN?"1.4V ":"12.3mV");
+}
 void Display_Title(void){++title_calls;Menu144_NativeTitle();}
 void Display_Meter(void){++meter_calls;Menu144_Meters(0);}
 void Update_Battery(void){++battery_calls;}
+void Update_Mark(void){}
 void Update_View_Area(void){unsigned x,y;++graph_calls;for(x=91;x<307;++x)for(y=0;y<12;++y)screen[x][y]=0xf81f;}
 static unsigned Find(unsigned x,unsigned y,const char *text)
 {unsigned i;size_t n=strlen(text);for(i=0;i<draws;++i)if(painted[i].x==x && painted[i].y==y && !strncmp(painted[i].text,text,n) && strspn(painted[i].text+n," ")==strlen(painted[i].text+n))return i;fprintf(stderr,"Missing %u/%u %s\n",x,y,text);for(i=0;i<draws;++i)if(painted[i].x==x && painted[i].y==y)fprintf(stderr,"  actual: [%s]\n",painted[i].text);exit(1);}
@@ -130,6 +147,8 @@ static void Draw(unsigned group,unsigned detail,unsigned valid)
     for(i=0;i<draws;++i)if(painted[i].y==0) {
         width=0;for(j=0;painted[i].text[j];++j)width+=painted[i].text[j]=='!'?4:8;
         if(painted[i].x<89)CHECK((painted[i].x==0 && !strcmp(painted[i].text,"YPOS")) ||
+            (painted[i].x==0 && !strcmp(painted[i].text,"    ")) ||
+            (painted[i].x==0 && Current==TRACK4 && Scope144_IsFft((unsigned)_4_source) && strlen(painted[i].text)==4 && width<=32) ||
             (painted[i].x==35 && !strcmp(painted[i].text,"!V1!")) ||
             (painted[i].x==62 && !strcmp(painted[i].text,"!V2!")));
         else if(painted[i].x>=310)CHECK(painted[i].x==312 || painted[i].x==339 || painted[i].x==366);
@@ -158,6 +177,13 @@ int main(void)
     Draw(0,1,1);CHECK(title_calls==1 && meter_calls==1);
     CHECK(battery_calls==1 && graph_calls==1);
     Find(333,216,"LEV!");Find(365,216,"!Man!");
+    /* Logical HOLD stays 1. Its final color comes from the same native
+     * state-2 color table entry, only with a completed frozen frame. */
+    _State.Value=HOLD;Draw(TRACK1,SOURCE,1);
+    CHECK(painted[Find(0,228,"HOLD")].color==Title[RUNNING][STATE].Color[2]);
+    Draw(TRACK1,SOURCE,0);CHECK(painted[Find(0,228,"HOLD")].color==Title[RUNNING][STATE].Color[1]);
+    _State.Value=RUN;Draw(TRACK1,SOURCE,1);
+
     Menu144_Calibration(1);Draw(TRACK1,0,1);Find(333,216,"LEV!");
     Menu144_Calibration(0);Draw(TRACK1,0,1);Find(0,228,"CAL?");
     Menu144_Calibration(2);Find(35,228,"CH(A)");
@@ -185,6 +211,22 @@ int main(void)
     }
     Meter[0].Track=TRACK1;
     for(i=0;i<22;++i)if(i!=RUNNING)for(j=0;j<Scope144_DetailLimit(i);++j)Draw(i,j,0);
+    /* FFT keeps the standard D source cell and small footer gain field;
+     * FFT_B cannot be selected. Disabled digital D readouts stay gray. */
+    {unsigned source,setting;static char d_sources[16][10]={"OFF","CH(D)","","","","","","","","","","","hFFT_B","sFFT_B","hFFT_A","sFFT_A"};
+     Title[TRACK4][SOURCE].Str=(char *)d_sources;
+     for(source=14;source<=15;++source)for(setting=0;setting<10;++setting) {
+        _4_source=(s16)source;Title[TRACK4][RANGE].Value=(s16)setting;
+        Draw(TRACK4,RANGE,1);Find(188,228,d_sources[source]);
+        CHECK(painted[Find(188,228,d_sources[source])].color!=0x0905);
+        CHECK(painted[Find(0,0,setting==0?"LOG ":setting==1?"AUTO":setting==2?" 0dB":setting==3?" 6dB":setting==4?"12dB":setting==5?"18dB":setting==6?"24dB":setting==7?"30dB":setting==8?"36dB":"42dB")].mode==Twink);
+        Meter[0].Track=TRACK4;Meter[0].Item=FRQ;Draw(METER_0,0,1);
+        CHECK(painted[Find(342,137,"--")].color==0x0905);
+     }
+     _4_source=1;Draw(TRACK4,POSI,1);Find(0,0,"YPOS");
+     CHECK(!screen[34][0]); /* guard before V1; no trailing FFT gain letter */
+     _4_source=0;Title[TRACK4][RANGE].Value=0;Title[TRACK4][SOURCE].Str=(char *)sources;Meter[0].Track=TRACK1;
+    }
     /* Readouts use actual 144 time and position scales, even with the panel off. */
     FlagMeter=0;Current=T_VERNIE;Detail[T_VERNIE]=0;_T1=300;formatted=0;
     Menu144_Cursor(0);CHECK(EnableCursorDisplay && CursorDisplaySelect==0 && CursorDisplayTimer);
@@ -322,7 +364,8 @@ int main(void)
             _Tr_kind=pulse?4:1;_Kind=(s16)kind;_Duty=15000;Title[OUTPUT][OUTATT].Value=50;
             Draw(FILE,1,1); /* A different menu left real text in the footer. */
             for(x=137;x<170;++x)for(y=216;y<227;++y)screen[x][y]=0x1234;
-            Draw(OUTPUT,detail,1);Find(239,228,kinds[kind]);if(kind!=8)Find(239,216,"1Hz");
+            Draw(OUTPUT,detail,1);Find(239,228,kinds[kind]);
+            if(kind==6)Find(239,216,"");else if(kind!=8)Find(239,216,"1Hz");
             for(x=91;x<307;++x)for(y=0;y<12;++y)CHECK(screen[x][y]==0xf81f);
             for(x=0;x<draws;++x)if(painted[x].y==0)CHECK(painted[x].x<89 || painted[x].x>=310);
             for(x=137;x<170;++x)for(y=216;y<227;++y)CHECK(screen[x][y]==0x1234);
@@ -386,6 +429,19 @@ int main(void)
         Find(239,228,kinds[i]);Find(172,216,i==7?"LOAD ARB":"LOAD UAR");
         CheckGeneratorValueBackgrounds();
         for(j=0;j<draws;++j)CHECK(!(painted[j].x==239 && painted[j].y==228 && strstr(painted[j].text,"OFF")));
+    }
+    /* A successful mode transition dirties only changed fields. Neither
+     * transition nor blinking another menu may repaint the unchanged GEN. */
+    { Scope144Measurements m={0};unsigned g,d,n;
+      _Kind=6;Draw(OUTPUT,FRQN,1);Current=TRACK1;Detail[TRACK1]=COUPLE;
+      for(g=0;g<13;++g)for(d=0;d<4;++d)Title[g][d].Flag=0;
+      UiCommon_ModeTransition();draws=formatted=0;
+      Menu144_View(&m,0,0,0,50,1);
+      for(n=0;n<draws;++n)CHECK(!(painted[n].x==239 && painted[n].y>=216));
+      Twink=!Twink;draws=formatted=0;Menu144_View(&m,0,0,0,50,0);
+      for(n=0;n<draws;++n)CHECK(!(painted[n].x==239 && painted[n].y>=216));
+      Title[OUTPUT][KIND].Flag|=UPDAT;draws=formatted=0;
+      Menu144_View(&m,0,0,0,50,1);Find(239,228,kinds[Generator_DisplayKind()]);
     }
     printf("PASS shared 144 UI: %u checks; all generator kinds/details, persistent footer and upper field ownership, blink, RUN/HOLD, pulse context, meters, bounds\n",checks);
     return 0;

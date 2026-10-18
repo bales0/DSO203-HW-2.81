@@ -13,6 +13,7 @@
 static unsigned output_dirty,ui_status,directory_count,file_changed;
 static int requested_kind=-1;
 static unsigned native_header_shown;
+extern u8 SelectiveUpdate;
 #ifdef GENERATOR_DIAGNOSTICS
 volatile GeneratorRuntimeStats GeneratorRuntime;
 void Generator_IrqSample(unsigned irq,unsigned cycles)
@@ -30,6 +31,40 @@ void Generator_PollSample(unsigned started,unsigned cycles,unsigned timeout)
     if(timeout)++GeneratorRuntime.poll_timeouts;
 }
 #endif
+/* Invalidate only mode-dependent native cells. GEN, battery and panel
+ * layout are shared; their ordinary handlers retain their own dirty flags. */
+void UiCommon_ModeTransition(void)
+{
+    unsigned group,detail;
+    /* Mode callers already reconcile ADC/range/base/trigger. Discard the
+     * pending Normal whole-UI refresh (including an unintended GEN restart). */
+    Update=0;SelectiveUpdate=0;ClearMeterAreaFlag=0;
+    for(group=TRACK1;group<=T_VERNIE;++group) {
+        if(group==OUTPUT || group==RUNNING || (group==FILE && Current!=FILE))continue;
+        for(detail=0;detail<4;++detail)Title[group][detail].Flag|=UPDAT;
+    }
+    Title[RUNNING][STATE].Flag|=UPDAT;
+    for(group=0;group<9;++group)Meter[group].Flag|=UPDAT;
+    Update_Mark();
+    if(Current!=FILE)Update_View_Area();
+}
+/* Drawing only: callers retain dirty flags, selection timing and capability
+ * filtering. Native coordinates, fixed labels and colors come from Title[]. */
+void UiCommon_FixedTitle(unsigned group,unsigned detail,unsigned mode)
+{
+    menu *e=&Title[group][detail];
+    Print_Str(e->XPOS,e->YPOS,e->Color[0],(u8)mode,e->Str);
+}
+void UiCommon_PercentTitle(unsigned group,unsigned mode)
+{
+    menu *e=&Title[group][1];unsigned n;
+    NumStr[0]=' ';
+    Int2Str(NumStr,10*(e->Value+1),P_UNIT,e->Value==9?3:2,STD,0);
+    /* Native percent text is 5/6 cells. Pad to 6 in the same draw pass so
+     * 100 -> 90 never leaves the previous suffix at the right edge. */
+    n=(unsigned)strlen(NumStr);while(n<6)NumStr[n++]=' ';NumStr[n]=0;
+    Print_Str(e->XPOS,e->YPOS,e->Color[0],(u8)mode,NumStr);
+}
 void UiCommon_Status(unsigned status){ui_status=status;}
 void UiFile_Result(unsigned status){ui_status=status?status:205u;}
 const char *UiCommon_Message(void)
@@ -90,6 +125,34 @@ int UiCommon_ValueKey(unsigned key,unsigned interlace)
         Title[Current][1].Value=(s16)next;Title[Current][1].Flag|=UPDAT;
         __Set(Current==BK_LIGHT?BACKLIGHT:BEEP_VOLUME,(next+1)*(Current==BK_LIGHT?10:5));
     }
+    return 1;
+}
+/* One native generic detail step after Main's special pre-navigation.
+ * Interlace uses the same cursor/channel step with its capability limit. */
+int UiCommon_NextDetail(unsigned interlace)
+{
+    unsigned old,next,limit=4,cursor=Current==V_VERNIE || Current==T_VERNIE;
+    if(interlace) {
+        if(!cursor && Current!=TRACK1)return 0;
+        if(cursor)limit=Scope144_DetailLimit(Current);
+    } else if(Current>=METER_0)return 0;
+    old=Detail[Current];if(old>=limit)return 0;
+    Title[Current][old].Flag|=UPDAT;
+    if(!interlace && cursor && !FlagMeter && old==V2) {
+        Detail[Current]=0;return 1;
+    }
+    next=old+1;if(next==limit)next=0;
+    if(!interlace) {
+        unsigned mask=NOT|NUM2;
+        if(Current==OUTPUT) {
+            if(_Kind==PWM){if(next==OUTATT)next=0;}
+            else if(next==DUTYPWM)++next;
+        }
+        if(Current!=FILE && Current!=OUTPUT)mask|=NUM3;
+        if(Title[Current][next].MARK&mask)next=0;
+        if(Current==FILE && next==DIR && Title[FILE][2].Value==7 && Title[FILE][0].Value==SAVE)next=0;
+    }
+    Detail[Current]=(u8)next;Title[Current][next].Flag|=BLINK;
     return 1;
 }
 int Generator_Key(unsigned key,unsigned interlace)
@@ -250,8 +313,25 @@ void Generator_KindTitle(void)
 }
 void Generator_FrequencyTitle(void)
 {
-    if(Generator_DisplayKind()==8)Print_Str(239,216,Generator_ValueColor(),Current==OUTPUT && Detail[OUTPUT]==FRQN?Twink:PRN,"UART  ");
-    else if(Generator_DisplayKind()!=(unsigned)_Kind)Print_Str(239,216,Generator_ValueColor(),PRN,"  --  ");
+    menu *e=&Title[OUTPUT][FRQN];
+    unsigned kind=Generator_DisplayKind(),selected=0,n=0,width=0;
+    int rate=e->Value;const char *text="      ";char cell[9];
+    /* One writer in Normal and 144, including an opaque blank for OFF.
+     * Preserve the stored rate; disabled fields never blink an empty box. */
+    if(kind==8)text="UART  ";
+    else if(kind!=(unsigned)_Kind)text="  --  ";
+    else if(kind!=6) {
+        if(rate<0 || rate>e->Limit)rate=0;
+        text=e->Str+rate*10;
+    }
+    if(kind!=6 && kind==(unsigned)_Kind)
+        selected=Current==OUTPUT && Detail[OUTPUT]==FRQN;
+    /* '!' is a half-width glyph. Pad shorter labels without first clearing
+     * the LCD field, so switching UART/frequency/OFF leaves no old digits. */
+    while(text[n] && n<8){cell[n]=text[n];width+=text[n]=='!'?4:8;++n;}
+    while(width<48 && n<8){cell[n++]=' ';width+=8;}
+    cell[n]=0;
+    Print_Str(e->XPOS,e->YPOS,Generator_ValueColor(),selected?Twink:PRN,cell);
 }
 unsigned UiCommon_HeaderOwned(void)
 {

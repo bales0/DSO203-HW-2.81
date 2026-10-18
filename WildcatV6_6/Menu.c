@@ -675,13 +675,17 @@ DisplayMeterValue:
   
 }
 
+int NativeHoldoffAvailable(void)
+{
+    return FrameMode==2 && (Options&1) && !OsBufferLogicFlag && _T_base<10 &&
+      (_Mode==NORH || _Mode==NORHLD || _Mode==NORC);
+}
 int NativeTriggerMenu(unsigned key)
 {
   unsigned analog=_Tr_source<TRACK3 || _Tr_source==4;
   if(Current!=TRIGG)return 0;
   if(key==KEY4) {
-    unsigned holdoff=FrameMode==2 && (Options&1) && !OsBufferLogicFlag && _T_base<10 &&
-      (_Mode==NORH || _Mode==NORHLD || _Mode==NORC);
+    unsigned holdoff=NativeHoldoffAvailable();
     Title[TRIGG][_Det].Flag|=UPDAT;
     _Det=(u8)TriggerMenu_Next(_Det,analog,holdoff);
     Title[TRIGG][_Det].Flag|=UPDAT|BLINK;
@@ -794,13 +798,17 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
 
       /* Shared title fields have one writer. In particular a pending ARB/UAR
        * must not briefly paint the engine's safe OFF before its selected name. */
-      if(i==OUTPUT && (j==KIND || (j==FRQN &&
-         (Generator_DisplayKind()==8 || Generator_DisplayKind()!=(unsigned)_Kind)))) {
+      if(i==OUTPUT && (j==KIND || j==FRQN)) {
         Title[i][j].Flag&=~UPDAT;
         if(Current==OUTPUT && Detail[OUTPUT]==j)Blink=0;
         continue;
       }
 
+      /* The buffer overview owns this row when holdoff cannot be used. */
+      if(i==TRIGG && j==3 && !NativeHoldoffAvailable()) {
+        if((Title[i][j].Flag&UPDAT) && Current!=FILE && !NotificationTimer)Update_View_Area();
+        Title[i][j].Flag&=~UPDAT;continue;
+      }
       if(Title[i][j].Flag & UPDAT){   // need to refresh the Item
 
 
@@ -851,13 +859,7 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
 
 
           if (!((i==9)&&(j==3))){                      //DIR LIST OR EDIT BOX, SHOW REGULAR MENU HERE (default files) WHEN NOT SELECTED
-              Print_Str(
-                Title[i][j].XPOS, Title[i][j].YPOS,
-                Title[i][j].Color[0],                    // Color fixed 
-                PRN, 
-                Title[i][j].Str                          // String fixed
-		    	    // battery and volume meter titles - not flashing
-               );
+              UiCommon_FixedTitle(i,j,PRN);
           }
 
 
@@ -896,24 +898,8 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
               );
             }
 
-          } else if(Title[i][j].MARK == NUM2){ 
-                NumStr[0]=' ';
-            if(i == BK_LIGHT){                        // backlight percentage
-              if(Title[i][j].Value == 9){
-                Int2Str(NumStr, 100, P_UNIT, 3, STD,0);
-                } else Int2Str(NumStr, 10*(Title[i][j].Value+1), P_UNIT, 2, STD,0);
-            } else {                                  // volume percentage
-              if(Title[i][j].Value == 9){							//was 10, changed so volume ind works properly
-                Int2Str(NumStr, 100, P_UNIT, 3, STD,0);
-              } else Int2Str(NumStr, 10*(Title[i][j].Value+1), P_UNIT, 2, STD,0);
-            }
-            Print_Str(
-              Title[i][j].XPOS, Title[i][j].YPOS,
-              Title[i][j].Color[0],                  // Color fixed  
-              PRN, 
-              NumStr                        // String for numerical
-			  //Battery and volume values
-            );
+          } else if(Title[i][j].MARK == NUM2){
+            UiCommon_PercentTitle(i,PRN);
           } else if(Title[i][j].MARK != NOT){
           
             if(i == V_VERNIE){
@@ -1048,15 +1034,12 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
               }
 
             }else if(!((Current==9)&&(_Det==3)&&(i==9)&&(j==3)&&(Title[FILE][0].Value==1))){
-              Print_Str(
-                Title[i][j].XPOS, Title[i][j].YPOS,
-                Title[i][j].Color[0],                    // Color fixed 
-                Twink, 
-                Title[i][j].Str                          // String fixed
-              );
+              UiCommon_FixedTitle(i,j,Twink);
             }
 
 
+          }else if(Title[i][j].MARK == NUM2){
+            UiCommon_PercentTitle(i,Twink);
           }else if(Title[i][j].MARK != NUM3){
             if(i == V_VERNIE)
             Print_Str(

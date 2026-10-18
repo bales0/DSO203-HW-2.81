@@ -1,5 +1,6 @@
 #ifndef WILDCAT_UI_COMMON_H
 #define WILDCAT_UI_COMMON_H
+#include "Fft144.h"
 /* Shared actions over the native Title/Detail state. Acquisition is not owned
  * here. The caller reconciles dirty output once, after handling an action. */
 typedef struct { unsigned char details,frequency_max; } GeneratorCapability;
@@ -8,11 +9,15 @@ unsigned Generator_Detail(unsigned kind,unsigned detail);
 unsigned Generator_NextDetail(unsigned kind,unsigned detail);
 int Generator_Key(unsigned key,unsigned interlace);
 int UiCommon_ValueKey(unsigned key,unsigned interlace);
+int UiCommon_NextDetail(unsigned interlace);
 void Generator_Reconcile(void);
 int Generator_Validate(void);
 int Generator_SecBusy(void);
 void Generator_UartDiscard(void);
 void UiCommon_Status(unsigned status);
+void UiCommon_ModeTransition(void);
+void UiCommon_FixedTitle(unsigned group,unsigned detail,unsigned mode);
+void UiCommon_PercentTitle(unsigned group,unsigned mode);
 void UiFile_Result(unsigned status);
 const char *UiCommon_Message(void);
 void Generator_Text(char text[9]);
@@ -48,10 +53,10 @@ typedef struct {
 extern volatile GeneratorRuntimeStats GeneratorRuntime;
 void Generator_IrqSample(unsigned irq,unsigned cycles);
 void Generator_PollSample(unsigned started,unsigned cycles,unsigned timeout);
-#define GEN_IRQ_BEGIN unsigned gen_irq_started=DWT_CYCLES
-#define GEN_IRQ_END(n) Generator_IrqSample(n,DWT_CYCLES-gen_irq_started)
+#define GEN_IRQ_BEGIN unsigned fft_irq_started=Fft144_IrqBegin(),gen_irq_started=DWT_CYCLES
+#define GEN_IRQ_END(n) do {Generator_IrqSample(n,DWT_CYCLES-gen_irq_started);Fft144_IrqEnd(fft_irq_started);}while(0)
 #else
-#define GEN_IRQ_BEGIN ((void)0)
-#define GEN_IRQ_END(n) ((void)0)
+#define GEN_IRQ_BEGIN uint32_t fft_irq_started=Fft144_IrqBegin()
+#define GEN_IRQ_END(n) Fft144_IrqEnd(fft_irq_started)
 #endif
 #endif

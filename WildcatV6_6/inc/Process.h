@@ -217,6 +217,7 @@ extern u16 DCt1;
 
 void BackGround_Reset(u8 clear);
 void App_init(u8 ClearScreen);
+void App_ModeTransition(void);
 void View_init(void);
 void Update_Range(void);
 void Update_Base(void);
