@@ -10,6 +10,7 @@
 // This can be replaced elsewhere to execute custom code every ms
 // The call will come from an interrupt context.
 void TimerTick(); // {}
+void ProcessSnapshot(void); // Foreground screenshot request handler.
 
 // Check if some keys have been pressed, but don't clear the key status.
 uint32_t peek_keys(uint32_t mask);

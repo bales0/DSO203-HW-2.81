@@ -79,6 +79,7 @@ uint32_t peek_keys(uint32_t mask)
 // Check if some keys have been pressed, and clear the status for them.
 uint32_t get_keys(uint32_t mask)
 {
+    ProcessSnapshot();
     return __sync_fetch_and_and(&KEYS_PRESSED, ~mask) & mask;
 }
 

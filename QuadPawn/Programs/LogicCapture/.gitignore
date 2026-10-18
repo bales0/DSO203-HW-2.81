@@ -1,0 +1,6 @@
+LOGICAPP.HEX
+baselibc/
+build/
+libfixmath/
+*~
+*.o

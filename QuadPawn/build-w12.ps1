@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^[A-Za-z0-9._]+$')][string]$Version = '2026.10.17.1',
+    [ValidatePattern('^[A-Za-z0-9._]+$')][string]$Version = '2026.10.17.3',
     [string]$ToolchainBin = "$env:LOCALAPPDATA/Programs/gcc-arm-none-eabi-9-2019-q4-major/bin",
     [string]$MakeExe = 'C:/msys64/usr/bin/make.exe'
 )

@@ -73,11 +73,27 @@ new  traces[ 2][Trace]
 new  view[ View]
 
 
+save_screenshot()
+{
+  new filename{14} = "SSHOT%03d.BMP";
+  draw_status("Saving screenshot...");
+  if (!select_filename(filename))
+  {
+    draw_status("No free screenshot name or disk error");
+    return;
+  }
+  if (save_bitmap(filename))
+    draw_status(strjoin("Saved ", filename));
+  else
+    draw_status("Bitmap save failed!");
+}
+
 capture()
 {
   new  samples[ 2]{NUM_SAMPLES}
 
   wavein_start()
+  draw_status("Waiting for trigger; K2 screenshot, K4 quit")
 
   // Show an animation to indicate that the device is waiting for a trigger
   new  frame = 0
@@ -85,6 +101,15 @@ capture()
   new  text{} = ""
   while ( ! wavein_istriggered() )
   {
+    // Keep the screenshot and Quit controls available while waiting for SDA.
+    // Leave K4 pending so the main loop also exits.
+    if (peek_keys(BUTTON4))
+    {
+      draw_text(" ", (screenwidth - fontwidth), 0, TEXT_COLOR, black)
+      return;
+    }
+    if (get_keys(BUTTON2))
+      save_screenshot()
     text{0} = spinner{frame}
     draw_text( text, (screenwidth - fontwidth), 0, TEXT_COLOR, black)
     frame = ( frame + 1) & 0x3;
@@ -322,13 +347,7 @@ main()
     }
     else if ( get_keys(BUTTON2) )
     {
-      new filename{14} = "SSHOT%03d.BMP";
-      select_filename(filename);
-
-      if (save_bitmap(filename))
-          draw_status(strjoin("Saved ", filename));
-      else
-          draw_status("Bitmap save failed!");
+      save_screenshot()
     }
     else if ( get_keys(BUTTON3) )
     {

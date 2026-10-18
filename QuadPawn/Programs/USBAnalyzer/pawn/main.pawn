@@ -1,0 +1,157 @@
+#include "decoder.pawn"
+#include "packet_buffer.pawn"
+#include "packet_analysis.pawn"
+#include "packet_display.pawn"
+#include "packet_details.pawn"
+#include "settings.pawn"
+
+bool: @idle()
+{
+    if (decoder_count())
+    {
+        // Pay attention to GUI every 100 packets or whenever buffer is empty.
+        for (new i = 0; i < 100; i++)
+        {
+            if (!packet_fetch())
+                break;
+        }
+        
+        if (!peek_keys(SCROLL2_LEFT | SCROLL2_RIGHT))
+            display_redraw();
+    }
+    
+    return !get_keys(BUTTON4);
+}
+
+redraw_all()
+{
+    display_redraw();
+    draw_menubar("Save", "Reset", "Config", "Quit");
+}
+
+@button1()
+{
+    get_keys(ANY_KEY);
+    draw_menubar("TXT", "BMP", "RAW", "");
+    while (!peek_keys(BUTTON1 | BUTTON2 | BUTTON3)) { }
+    
+    if (get_keys(BUTTON1))
+    {
+        new filename{14} = "USB%03d.TXT";
+        select_filename(filename);
+        draw_menubar("Saving", "", filename);
+        
+        new File: file = f_open(filename, FA_CREATE_NEW | FA_WRITE);
+        
+        new index = packet_get_oldest();
+        while (packet_valid(index))
+        {
+            new buf{50};
+            analyze_oneline(index, buf);
+            f_write(file, buf);
+            f_write(file, "\r\n");
+            index++;
+        }
+        
+        if (f_close(file))
+            draw_menubar("Saved", filename);
+        else
+            draw_menubar("File error!");
+        
+        delay_ms(500);
+    }
+    else if (get_keys(BUTTON2))
+    {
+        new filename{14} = "USB%03d.BMP";
+        select_filename(filename);
+        draw_menubar("Saving", "", filename);
+        
+        if (save_bitmap(filename))
+            draw_menubar("Saved ", "", filename);
+        else
+            draw_menubar("Bitmap save failed!");
+        
+        delay_ms(500);
+    }
+    else if (get_keys(BUTTON3))
+    {
+        new filename{14} = "USBRAW%02d.TXT";
+        select_filename(filename);
+        draw_menubar("Saving", "", filename);
+        
+        new File: file = f_open(filename, FA_CREATE_NEW | FA_WRITE);
+        
+        new index = packet_get_oldest();
+        while (packet_valid(index))
+        {
+            new length = packet_length(index);
+            for (new i = 0; i < length; i++)
+            {
+                new buf{1};
+                packet_read(index, buf, i, 1);
+                new sbuf{4};
+                valstr(sbuf, buf{0}, .base = 16, .minlength = 2);
+                strcat(sbuf, " ");
+                f_write(file, sbuf);
+            }
+            
+            f_write(file, "\r\n");
+            index++;
+        }
+        
+        if (f_close(file))
+            draw_menubar("Saved", filename);
+        else
+            draw_menubar("File error!");
+        
+        delay_ms(500);
+    }
+    
+    redraw_all();
+    get_keys(ANY_KEY);
+}
+
+@button2()
+{
+    buffer_clear();
+    display_reset();
+    redraw_all();
+}
+
+main()
+{
+    configure(.load_only = true);
+    if (!decoder_initialize())
+        exit;
+    
+    redraw_all();
+    return 0;
+}
+
+
+//////////////////////////////
+// Metadata
+
+new const program_icon[] = [
+    0b00000000000000000000000000000000,
+    0b00000000000000000000011000000000,
+    0b00000000000000000000111100000000,
+    0b00000000000000001111111110000000,
+    0b00000000000000110000111100000000,
+    0b00111000000001000000011000000000,
+    0b01111100000010000000000000110000,
+    0b11111110001100000000000000111100,
+    0b11111111111111111111111111111111,
+    0b11111110000000011000000000111100,
+    0b01111100000000000100000000110000,
+    0b00111000000000000010000000000000,
+    0b00000000000000000001101111000000,
+    0b00000000000000000000011111000000,
+    0b00000000000000000000001111000000,
+    0b00000000000000000000001111000000,
+    0b00000000000000000000000000000000,
+    0b00000000000000000000000000000000,
+];
+new const program_name{} = "USB Analyzer";
+#include <metadata>
+

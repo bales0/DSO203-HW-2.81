@@ -1,0 +1,97 @@
+#include <config>
+
+static bool: filter_sof;
+static bool: filter_pre;
+
+const addrfiltmode: {
+    ADDRFILT_NONE = 0,
+    ADDRFILT_SETADDR = 1,
+    ADDRFILT_RANGE = 2,
+    ADDRFILT_RANGE0 = 3
+}
+
+static addrfiltmode: addrfilt_mode;
+static addrfilt_mode_labels[]{} = ["None", "Automatic", "Range", "Range + addr 0"];
+static minaddr, maxaddr;
+
+const repfiltmode: {
+    REPFILT_NONE = 0,
+    REPFILT_SOFT = 1,
+    REPFILT_HARD = 2
+}
+
+static repfiltmode: repfilt_mode;
+static repfilt_mode_labels[]{} = ["None", "Software", "Hardware"];
+
+configure(bool: load_only = false)
+{
+    start_config("usb.ini", load_only);
+
+    while (do_config())
+    {
+        config_boolean("filter_sof", "Filter SOF packets",
+            filter_sof, true,
+            .help = "USB transmits Start Of Frame packets once every 1 ms. Often they are not very interesting, so you can filter them out.");
+        
+        config_boolean("filter_pre", "Filter PRE packets",
+            filter_pre, true,
+            .help = "PREamble packets signify low-speed communication. This program doesn't support decoding them yet, so you probably want to filter them.");
+        
+        config_multichoice("addrfilt_mode", "Address filter mode",
+            addrfilt_mode, addrfilt_mode_labels, ADDRFILT_SETADDR,  .count = 4,
+            .help = "If there are many devices on the same root hub port, packets send by the host to any device will be visible. Filtering by the device address helps here." ...
+            "\n\nAutomatic mode will filter to the newest enumerated device. " ...
+            "Range will just compare the address to a range you set. " ...
+            "Range + addr 0 additionally always allows address 0 through, so that you can see the enumeration.");
+        
+        if (addrfilt_mode == ADDRFILT_RANGE
+            || addrfilt_mode == ADDRFILT_RANGE0
+            || config_state != config_edit)
+        {
+            config_integer("minaddr", "Minimum address", minaddr, 0, 0, 127);
+            config_integer("maxaddr", "Maximum address", maxaddr, 127, 0, 127);
+        }
+        
+        config_multichoice("repfilt_mode", "Repeat filter mode",
+            repfilt_mode, repfilt_mode_labels, REPFILT_HARD, .count = 3,
+            .help = "Repeat filtering collapses repeated sequences of packets, such as long IN chains that occur when host polls for data." ...
+            "\n\nHardware mode is the fastest, but only shows indicator that the packet repeats. Software mode is slower, but shows number of repeated packets."
+        );
+        
+        config_boolean("stopwhenfull", "Stop when full",
+                       STOP_WHEN_FULL, true,
+                       .help = "Stop capture when buffer is full.");
+        
+        config_boolean("microseconds", "Microsecond timestamps",
+            microsecond_timestamps, false,
+            .help = "Show microseconds in timestamps (instead of milliseconds)."
+        );
+    }
+    
+    DECODER_CONFIG = ENABLE_USB;
+    if (filter_sof) DECODER_CONFIG |= IGNORE_SOF;
+    if (filter_pre) DECODER_CONFIG |= IGNORE_PRE;
+    if (repfilt_mode == REPFILT_HARD) DECODER_CONFIG |= REPEATFILT;
+    if (addrfilt_mode == ADDRFILT_RANGE0) DECODER_CONFIG |= PASSZERO;
+    if (addrfilt_mode == ADDRFILT_SETADDR) DECODER_CONFIG |= FOLLOWADDR;
+    
+    if (addrfilt_mode == ADDRFILT_NONE)
+    {
+        DECODER_MINADDR = 0;
+        DECODER_MAXADDR = 127;
+    }
+    else if (addrfilt_mode == ADDRFILT_RANGE ||
+             addrfilt_mode == ADDRFILT_RANGE0)
+    {
+        DECODER_MINADDR = minaddr;
+        DECODER_MAXADDR = maxaddr;
+    }
+    
+    SOFTWARE_REPEAT_FILTER = (repfilt_mode == REPFILT_SOFT);
+}
+
+@button3()
+{
+    configure();
+    redraw_all();
+}

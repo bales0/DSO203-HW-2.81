@@ -12,10 +12,8 @@ $oldPath = $env:PATH
 $env:PATH = (Split-Path $compiler -Parent) + ';' + $env:PATH
 Push-Location $repo
 try {
-    $application = Get-Content -LiteralPath 'QuadPawn/Programs/FPGALOAD.pawn' -Raw
-    $crcMatch = [regex]::Match($application, '(?m)^#define TEST_CRC32 0x([0-9A-Fa-f]{8})\s*$')
-    if (-not $crcMatch.Success) { throw 'Expected image CRC missing from FPGALOAD.' }
-    $imageCrc = $crcMatch.Groups[1].Value
+    # Approved full W1.2 image CRC; diagnostics are not part of the author app set.
+    $imageCrc = '33AFAD10'
     & $compiler '-std=c99' '-Wall' '-Wextra' '-Wno-unused-parameter' '-Itests/fpga_loader/mocks' 'tests/fpga_loader/test_loader.c' '-o' $executable
     if ($LASTEXITCODE -ne 0) { throw 'Host test compilation failed.' }
     $fullBitstream = Join-Path $outdir 'full-bitstream.BIN'

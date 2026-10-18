@@ -41,10 +41,14 @@ char *select_filename(const char *format)
     static char filename[13];
     for (int i = 0; i <= 999; i++)
     {
-        snprintf(filename, sizeof(filename), format, i);
-        if (!f_exists(filename)) break;
+        int length = snprintf(filename, sizeof(filename), format, i);
+        if (length <= 0 || (unsigned)length >= sizeof(filename)) return NULL;
+        FILINFO info;
+        FRESULT status = f_stat(filename, &info);
+        if (status == FR_NO_FILE) return filename;
+        if (status != FR_OK) return NULL;
     }
-    return filename;
+    return NULL;
 }
 
 
@@ -109,28 +113,28 @@ const uint8_t BMP_HEADER[54] = {
 
 bool write_bitmap(const char *filename, const uint32_t *palette)
 {
+    if (!filename || !filename[0]) return false;
     FIL file;
+    uint8_t row[200];
+    unsigned bytes;
+    bool success = false;
     
     if (f_open(&file, filename, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
         return false;
     
     // Write header
-    unsigned bytes;
-    f_write(&file, BMP_HEADER, sizeof(BMP_HEADER), &bytes);
-    if (bytes != sizeof(BMP_HEADER))
-        return false;
+    if (f_write(&file, BMP_HEADER, sizeof(BMP_HEADER), &bytes) != FR_OK ||
+        bytes != sizeof(BMP_HEADER)) goto close;
     
     // Write palette
     for (int i = 0; i < 16; i++)
     {
-        char entry[4] = {
-            RGB565_B(palette[i]),
-            RGB565_G(palette[i]),
-            RGB565_R(palette[i]),
-            0
-        };
-        f_write(&file, entry, sizeof(entry), &bytes);
+        row[i * 4] = RGB565_B(palette[i]);
+        row[i * 4 + 1] = RGB565_G(palette[i]);
+        row[i * 4 + 2] = RGB565_R(palette[i]);
+        row[i * 4 + 3] = 0;
     }
+    if (f_write(&file, row, 64, &bytes) != FR_OK || bytes != 64) goto close;
     
     // Write bitmap data
     for (int y = 0; y < 240; y++)
@@ -142,12 +146,15 @@ bool write_bitmap(const char *filename, const uint32_t *palette)
             __Point_SCR(x + 1, y);
             int colorL = quantize(__LCD_GetPixl(), palette);
             
-            char byte = (colorH << 4) | colorL;
-            f_write(&file, &byte, 1, &bytes);
+            row[x / 2] = (colorH << 4) | colorL;
         }
+        if (f_write(&file, row, sizeof(row), &bytes) != FR_OK ||
+            bytes != sizeof(row)) goto close;
     }
-    
-    return f_close(&file) == FR_OK;
+    success = true;
+close:
+    if (f_close(&file) != FR_OK) success = false;
+    return success;
 }
 
 

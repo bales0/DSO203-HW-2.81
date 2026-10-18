@@ -9,7 +9,7 @@ ADR = 0x08024000
 NAME = PAWN4W
 BINDIR = ../../bin/QuadPawn
 # Local runtime version, configurable with make VERSION=1.2
-VERSION ?= 2026.10.17.1
+VERSION ?= 2026.10.17.3
 
 # Names of the object files (add all .c files you want to include)
 OBJS = main.o ds203_io.o libc_glue.o drawing.o menubar.o buttons.o \

@@ -29,6 +29,7 @@ __attribute__ ((format (printf, 5, 6)));;
 // Select a free filename using a printf-style template.
 // Goes through parameters 0 to 999 until a non-existent filename is found.
 // Returns pointer to a static array, so next call will overwrite the value.
+// Returns NULL if all names are occupied, the name is too long, or I/O fails.
 // E.g. select_filename("FILE%03d.CSV") might give "FILE001.CSV".
 
 bool f_exists(const char *name);

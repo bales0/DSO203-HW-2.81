@@ -4,6 +4,8 @@
 #include "amx.h"
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 #include "ds203_io.h"
 
 #define FILE_COUNT 4
@@ -37,16 +39,24 @@ static cell AMX_NATIVE_CALL amx_f_open(AMX *amx, const cell *params)
     file->error = f_open(&file->f, fname, params[2]);
     file->valid = (file->error == FR_OK);
     
-    return (cell)file;
+    return file->valid ? (cell)file : 0;
+}
+
+static file_t *get_file(cell handle)
+{
+    for (int i = 0; i < FILE_COUNT; i++)
+        if (handle == (cell)&files[i] && files[i].valid)
+            return &files[i];
+    return NULL;
 }
 
 #define GETPARAM() \
-    file_t *file = (file_t*)params[1]; \
+    file_t *file = get_file(params[1]); \
     if (!file) return 0;
 
 #define SETERROR(cmd) do {\
-    FRESULT status = (cmd); \
-    if (status != 0 && file->error == 0) file->error = status; \
+    FRESULT file_status = (cmd); \
+    if (file_status != FR_OK && file->error == FR_OK) file->error = file_status; \
     } while(0)
 
 static cell AMX_NATIVE_CALL amx_f_close(AMX *amx, const cell *params)
@@ -63,17 +73,35 @@ static cell AMX_NATIVE_CALL amx_f_read(AMX *amx, const cell *params)
 {
     GETPARAM();
     
-    unsigned bytes;
-    SETERROR(f_read(&file->f, (char*)params[2], params[3], &bytes));
-    
-    // Swap the bytes in each cell to convert into Pawn packed string
-    cell* p = (cell*)params[2];
-    for (int i = 0; i <= params[3] / 4; i++, p++)
+    if (params[3] < 0)
     {
-        *p = __builtin_bswap32(*p);
+        if (file->error == FR_OK) file->error = FR_INVALID_PARAMETER;
+        return 0;
     }
-    
-    return bytes;
+
+    // Read in blocks, then pack only received bytes. A partial cell must keep
+    // its unread bytes, and EOF must not touch the following Pawn cells.
+    uint8_t buffer[64];
+    unsigned total = 0, remaining = params[3];
+    cell *dest = (cell*)params[2];
+    while (remaining)
+    {
+        unsigned size = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+        unsigned bytes = 0;
+        FRESULT status = f_read(&file->f, buffer, size, &bytes);
+        SETERROR(status);
+        for (unsigned i = 0; i < bytes; i++)
+        {
+            unsigned shift = 24 - (i % 4) * 8;
+            dest[i / 4] = ((uint32_t)dest[i / 4] & ~(0xffu << shift)) |
+                          ((uint32_t)buffer[i] << shift);
+        }
+        total += bytes;
+        if (status != FR_OK || bytes != size) break;
+        remaining -= bytes;
+        dest += bytes / 4;
+    }
+    return total;
 }
 
 static cell AMX_NATIVE_CALL amx_f_write(AMX *amx, const cell *params)
@@ -87,26 +115,28 @@ static cell AMX_NATIVE_CALL amx_f_write(AMX *amx, const cell *params)
     {
         char *text;
         amx_StrParam(amx, src, text);
-        unsigned bytes;
+        unsigned bytes = 0;
         unsigned size = strlen(text);
         if (size == 0) return true;
         
-        SETERROR(f_write(&file->f, text, size, &bytes));
+        FRESULT status = f_write(&file->f, text, size, &bytes);
+        SETERROR(status);
         
-        return (bytes == size);
+        return (status == FR_OK && bytes == size);
     }
     else
     {
         while (count > 0)
         {
             uint32_t tmp = __builtin_bswap32(*src++);
-            unsigned bytes;
+            unsigned bytes = 0;
             unsigned size = 4;
-            if (count < size) size = count;
+            if ((unsigned)count < size) size = count;
             
-            SETERROR(f_write(&file->f, &tmp, size, &bytes));
+            FRESULT status = f_write(&file->f, &tmp, size, &bytes);
+            SETERROR(status);
             
-            if (bytes != size)
+            if (status != FR_OK || bytes != size)
                 return false;
             
             count -= 4;
@@ -137,7 +167,9 @@ static cell AMX_NATIVE_CALL amx_f_size(AMX *amx, const cell *params)
 static cell AMX_NATIVE_CALL amx_f_truncate(AMX *amx, const cell *params)
 {
     GETPARAM();
-    return f_truncate(&file->f) == FR_OK;
+    FRESULT status = f_truncate(&file->f);
+    SETERROR(status);
+    return status == FR_OK;
 }
 
 static cell AMX_NATIVE_CALL amx_f_unlink(AMX *amx, const cell *params)
@@ -153,7 +185,11 @@ static cell AMX_NATIVE_CALL amx_f_getfree(AMX *amx, const cell *params)
     FATFS *fs;
     if (f_getfree("", &clusters, &fs) != FR_OK) return 0;
     
-    return clusters * fs->csize;
+#if _MAX_SS == 512
+    return clusters * fs->csize * 512;
+#else
+    return clusters * fs->csize * fs->ssize;
+#endif
 }
 
 static DIR root_dir;
@@ -176,8 +212,8 @@ static cell AMX_NATIVE_CALL amx_f_readdir(AMX *amx, const cell *params)
 
 static cell AMX_NATIVE_CALL amx_f_error(AMX *amx, const cell *params)
 {
-    GETPARAM();
-    return file->error;
+    file_t *file = get_file(params[1]);
+    return file ? file->error : FR_INVALID_OBJECT;
 }
 
 static cell AMX_NATIVE_CALL amx_f_exists(AMX *amx, const cell *params)
@@ -191,8 +227,9 @@ static cell AMX_NATIVE_CALL amx_select_filename(AMX *amx, const cell *params)
 {
     char *format;
     amx_StrParam(amx, params[1], format);
-    amx_SetString((cell*)params[1], select_filename(format), true, false, params[2]);
-    return 0;
+    const char *name = select_filename(format);
+    amx_SetString((cell*)params[1], name ? name : "", true, false, params[2]);
+    return name != NULL;
 }
 
 int amxinit_file(AMX *amx)
@@ -206,6 +243,7 @@ int amxinit_file(AMX *amx)
         {"f_tell", amx_f_tell},
         {"f_size", amx_f_size},
         {"f_truncate", amx_f_truncate},
+        {"f_unlink", amx_f_unlink},
         {"f_getfree", amx_f_getfree},
         {"f_opendir", amx_f_opendir},
         {"f_readdir", amx_f_readdir},

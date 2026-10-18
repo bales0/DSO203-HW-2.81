@@ -29,7 +29,7 @@ const FileAccess:
     FA_OPEN_ALWAYS      = 0x10
 }
 
-/// Open a file.
+/// Open a file. Returns 0 on failure.
 native File: f_open(const filename{}, FileAccess: mode = FA_READ);
 
 /// Close a file and flush any data still in buffers.
@@ -132,7 +132,7 @@ native fileerror: f_error(File: file);
 native bool: f_exists(const filename{});
 
 /// Select an unused filename using a format string.
-/// E.g. select_filename("FILE%03d.CSV") might give "FILE001.CSV".
+/// Returns true on success; on failure returns false and clears buffer.
 native select_filename(buffer{}, buf_size = sizeof buffer);
 
 

@@ -1,0 +1,541 @@
+{
+  "checked_on": "2026-10-17",
+  "catalog": "https://github.com/PetteriAimonen/QuadPawn/wiki",
+  "core_commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+  "usb_commit": "38853395d2964baeddff8846d196621f3e9787ce",
+  "core_sources": [
+    {
+      "path": "QuadPawn/Programs/LOGIC.FPG",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/LOGIC.FPG",
+      "sha256": "cee2af55a91431b3f8b16e7144fe527937c9e1a29b9bd6ddae3a7b1e55e97d2f",
+      "local_sha256": "cee2af55a91431b3f8b16e7144fe527937c9e1a29b9bd6ddae3a7b1e55e97d2f"
+    },
+    {
+      "path": "QuadPawn/Programs/advvolt.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/advvolt.pawn",
+      "sha256": "859a97293db09d6ec448d161d8e279c9c34bb90df8f97ef50ba1ba027b7f47ed",
+      "local_sha256": "08af09f853904fc175c0622477b9e45e4a39fc1d688995f910873da44ad67b75"
+    },
+    {
+      "path": "QuadPawn/Programs/beeper.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/beeper.pawn",
+      "sha256": "2a31a3973846511c84a72b904de97a5078475d7d71891cee8a6ce669144dfcc0",
+      "local_sha256": "b7e1c9d1aba5d1516e0de496f805a31ebbc2501ad3e42781803ea13b02359dc4"
+    },
+    {
+      "path": "QuadPawn/Programs/calibrat.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/calibrat.pawn",
+      "sha256": "6b1c1e7c8aafbfbce8b16aced338e9661321d71490bbd19c20d5e8efdb4fd22a",
+      "local_sha256": "3e7258839c8d615d9cda189873e0b7db3fe6bde67c217f992e574dcaa15c0a95"
+    },
+    {
+      "path": "QuadPawn/Programs/charmap.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/charmap.pawn",
+      "sha256": "4ccfa1dd1c22112cf42ab53c07920af2b7f175178146608f1628809826ba0cd3",
+      "local_sha256": "c45b3588dec2ca15cfbe861a74adfb48fe00bfa09b8f5945dec5407205f53701"
+    },
+    {
+      "path": "QuadPawn/Programs/fpga_test.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/fpga_test.pawn",
+      "sha256": "c430e333d403bbd85f2d02b413ddc020fcdd5ad513961d4587ced45c6dbd2ed5",
+      "local_sha256": "a2dfb08a1f63ca27afdc5a62de157286f1c15ec7fa2ec43026e302d9c16b584e"
+    },
+    {
+      "path": "QuadPawn/Programs/freqresp.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/freqresp.pawn",
+      "sha256": "058f09f33479828c735da8e3b5f7b973db92527ba6a071e5fe3ac408338a35ab",
+      "local_sha256": "2c182292dc3d3e0f47194320ae591a361b90b78bed4252a3d20515611430d748"
+    },
+    {
+      "path": "QuadPawn/Programs/getlicense.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/getlicense.pawn",
+      "sha256": "3879135d845ee0485cf31e457cd5be2db8e2e9c2cd32ede03a73188f63766fad",
+      "local_sha256": "80281bd4bbb8104a9908ffa110184c3e93fadc7ac40647bb3e8cdbdd3b1c071a"
+    },
+    {
+      "path": "QuadPawn/Programs/hello.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/hello.pawn",
+      "sha256": "602922930e410d2b73f04aa47edf75a41b9cba9c2068174412ed1314ca315c75",
+      "local_sha256": "99d9a144069ad30f9e19473b413526a64ff026538343e76eba62daca1f9af89c"
+    },
+    {
+      "path": "QuadPawn/Programs/i2c.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/i2c.pawn",
+      "sha256": "40988917020a33fcf4c4f095d5a4b385115b31fd2b758df3cb5b8ff27b5410e6",
+      "local_sha256": "6425fbbee6187f6b1250fab61381d7837c0bb783ac3b8f6f3b09ff2b481f2115",
+      "local_changes": "Allow K2 screenshot and K4 quit while waiting for trigger; explicit wait/save/error status."
+    },
+    {
+      "path": "QuadPawn/Programs/logiccap.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/logiccap.pawn",
+      "sha256": "b29ba84f6dcc76e65fb1044df08371238e289146fd43a5b3b24fb4bfb5179c98",
+      "local_sha256": "1a8ee9cd60a175e92854d51973762c37f88bf3aba1e775073832658e72aad986",
+      "local_changes": "HX4K port; register selection via PC4/PC5 GPIO instead of parallel writes; paired identity verification with actual-ID diagnostics; checked VCD writes and exact 72 MHz timestamps; persistent FIFO saturation handling."
+    },
+    {
+      "path": "QuadPawn/Programs/servo.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/servo.pawn",
+      "sha256": "53002b12b8c8595cd34ef63c904f9fadb237d070a1b9057893c16968e7adde24",
+      "local_sha256": "5fee3553f3858c74ee9f60d3deb0988b27c52c7dd28c0872e094f55750b68bfd"
+    },
+    {
+      "path": "QuadPawn/Programs/signlgen.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/signlgen.pawn",
+      "sha256": "4d981813e57b8501f9d42591e825ab8e5e838ef6ffcf2fb6a5e56a66ee0e4ee3",
+      "local_sha256": "439495a78be90c9db8224363eba0b3fa1a14ff91e261717bcaacb0b3b7400e34"
+    },
+    {
+      "path": "QuadPawn/Programs/spec_an.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/spec_an.pawn",
+      "sha256": "bb270101acec44b1630156c57539516a40791a8a812cd4cb94db3327d8f173da",
+      "local_sha256": "bb270101acec44b1630156c57539516a40791a8a812cd4cb94db3327d8f173da"
+    },
+    {
+      "path": "QuadPawn/Programs/specgram.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/specgram.pawn",
+      "sha256": "6c9f2a29966109f60f271579dd33a2c9eb05d086100d275240cc6eb3455b8c29",
+      "local_sha256": "a178fb446b56766c6f5d3ad03750d7f54765bc2aa180453760f53b07e95e3e5c"
+    },
+    {
+      "path": "QuadPawn/Programs/spectrum.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/spectrum.pawn",
+      "sha256": "f7645334c7ed33b5983f4e140c8ad5ed6d2223f6e6e6d8da91c40ec111582ff3",
+      "local_sha256": "9b605f3c29f9ff10004e6f59006ac474b3ecaae8258d6c3814284ad3bb6f0cbe"
+    },
+    {
+      "path": "QuadPawn/Programs/torch.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/torch.pawn",
+      "sha256": "33f887061c06f98db919a2c9374386ba26c16f1e4b6da9bb263f6a0fae5e9127",
+      "local_sha256": "123c79d598baae500888772f639f4bd4fb3c2f52829b27cef7e4f6c86b20a3f0"
+    },
+    {
+      "path": "QuadPawn/Programs/unittest.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/unittest.pawn",
+      "sha256": "2e59897d875a117bb835627cc77225c2b4b62bf1107b834e9b2e308a4f4ca416",
+      "local_sha256": "ca6b92139ce6b3a4215160081d41ef91fd6207ea87d26e395cd06aad66460c19"
+    },
+    {
+      "path": "QuadPawn/Programs/voltmetr.pawn",
+      "commit": "704ea78c61738574bb62407f503fc49a13ffb405",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/QuadPawn/704ea78c61738574bb62407f503fc49a13ffb405/Programs/voltmetr.pawn",
+      "sha256": "c05f9a7e88dd08e6a27dc3e0f4c9fc1c2460ccd04272f31590b92b9aa6ee44e4",
+      "local_sha256": "cf5574210920d5242e6ed0e735a36b2464c9e1646522d2bb7852853a16d10434"
+    }
+  ],
+  "usb_sources": [
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/README.txt",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/README.txt",
+      "sha256": "ebb976f9babbc0fd2fa92692aeeb9d68b5bbb1f624ecbb9fe73a9d024d318cfe"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/Makefile",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/Makefile",
+      "sha256": "64a1a9c859a2693985b748b101facad90eb7149124cc8b81cf00907b089125b6"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/addr_filter.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/addr_filter.vhdl",
+      "sha256": "d8828eaa6943ab0be7b3a62b5588bd9b31cdbc8e6ca26bcac257fcfd93a08946"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/addr_follower.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/addr_follower.vhdl",
+      "sha256": "08357babefbe4b32dbdb97c7223c1518a90c0a10fd6dc1cbe5b2a73a204dd227"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/config.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/config.vhdl",
+      "sha256": "e1c142312729e432be47da981bd364bf4d7bd3fad9fcb96855f86b1fbbe0df6b",
+      "local_sha256": "56382c4cfb9310da0180d2a70fa0db8dc9e1b83736ef62da3cd7278f97ad1360",
+      "local_changes": "HW 2.81 USB image identity register bit 5."
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/edge_matcher.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/edge_matcher.vhdl",
+      "sha256": "2b9818186f323f028ab098d3c98d5e3cb57b0e2e22a68a25080a314c11cfa926"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/fifo.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/fifo.vhdl",
+      "sha256": "994e51b19b0d3fec7faa7eaa477d78257d0bfe7c9b2ee1090546ffacac323d79"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/fpga_top.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/fpga_top.vhdl",
+      "sha256": "b6154833b104a433487f97d233d7af0095f65541eda0778e0c19b7af2ce3b505",
+      "local_sha256": "74abecd4c6ca205d09244424d0ad8fb4e146109f4decf511bb513c5046c89261",
+      "local_changes": "Read image identity 0x5542 without advancing FIFO."
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/packet_buffer.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/packet_buffer.vhdl",
+      "sha256": "78eff07a143c23197fec2492041457c6d1f640fa4467fd23bfdaaca4fa6c9417"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/packet_filter.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/packet_filter.vhdl",
+      "sha256": "5ea9f911ce843b9f4293a4a76eb529a56978e2bd21816f61b2e95173c80813c8"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/pin_mapping.pcf",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/pin_mapping.pcf",
+      "sha256": "6efbfb02d88caaafbb91dc8544bb443aeb022ed423aeffc9d57a223bca7d9b77"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/ramblock.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/ramblock.vhdl",
+      "sha256": "af9e8333b808b9f91ea988acc434078e45df3aff0538a5b05ae111c0ea215947"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/repeat_filter.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/repeat_filter.vhdl",
+      "sha256": "276acfa87824355d75e54d280990f8061349ffa04900c17b32150dde593301f9"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/std_logic_textio.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/std_logic_textio.vhdl",
+      "sha256": "bb79f97e35c11ee70bb6a0e6f4d4560bce8a482d4f4bcb8659e82ebb0416a59b"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_addr_filter.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_addr_filter.vhdl",
+      "sha256": "3714d4dbedd12cc48dfef41b292865f71ef9cc3db5a0d38d4a7d76d0b8658911"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_addr_filter_expected.txt",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_addr_filter_expected.txt",
+      "sha256": "2aba3296bd9777bc8559d40edc89a98704f1445f21aba11e9646db0a4e0177e7"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_addr_filter_input.txt",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_addr_filter_input.txt",
+      "sha256": "083cf5c300758081e462c148f140b7025fea3c60557da99a0b1fca9d9ddf00d5"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_addr_follower.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_addr_follower.vhdl",
+      "sha256": "e9a3783394c8e76fc339a1093e62a17298674cc6e107ac14dd3af1e725e1ec97"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_addr_follower_input.txt",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_addr_follower_input.txt",
+      "sha256": "807991766e7a2db8937bc7b48794edea70f7e7e0c7cbfcf969043ffd3f1f862f"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_edge_matcher.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_edge_matcher.vhdl",
+      "sha256": "7af575ed3b5c9b1f6f0b2f00fe9779c9649be8497e7219885be20a0fc2319391"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_fifo.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_fifo.vhdl",
+      "sha256": "a9dd087b14dab6f2e0e3256408840d41871d450cf1b5b9651315c8d722443e10"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_packet_buffer.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_packet_buffer.vhdl",
+      "sha256": "fc411566f2fef593d22cef1e0ad82513ae08e76e4a13c1bb6a64ca7ae2f8bf99"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_packet_filter.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_packet_filter.vhdl",
+      "sha256": "86d2930acf215923a26f673708041e3aa1367d6965a4ec0e144aae6de9d7f44f"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_repeat_filter.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_repeat_filter.vhdl",
+      "sha256": "728c8a57f380ebbce91f36645fd4545c407ad317cf5ced000103856998091212"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_repeat_filter_expected.txt",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_repeat_filter_expected.txt",
+      "sha256": "34da6ab95dbead035e0ed366df41fa4486286a179d1c8e35605faeedc2caf123"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_repeat_filter_input.txt",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_repeat_filter_input.txt",
+      "sha256": "192afc5767a1910c34df8c8ae6ddb6a6da1a759ae0ef7496737165d85857a95f"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_usb_decoder.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/tb_usb_decoder.vhdl",
+      "sha256": "27ba234a93dc94f7a2e6c417ec4a3e1ddfae4794fcd035601169095c6a79fa32"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/timing_contraints.sdc",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/timing_contraints.sdc",
+      "sha256": "b69191df3acda6cafc5f7197501b18303c067a3984752b957715418d5aa8487c"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/usb_decoder.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/usb_decoder.vhdl",
+      "sha256": "a1a84b175a16f271b35e2f1d2abf4880bad7e66a6cb414d36c29e6901fb16141"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/usb_fpga_iCEcube2/usb_fpga_iCEcube2_sbt.project",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/usb_fpga_iCEcube2/usb_fpga_iCEcube2_sbt.project",
+      "sha256": "d7f778d243f9626b9aa2514122672f1cc8b67fd21c34e73b2d8c4a1634d1e6d5"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/usb_fpga_iCEcube2/usb_fpga_iCEcube2_syn.prj",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/usb_fpga_iCEcube2/usb_fpga_iCEcube2_syn.prj",
+      "sha256": "9d4de97ef3faeee03726b7426d5d4e68b2321fb6cfcf3c42b644d62cb8c4957d"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/fpga/usb_rx_phy.vhdl",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/fpga/usb_rx_phy.vhdl",
+      "sha256": "df53c4aaff82caba6b57c6671b44bd584256b8c0dbd76e503ddf99c71d14dfac"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/pawn/Makefile",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/pawn/Makefile",
+      "sha256": "c47b138baa8dcb25fd0380512dbe0164b6c03c953deed0c7160f67b6319923a7"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/pawn/data_input.pawn",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/pawn/data_input.pawn",
+      "sha256": "914b1c23de1aada5be1bb019a54e4f0569f4cfde3c38b67f8e7f82d7217dcec5"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/pawn/decoder.pawn",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/pawn/decoder.pawn",
+      "sha256": "c840e276eeb1d8e198b1e45388ba38513a96731ba808798a471b5e86c4b1091c",
+      "local_sha256": "811eff18e4efca11aaea5530549ad4061e6c2d2d7d9e25d4b616e03d43d31b0d",
+      "local_changes": "Validate image identity and clear prefetched bytes on reset."
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/pawn/main.pawn",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/pawn/main.pawn",
+      "sha256": "d2303b64f49510f330b1713991b8d9dce3b3ad58db5c9d3e4e234f3654f3f023",
+      "local_sha256": "984f0d3dc63612145db4cc58d9a35a171c6fd5e0bb8f26a7f771c7cefc3a11ea",
+      "local_changes": "Exit on decoder initialization failure before entering idle capture."
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/pawn/packet_analysis.pawn",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/pawn/packet_analysis.pawn",
+      "sha256": "0dfe49bd61305931bcdf81f342b46ea989c14f7c098d5a154465d9b941a253f2"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/pawn/packet_buffer.pawn",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/pawn/packet_buffer.pawn",
+      "sha256": "9aa0ec3b80412abcf8669a0e7bec480da9de389437c9d0f3adc23ec9b8d592bb"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/pawn/packet_details.pawn",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/pawn/packet_details.pawn",
+      "sha256": "0bbeedbf0e41b3a7694f638d934098eaf51a6a5fb74d133b77a3dc43c208dffd"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/pawn/packet_display.pawn",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/pawn/packet_display.pawn",
+      "sha256": "54b74798aabf63aba698b5e5f82edf7f08bc0a196e5a0d367bec63fbb7dd2603"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/pawn/settings.pawn",
+      "url": "https://raw.githubusercontent.com/PetteriAimonen/dso-quad-usb-analyzer/38853395d2964baeddff8846d196621f3e9787ce/pawn/settings.pawn",
+      "sha256": "8dbf36ea7e61fc56a23217ef9e28c102bae3aabc577651aff6ada193ea527b14"
+    },
+    {
+      "path": "build/pawn_download_20261017/usb.amx",
+      "url": "https://jpa.kapsi.fi/dsoquad/data/jpa/USB%20Analyzer/Release%200.1/usb.amx",
+      "sha256": "6aaab8b007187ddfa48daa0f36b52cb740d99d7b22d08a84f58a21fe9b6a6d0c",
+      "release": "0.1"
+    },
+    {
+      "path": "QuadPawn/Programs/USBAnalyzer/USB.FPG",
+      "url": "https://jpa.kapsi.fi/dsoquad/data/jpa/USB%20Analyzer/Release%200.1/usb.fpg",
+      "sha256": "d940680a6b7c02c2c6e2f40bbdf957bc3a12a55103b509d4d22f4e5cfce4e48a",
+      "release": "0.1"
+    }
+  ],
+  "unavailable": [
+    {
+      "name": "Resistance meter",
+      "url": "http://www.mbehrens.nl/wordpress/?p=1",
+      "status": "HTTP 404 on HTTP and HTTPS; archive query HTTP 503"
+    }
+  ],
+  "build_version": "2026.10.17.3",
+  "compiled_programs": [
+    {
+      "file": "advvolt.amx",
+      "sha256": "2a09627814ff1aab69979f545744d881d1bd30aee465daab741ede282eb900a7"
+    },
+    {
+      "file": "beeper.amx",
+      "sha256": "5d928a0c2f955cfe036c931dc9070a1662ea505439c4e6bfe843675ae2e49e48"
+    },
+    {
+      "file": "calibrat.amx",
+      "sha256": "eca38d32cb1b6ef9d1469564f31b6bb46bd368236db21e100e8c08ba610c3296"
+    },
+    {
+      "file": "charmap.amx",
+      "sha256": "67e0df130e507fda1dc00235d4e55c2d213f422641dd3cd9229bb17ea1dbed38"
+    },
+    {
+      "file": "fpga_test.amx",
+      "sha256": "9cc5d49f46e0df0531e309db7a53194c21843fb7270a901fb644b5c24e2b60ba"
+    },
+    {
+      "file": "freqresp.amx",
+      "sha256": "af48c57ba980d7c1360a6596b0e161f96b571d2e880d7ffa3e2295b10f3fdb81"
+    },
+    {
+      "file": "getlicense.amx",
+      "sha256": "5ee50e87c326ff7b21233482d41cd8e41e045bd0caadca826503c7b65bf11640"
+    },
+    {
+      "file": "hello.amx",
+      "sha256": "da2453d053f8302c2c1eed69c2ccff7e564ea6505cbbfd912a7bb5f70eb2610b"
+    },
+    {
+      "file": "i2c.amx",
+      "sha256": "9248dadb7e339f7a9d801c44f9a4ec3717a35c03a5210e08dfa8e4b4c1f0894e"
+    },
+    {
+      "file": "logiccap.amx",
+      "sha256": "2f5965c663e563a951ca1c97ee1fd4810c1af4b7e598821354335cac3997c8bb"
+    },
+    {
+      "file": "servo.amx",
+      "sha256": "770df22aa209ca317012c84430c9897dd827943533315c616d5c2114ea52a4e8"
+    },
+    {
+      "file": "signlgen.amx",
+      "sha256": "dd10b0c75244893b3a50db8086fca6fffd4537f5caac1fe1a2e00443fbfdd025"
+    },
+    {
+      "file": "spec_an.amx",
+      "sha256": "e5a5baa08e3a526d1b3f85e8196177ff6003d269c43de71e1c483b4559fe222c"
+    },
+    {
+      "file": "specgram.amx",
+      "sha256": "5d5d2b730aba136dc0604147f100221fd95ab487156cce301109a7928303df2d"
+    },
+    {
+      "file": "spectrum.amx",
+      "sha256": "593d3d0f4a42c081c7daf714dfcbc09c8e4057eead4f64a7d7d881f3080677e5"
+    },
+    {
+      "file": "torch.amx",
+      "sha256": "6300c35898c93292d6c45eb28e38eaebf983e2646bf9d423e58fcddef84314d5"
+    },
+    {
+      "file": "unittest.amx",
+      "sha256": "05678e1a380fd03f535308b131305413bcd009f7806ff2c27d222c6842c3bbd1"
+    },
+    {
+      "file": "usb.amx",
+      "sha256": "4352fc7972b68492dec8546a361b9d70162a93638d6308582c0b6ae2b22192a8"
+    },
+    {
+      "file": "voltmetr.amx",
+      "sha256": "766a8f7a815697a21f7447818239ce7a258c5e309b0e2d11612b263f96dd2147"
+    }
+  ],
+  "excluded_local_diagnostics": [
+    "FPGALOAD",
+    "FPGAW12",
+    "INT144"
+  ],
+  "legacy_example_assets": [
+    {
+      "path": "QuadPawn/Programs/TESTFPGA.BIN",
+      "commit": "db028e48947d8dcb94a21abecaaf255dcb132e81",
+      "sha256": "3737f8ca5b05c11d316c026536bc5efabc3c1a14fc749619a02b12181672fab7"
+    }
+  ],
+  "usb_hw281_port": {
+    "built_on": "2026-10-18",
+    "target": "iCE40HX4K-CB132, DS203 HW 2.81/2.82",
+    "bitstream": "bin/QuadPawn/Programs/USB.FPG",
+    "size": 135100,
+    "sha256": "8ac7c32a5cbd9e588797dd3c8272fe4d4225d5eb20459c407614db3f33dcbb55",
+    "crc32": "5295FEF7",
+    "image_identity": "0x5542",
+    "clock_mhz": 72,
+    "routed_maximum_mhz": 111.04,
+    "fifo_entries": 8192,
+    "block_rams": 20,
+    "hardware_verified": false,
+    "local_files": [
+      {
+        "path": "QuadPawn/Programs/USBAnalyzer/fpga/pins-hx4k.pcf",
+        "sha256": "8c286dea20de4c1b3107cb49edb55ea7aa650471998f858d5e92e9140245f01d"
+      },
+      {
+        "path": "QuadPawn/Programs/USBAnalyzer/fpga/build-hx4k.ps1",
+        "sha256": "6c20e8fc629cd1d4666ae0d962d65aa7d15e8fa7407fe9f4bdc1b4be47a99d4d"
+      },
+      {
+        "path": "QuadPawn/Programs/USBAnalyzer/fpga/tb_usb_top.vhdl",
+        "sha256": "e70fd3d6ec21d5d5cd9bbd30703a79054131b9a313756b0e4a6f2ef5f22639c1"
+      },
+      {
+        "path": "QuadPawn/Programs/USBAnalyzer/README.md",
+        "sha256": "fe8e8e60f6a68c939e060273a7f8968502f049663b48b3d8f3e31de6ce7702e6"
+      }
+    ]
+  },
+  "logic_hw281_port": {
+    "built_on": "2026-10-18",
+    "upstream_commit": "a31f571ccd31e3a04206b98b893b0628a1b2cec6",
+    "target": "iCE40HX4K-CB132, DS203 HW 2.81/2.82",
+    "bitstream": "bin/QuadPawn/Programs/LOGIC.FPG",
+    "size": 135100,
+    "sha256": "dcb33276142a4093a26a2614ea6597d04e27e35ee45cd26e218210b51d2cecad",
+    "crc32": "CB6774AC",
+    "image_identity": "0x4C43",
+    "clock_mhz": 72,
+    "routed_maximum_mhz": 156.89,
+    "fifo_entries": 4096,
+    "fifo_usable_entries": 4095,
+    "fifo_full_status": "Count bit 15, sticky until reset",
+    "block_rams": 16,
+    "hardware_verified": false,
+    "local_files": [
+      {
+        "path": "QuadPawn/Programs/LogicCapture/fpga/pins-hx4k.pcf",
+        "sha256": "04a6a32ed2d31828ff8d5fa801430e9042e7a4b105fdcf727cce32b4fe06ad7b"
+      },
+      {
+        "path": "QuadPawn/Programs/LogicCapture/fpga/build-hx4k.ps1",
+        "sha256": "ee7f3e08d4ab6c553ae1f15c61a68fb2086df58008235567e8737e6c2f9a8d7a"
+      },
+      {
+        "path": "QuadPawn/Programs/LogicCapture/fpga/tb_logic_top.vhdl",
+        "sha256": "0bd8b1f16380cc37dad979905bdcd752141322182ca5e594c6d1a612cc3d1d08"
+      },
+      {
+        "path": "QuadPawn/Programs/LogicCapture/fpga/tb_rle_long.vhdl",
+        "sha256": "1bf2c5e6a77bd21345cf0003897c6c39b51b44660cb80a8da6525b8c97bd4403"
+      },
+      {
+        "path": "QuadPawn/Programs/LogicCapture/README.md",
+        "sha256": "b885a54bfdbc2d9a57b675951f691186782d0d033fc8587703d5224c74bd572a"
+      }
+    ],
+    "identity_startup": "1 ms reset assertion/release and configuration settling; two matching reads, up to 3 attempts; actual-ID diagnostics; hardware confirmation pending.",
+    "register_selection": "PC4/ClrR D14: identity; PC5/H_L E12: count; both low: FIFO data; no parallel writes required."
+  }
+}

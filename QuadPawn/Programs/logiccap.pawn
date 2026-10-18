@@ -3,20 +3,26 @@
 
 #define FPGA_IMAGE "LOGIC.FPG"
 
-/// Set the contents of the LOGIC.FPG FPGA configuration register
+/// Select FPGA data/count/identity using the original board control pins.
+/// PC5 (H/L) selects count and PC4 (ClrR) selects image identity. This avoids
+/// relying on the unverified parallel-write path of the original iCE65 design.
 fpga_set_config(value)
 {
-    new buffer[1];
-    buffer[0] = value;
-    fpga_write(buffer);
+    new fpgapin: selection = NO_PINS;
+    if (value & 0x0001) selection |= PC5;
+    if (value & 0x0020) selection |= PC4;
+    fpga_write_pins(selection, PC4 | PC5);
 }
 
 fpga_reset()
 {
     // PB1 is our reset pin, toggle it low to reset the FPGA
-    fpga_config_outputs(PB1);
+    fpga_config_outputs(PB1 | PC4 | PC5);
+    fpga_set_config(0);
     fpga_clear_pin(PB1);
+    delay_ms(1);
     fpga_set_pin(PB1);
+    delay_ms(1);
 }
 
 bool: fpga_initialize()
@@ -44,51 +50,85 @@ bool: fpga_initialize()
     config_chB(ADC_DC, ADC_200mV, .offset = 0);
     
     fpga_reset();
+
+    // The HX4K image exposes an identity register; reading it never pops FIFO.
+    // Allow the external clock/reset and configuration path to settle. Check
+    // two bus transfers, with bounded retries, instead of blaming the image
+    // on the strength of one failed hardware read.
+    new identity[2];
+    new bool: identified = false;
+    for (new attempt = 0; attempt < 3; attempt++)
+    {
+        fpga_set_config(0x0020);
+        delay_ms(1);
+        fpga_read(identity);
+        if (identity[0] == 0x4C43 && identity[1] == 0x4C43)
+        {
+            identified = true;
+            break;
+        }
+    }
+    fpga_set_config(0x0000);
+    if (!identified)
+    {
+        show_msgbox(strjoin("FPGA bus check failed\nID 0x", hex(identity[0]),
+            " / 0x", hex(identity[1]), "\nExpected 0x4C43, HW 2.81"));
+        return false;
+    }
     
     return true;
 }
 
-write_sample(File: file, timestamp_high, timestamp_low, levels)
+bool: write_sample(File: file, timestamp_high, timestamp_low, levels)
 {
     // Line format is:
     // #0000000000000 0A 0B 0C 0D
     new valbuf{16};
+    new line{64} = "#";
     
     // Write the timestamp in two parts because Pawn can't process
     // 64 bit integers.
-    f_write(file, "#");
     valstr(valbuf, timestamp_high);
-    f_write(file, valbuf);
+    strcat(line, valbuf);
     
     valstr(valbuf, timestamp_low, .minlength = 9);
-    f_write(file, valbuf);
+    strcat(line, valbuf);
     
     // Write the channels
-    f_write(file, " ");
-    f_write(file, (levels & 1) ? "1A " : "0A ");
-    f_write(file, (levels & 2) ? "1B " : "0B ");
-    f_write(file, (levels & 4) ? "1C " : "0C ");
-    f_write(file, (levels & 8) ? "1D " : "0D ");
-    
-    f_write(file, "\r\n");
+    strcat(line, " ");
+    strcat(line, (levels & 1) ? "1A " : "0A ");
+    strcat(line, (levels & 2) ? "1B " : "0B ");
+    strcat(line, (levels & 4) ? "1C " : "0C ");
+    strcat(line, (levels & 8) ? "1D " : "0D ");
+    strcat(line, "\r\n");
+    return f_write(file, line);
 }
 
 new recv_buffer[4096];
 
-do_capture()
+bool: do_capture()
 {
     println("");
     println("Starting new capture");
     
     new filename{14} = "WAVES%03d.VCD";
-    select_filename(filename);
+    if (!select_filename(filename))
+    {
+        println("No free VCD filename or disk error.");
+        return false;
+    }
     
     println(strjoin("Writing to ", filename));
     
-    new File: file = f_open(filename, FA_WRITE | FA_CREATE_ALWAYS);
-    f_write(file,
+    new File: file = f_open(filename, FA_WRITE | FA_CREATE_NEW);
+    if (!file)
+    {
+        println("Cannot create VCD file.");
+        return false;
+    }
+    if (!f_write(file,
         "$version DSO Quad Logic Capture $end\r\n" ...
-        "$timescale 13888ps $end\r\n" ...
+        "$timescale 1ns $end\r\n" ...
         "$scope module logic $end\r\n" ...
         "$var wire 1 A ChannelA $end\r\n" ...
         "$var wire 1 B ChannelB $end\r\n" ...
@@ -97,30 +137,47 @@ do_capture()
         "$upscope $end\r\n" ...
         "$enddefinitions $end\r\n" ...
         "$dumpvars 0A 0B 0C 0D $end\r\n"
-    );
+    ))
+    {
+        f_close(file);
+        println("File writing failed.");
+        return false;
+    }
     
     fpga_reset();
     
     // Main data processing loop
     new timestamp_high = 0, timestamp_low = 0;
+    new phase = 0; // Fractional 72 MHz ticks; nine ticks are exactly 125 ns.
     new samples = 0;
     new prev_levels = 0;
     new bool: overrun = false;
+    new bool: write_ok = true, bool: capture_ok = true;
     while (!peek_keys(ANY_KEY))
     {
         // First read the amount of available data
         fpga_set_config(0x0001);
         fpga_read(recv_buffer, 1);
         new count = recv_buffer[0];
+        if (count & 0x8000)
+        {
+            overrun = true;
+            break; // FPGA remembers saturation even after FIFO was drained.
+        }
         
         // Wait for data
         if (count == 0)
             continue;
         
-        if (count >= 4095 && !overrun)
+        if (count < 0 || count > 4095)
+        {
+            capture_ok = false;
+            break;
+        }
+        if (count == 4095)
         {
             overrun = true;
-            println("Overrun - some samples were lost!");
+            break; // Lost transitions cannot be assigned reliable timestamps.
         }
         
         // Don't read more than what fits in our buffer
@@ -140,16 +197,22 @@ do_capture()
         for (new i = 0; i < count; i++)
         {
             new levels = prev_levels;
+            new ticks;
             if (recv_buffer[i] & 0x8000)
             {
-                timestamp_low += (recv_buffer[i] & 0x7FFF) * 2048;
+                ticks = (recv_buffer[i] & 0x7FFF) * 2048;
             }
             else
             {
-                timestamp_low += (recv_buffer[i] >> 4) + 1;
+                ticks = (recv_buffer[i] >> 4) + 1;
                 levels = recv_buffer[i] & 0x0F;
             }
             
+            // Keep integer nanoseconds plus the fractional phase. This avoids
+            // 32-bit multiplication overflow and accumulating rounding error.
+            new remainder = phase + ticks % 9;
+            timestamp_low += (ticks / 9) * 125 + (remainder * 125) / 9 - (phase * 125) / 9;
+            phase = remainder % 9;
             if (timestamp_low >= 1000000000)
             {
                 timestamp_high += 1;
@@ -161,18 +224,35 @@ do_capture()
                 samples += 1;
                 prev_levels = levels;
                 
-                write_sample(file, timestamp_high, timestamp_low, levels);
+                if (!write_sample(file, timestamp_high, timestamp_low, levels))
+                {
+                    write_ok = false;
+                    break;
+                }
             }
         }
+        if (!write_ok) break;
     }
     
-    samples += 1;
-    write_sample(file, timestamp_high, timestamp_low, prev_levels);
-    
-    println(strjoin("Wrote a total of ", str(samples), " samples."));
-    
-    if (!f_close(file))
+    if (overrun)
+        write_ok = f_write(file, "$comment Capture stopped: FPGA FIFO full; data may be incomplete $end\r\n");
+    else if (!capture_ok)
+        write_ok = f_write(file, "$comment Capture stopped: invalid FPGA data count $end\r\n");
+    else if (write_ok)
+    {
+        samples += 1;
+        write_ok = write_sample(file, timestamp_high, timestamp_low, prev_levels);
+    }
+    new bool: closed = f_close(file);
+    if (!write_ok || !closed)
         println("File writing failed.");
+    else if (overrun)
+        println("Capture stopped: FPGA FIFO full.");
+    else if (!capture_ok)
+        println("Capture stopped: invalid FPGA data count.");
+    else
+        println(strjoin("Wrote a total of ", str(samples), " samples."));
+    return write_ok && closed && capture_ok && !overrun;
 }
 
 main()

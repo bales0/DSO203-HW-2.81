@@ -59,34 +59,40 @@ static int debughook(AMX *amx)
 }
 
 volatile bool ABORT = false;
+static volatile bool snapshot_requested;
+static bool snapshot_latched;
+
+/* Called by the foreground key poll, never by the timer interrupt. */
+void ProcessSnapshot(void)
+{
+    if (!snapshot_requested) return;
+    snapshot_requested = false;
+    bool saved = write_bitmap(select_filename("SSHOT%03d.BMP"), bmp_default_palette);
+    beep(saved ? 100 : 250, 20);
+}
 
 void TimerTick()
 {
     uint32_t ms;
-    if (held_keys(ANY_KEY, &ms) == BUTTON4)
+    uint32_t keys = held_keys(ANY_KEY, &ms);
+    if (keys == (BUTTON3 | BUTTON4))
     {
-        if (ms > 3000)
+        if (ms > 3000 && !snapshot_latched)
+        {
+            snapshot_latched = true;
+            snapshot_requested = true;
+        }
+    }
+    else
+    {
+        snapshot_latched = false;
+        if (keys == BUTTON4 && ms > 3000)
         {
             amx.debug = debughook;
         }
-    
-        if (ms > 3500)
+        if (keys == BUTTON4 && ms > 3500)
         {
             ABORT = true;
-        }
-    }
-    else if (held_keys(ANY_KEY, &ms) == (BUTTON3 | BUTTON4))
-    {
-        if (ms > 3000)
-        {
-            // It's quite ugly to do such a long task in an
-            // interrupt handler. Furthermore, it may access
-            // the filesystem at the wrong time.
-            write_bitmap(select_filename("SSHOT%03d.BMP"), bmp_default_palette);
-            
-            __Set(BEEP_VOLUME, 20);
-            while ((~__Get(KEY_STATUS)) & BUTTON4);
-            __Set(BEEP_VOLUME, 0);
         }
     }
 }
