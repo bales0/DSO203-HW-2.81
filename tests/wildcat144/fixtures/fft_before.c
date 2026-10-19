@@ -38,3 +38,49 @@ for(i=0; i<FFTSize;i++)	fi[i] = 0;
   
 }
 }
+
+/* Frozen 144 update before reusing the validated source in the second pass.
+ * Host regression only; never linked into the firmware. */
+int Before_Reader_Update(const Frame144 *frame,unsigned start,unsigned source,unsigned setting,uint32_t now)
+{
+    Scope144Source samples;int64_t sum=0,value;int32_t q,mean;
+    unsigned i,clipped=0,shift=0;uint32_t peak=0;uint32_t finished;
+    if(!Scope144_IsFft(source) || setting>9 || !Frame144_Source(frame,&samples) || samples.count<512 ||
+        start>samples.count-512)return 0;
+    if(Fft144.ready && ((Fft144.epoch==frame->capture.epoch && Fft144.start==start &&
+        Fft144.source==source && Fft144.setting==setting) || (uint32_t)(now-Fft144.last_done)<7200000u))return 0;
+    for(i=0;i<512;++i){if(!samples.read(samples.user,start+i,&q))return 0;sum+=q;}
+    mean=(int32_t)(sum/512);
+    AutoFFT=(u8)setting;
+    if(setting>1)FFTGain=(u8)(setting-2);else if(!setting)FFTGain=8;
+    if(FFTGain>8)FFTGain=8;
+    for(i=0;i<512;++i) {
+        unsigned clip=0;
+        if(!Frame144_Read(frame,start+i,&q,&clip))return 0;
+        clipped|=clip;
+        /* Work in calibrated ADC counts (Q10) before the Hann window, with
+         * DC removed over this exact window. Rescale before integer FFT. */
+        value=((int64_t)q-mean)*Window[i]*(1u<<(2u+FFTGain));
+        value/=1024*(source==15?100:80);
+        if(value>0x3fffffffu || value< -0x3fffffff)return 0;
+        if((uint32_t)(value<0?-value:value)>peak)peak=(uint32_t)(value<0?-value:value);
+        fr[i]=(s32)value;
+    }
+    /* Shared original magnitude/log/summed-bin rules use the selected source. */
+    /* Keep all twiddle products in signed 32-bit range without hard-clipping
+     * the signal. Restore this common scale before magnitude/log display. */
+    while(peak>65535u){peak>>=1;++shift;}
+    if(shift)for(i=0;i<512;++i)fr[i]/=(s32)(1u<<shift);
+    Process_Fft(source,shift);
+    PeakFreq=2;imax=0;
+    for(i=1;i<256;++i)if(fi[i]>PeakFreq){PeakFreq=(short)fi[i];imax=(int)i;}
+    if(setting==1) {
+        if(PeakFreq>=198 && FFTGain) --FFTGain;
+        else if(PeakFreq<100 && FFTGain<7)++FFTGain;
+    }
+    finished=DWT_CYCLES;
+    Fft144.rate_hz=(uint32_t)((1000000000000ULL*65536u+samples.period_ps_q16/2u)/samples.period_ps_q16);
+    Fft144.epoch=frame->capture.epoch;Fft144.start=start;Fft144.source=source;Fft144.setting=setting;
+    Fft144.clipped=clipped;Fft144.ready=1;Fft144.last_done=finished;
+    return 1;
+}

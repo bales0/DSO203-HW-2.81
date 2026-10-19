@@ -7,6 +7,12 @@
 
 #include "stm32f10x_lib.h"
 
+/* Analog TrackBuff encoding, monotonically ordered: 0 is below the LCD,
+ * 1..199 are real visible coordinates, 200 is above. Digital 144 zero
+ * remains an absent sample and is handled separately before this decoder. */
+static __inline__ u8 TraceY(int y) { return y<1?0:y>199?200:(u8)y; }
+int Draw_TraceSegment(unsigned a,unsigned b,unsigned bold,u8 *y);
+
 typedef struct 
 {
   s16  Value;
@@ -97,7 +103,6 @@ extern u8 UpdateMeter;
 extern u8 TrgAuto;
 extern u8 UpdateBackground;
 extern u16 Color[16];
-extern u16 Count_FPS;
 extern trigg V_Trigg[4];
 extern s16 DetFrqn[12];
 extern u32 BaudRate;
@@ -129,6 +134,7 @@ void LoadBaseBuffers(void);
 void Draw_Mark(u16 m, u16 n);						
 void Update_Mark(void);						
 void Update_View_Area(void);
+void Update_Buffer_Overview(void);
 void Clear_Meter_Area(void);
 void ClearFFTbuffer(void);
 void ClearScreenArea(u16 x1,u16 x2,u8 y1,u8 y2);

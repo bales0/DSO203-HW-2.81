@@ -6,20 +6,27 @@
 #include "Scope144.h"
 #include "Frame144.h"
 #include "UiCommon.h"
-static unsigned uart_owner;
+#include "Menu.h"
+#include "Process.h"
+#include "Calibrat.h"
+static unsigned uart_owner,native_real,cfg_active,fs_error,open_fail;
+u8 Versions;
+void Test_RealStore(void);
+int Wildcat144_Active(void){return (int)cfg_active;}
 static unsigned checks,opened,write_fail,read_fail,close_fail;
 static char fail_name[12],close_write_name[12];static unsigned fail_after,opened_write;
 static unsigned char native_current[512];
 static struct { char name[12]; unsigned size; unsigned char bytes[524288]; int exists; } files[10];
+s32 fr[512],fi[512];
 u16 SectorSize;
 u8 SecBuff[LARGEST_SECTOR_SIZE];u32 DataBuf[4096];
 static unsigned cursor;
 #define CHECK(x) do { ++checks; if(!(x)){fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);exit(1);} }while(0)
-u8 InitFileSystem(void) { return OK; }
-void storeParameter(void) { memcpy(SecBuff,native_current,512); }
+u8 InitFileSystem(void) { return fs_error?DISK_ERR:OK; }
+void storeParameter(void) { if(native_real)Test_RealStore();else memcpy(SecBuff,native_current,512); }
 static void Native(unsigned value)
 {
-    unsigned i,sum=0;for(i=0;i<511;++i)native_current[i]=(unsigned char)(value+i);
+    unsigned i,sum=0;native_real=0;for(i=0;i<511;++i)native_current[i]=(unsigned char)(value+i);
     native_current[0]=6;
     for(i=0;i<511;++i)sum+=native_current[i];
     native_current[511]=(unsigned char)(0-sum);
@@ -50,7 +57,7 @@ u8 __OpenFileRd(u8 *buffer,char *name,u16 *cluster,u32 *directory)
 }
 u8 __OpenFileWr(u8 *buffer,char *name,u16 *cluster,u32 *directory)
 {
-    unsigned i;(void)directory;
+    unsigned i;(void)directory;if(open_fail)return DISK_ERR;
     for(i=0;i<10;++i)if(files[i].exists && !memcmp(name,files[i].name,11))break;
     if(i==10)for(i=0;i<10;++i)if(!files[i].exists)break;
     if(i==10)return DISK_ERR;
@@ -78,7 +85,7 @@ static int32_t q[1024];static uint16_t pairs[664];
 int main(void)
 {
     unsigned sector,i,r,fail;Scope144Bank bank,loaded;
-    Scope144Cal c={1024,0,55*1024,125*1024,5000000,1,1024,0,1024,1024,54,1024,1024};
+    Scope144Cal c={1024,0,55*1024,125*1024,5000000,1,1024,0,1024,1024,54,1024,1024,0,0};
     c.ref_dac_a_q10=1100;c.ref_dac_b_q10=990;
     for(sector=512;sector<=4096;sector*=8) {
         SectorSize=(u16)sector;memset(files,0,sizeof(files));memset(&bank,0,sizeof(bank));
@@ -162,7 +169,7 @@ int main(void)
             frame.capture.fifo_status=0x2c;frame.capture.flags|=CAPTURE_WINDOW_HAS_TRIGGER|CAPTURE_WINDOW_PRETRIGGER;
         }
         count=frame.capture.time_samples;
-        frame.capture.first_visible_q16=1234567;
+        frame.capture.first_visible_q16=1234567;frame.capture_dac=154u|(158u<<16);frame.capture_ypos=100;
         Scope144_SetClock(0);frame.capture.sample_period_ps_q16=Scope144_TimePs(65536);
         for(j=0;j<4096;++j)DataBuf[j]=(55u*257u)|((j&3)<<16);
         DataBuf[4095]=(255u<<8)|180u|0x30000u;
@@ -173,6 +180,9 @@ int main(void)
         CHECK(Scope144_Crc(DataBuf,sizeof DataBuf)==hash && frame.capture.epoch==77);
         i=Find("I144008 CSV");CHECK(i<10);
         CHECK(strstr((char*)files[i].bytes,"# capture_epoch=77\r\n"));
+        CHECK(strstr((char*)files[i].bytes,"# capture_DAC_A=154\r\n"));
+        CHECK(strstr((char*)files[i].bytes,"# capture_DAC_B=158\r\n"));
+        CHECK(strstr((char*)files[i].bytes,"# capture_YPOS=100\r\n"));
         CHECK(strstr((char*)files[i].bytes,"# clock_ppm=0\r\n"));
         CHECK(strstr((char*)files[i].bytes,"# first_visible_q16=1234567\r\n"));
         CHECK(strstr((char*)files[i].bytes,"# format=144CD-v2\r\n"));
@@ -194,7 +204,72 @@ int main(void)
       }
       Scope144_SetClock(0);
     }
-    printf("PASS Scope144 v3 file IO: %u checks; two profiles, matching native prefix, alternating slots, 512/4096B faults, legacy/full CSV\n",checks);return 0;
+    {Scope144Bank before,after;unsigned j,status,hash,sec_hash,opens;
+     for(sector=512;sector<=4096;sector*=8) {
+      SectorSize=(u16)sector;memset(files,0,sizeof files);memset(&before,0,sizeof before);
+      before.battery[0]=3700;
+      for(j=0;j<8;++j)before.range[j]=c;
+      Native(14);CHECK(File144_WptSave(&before,1)==OK);
+      for(status=0;status<5;++status) {
+       CHECK(File144_CalLoad(&before));
+       for(j=0;j<4096;++j)DataBuf[j]=0x12345678u+j*76543u;
+       hash=Scope144_Crc(DataBuf,sizeof DataBuf);Native(33+status);
+       read_fail=status==1;write_fail=status==2;close_fail=status==3;uart_owner=status==4;
+       memset(SecBuff,0x73,sizeof SecBuff);sec_hash=Scope144_Crc(SecBuff,sizeof SecBuff);opens=opened;
+       CHECK((unsigned)File144_ConfigSave(0)==(status==1||status==3?RD_ERR:status==2?WR_ERR:status==4?UI_FILE_BUSY:OK));
+       CHECK(Scope144_Crc(DataBuf,sizeof DataBuf)==hash);
+       if(status==4)CHECK(opened==opens && Scope144_Crc(SecBuff,sizeof SecBuff)==sec_hash);
+       read_fail=write_fail=close_fail=uart_owner=0;
+       CHECK(File144_CalLoad(&after));
+       CHECK(!memcmp(before.range,after.range,sizeof before.range));
+       CHECK(!memcmp(before.high,after.high,sizeof before.high));
+       CHECK(!memcmp(before.battery,after.battery,sizeof before.battery));
+       CHECK(after.generation==before.generation+(status==0));
+       if(!status){CHECK(File144_NativeLoad());CHECK(!memcmp(SecBuff,native_current,512));}
+      }
+      CHECK(File144_ConfigSave(256)==VER_ERR);
+     }
+    }
+    {unsigned j,num,slot,hash,checksum;Scope144Bank before,after;
+     static const unsigned numbers[]={0,1,7,255},offsets[]={0,20,40,54};
+     for(sector=512;sector<=4096;sector*=8) {
+      SectorSize=(u16)sector;memset(files,0,sizeof files);memset(&before,0,sizeof before);
+      before.battery[0]=3700;for(j=0;j<8;++j)before.range[j]=c;
+      Native(19);CHECK(File144_WptSave(&before,1)==OK);
+      native_real=cfg_active=1;Current=FILE;Detail[FILE]=1;
+      Versions=6;ADCoffset=40;PPM_Comp=-321;_A_Range=4;_T_base=19;
+      Title[TRACK1][COUPLE].Value=SCOPE144_AC;_X_posi.Value=73;
+      for(slot=0;slot<sizeof numbers/sizeof numbers[0];++slot) {
+       char name[12]="CONF000 CFG";unsigned char *saved;
+       num=numbers[slot];ADCoffset=(u8)offsets[slot];Title[FILE][1].Value=(s16)num;
+       for(j=0;j<4096;++j)DataBuf[j]=0x73514268u+j*1234567u;
+       hash=Scope144_Crc(DataBuf,sizeof DataBuf);CHECK(File144_ConfigSave(num)==OK);
+       CHECK(Scope144_Crc(DataBuf,sizeof DataBuf)==hash);
+       if(!num){CHECK(File144_NativeLoad());saved=SecBuff;}
+       else {
+        name[4]=(char)('0'+num/100);name[5]=(char)('0'+num/10%10);name[6]=(char)('0'+num%10);
+        j=Find(name);CHECK(j<10 && files[j].size==sector);saved=files[j].bytes;
+       }
+       CHECK(saved[0]==6 && saved[18]==AC && saved[19]==0);
+       CHECK(saved[410]==offsets[slot] && saved[411]==0xab);
+       CHECK((u16)(saved[400]|((u16)saved[401]<<8))==(u16)-321);
+       for(j=0,checksum=0;j<512;++j)checksum+=saved[j];CHECK(!(checksum&255));
+       CHECK(Current==FILE && Title[TRACK1][COUPLE].Value==SCOPE144_AC && _X_posi.Value==73);
+      }
+      CHECK(File144_CalLoad(&after));CHECK(!memcmp(before.range,after.range,sizeof before.range));
+      CHECK(!memcmp(before.high,after.high,sizeof before.high));
+      /* The actual writer reports its filesystem failures, not a save stub. */
+      open_fail=1;CHECK(File144_ConfigSave(8)==DISK_ERR);open_fail=0;
+      write_fail=1;CHECK(File144_ConfigSave(8)==WR_ERR);write_fail=0;
+      close_fail=1;CHECK(File144_ConfigSave(8)==WR_ERR);close_fail=0;
+      fs_error=1;CHECK(File144_ConfigSave(8)!=OK);fs_error=0;
+      uart_owner=1;CHECK(File144_ConfigSave(8)==UI_FILE_BUSY);uart_owner=0;
+      cfg_active=0;CHECK(File144_ConfigSave(9)==OK);j=Find("CONF009 CFG");CHECK(j<10);
+      CHECK(files[j].bytes[18]==SCOPE144_AC); /* Existing Normal serialization remains unprojected. */
+     }
+     native_real=cfg_active=0;
+    }
+    printf("PASS Scope144 v4 file IO: %u checks; two profiles, matching native prefix, alternating slots, 512/4096B faults, legacy/full CSV\n",checks);return 0;
 }
 
 int Generator_SecBusy(void){return (int)uart_owner;}

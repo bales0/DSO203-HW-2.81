@@ -16,7 +16,7 @@ module tb_capture_window;
     // identity, including C/D, so a 256-sample repetition cannot hide a wrap.
     bit marked=0, edge_pattern=0, stim_high=0;
     integer serial=0, arm_serial, edge_serial, start_serial, ready_serial;
-    integer checks=0, scenarios=0, write_wraps=0;
+    integer checks=0, scenarios=0, write_wraps=0, prime_wraps=0;
     reg [17:0] input_word, model_word[0:4095], pipe_word[0:3];
     integer model_serial[0:4095], pipe_serial[0:3];
     integer observed_serial[0:4095];
@@ -70,7 +70,7 @@ module tb_capture_window;
 
     // Global watchdog complements every bounded per-scenario wait.
     initial begin
-        #20000000;
+        #40000000;
         $fatal(1,"tb_capture_window global watchdog");
     end
     task automatic send_byte(input [7:0] value, input bit address_phase);
@@ -164,6 +164,7 @@ module tb_capture_window;
             write_reg(8'h11,0); write_reg(8'h12,0);
             write_reg(8'h08,pre_count & 255);
             write_reg(8'h09,(pre_count >> 8) & 255);
+            require(dut.PerCnt_Link==pre_count,"PerCnt low/high byte writes lost after TRIGG_MODE");
             write_reg(8'h0e,0); // FreeRun must be explicit for each record.
             write_reg(8'h04,3); // Interlaced clock configuration.
             H_L=0;
@@ -203,6 +204,7 @@ module tb_capture_window;
         reg [17:0] expected;
         begin
             initial_address=(dut.U1.Bptr-pre_count) & 4095;
+            if(dut.U1.Bptr<pre_count) prime_wraps=prime_wraps+1;
             H_L=1;
             read_pair(value); // Exactly one pointer-loading read, not a data word.
             require(dut.U1.Loaded===1,"priming did not load reader");
@@ -267,6 +269,10 @@ module tb_capture_window;
                 require(edge_index>=valid_begin && edge_index<4095,"HW edge absent in valid record");
                 require(observed_serial[edge_index]==edge_serial,"edge word lost pipeline identity");
                 require(edge_index==pre_count-(dut.Tm_Link[2]?2:1),"HW qualifying edge position (pipeline regression)");
+                require(2*(edge_index-valid_begin)+(dut.Tm_Link[4:3]==0?1:0)==
+                    2*pre_count-(dut.Tm_Link[4:3]==0?5:6)-(dut.Tm_Link[2]?2:0),
+                    "PerCnt to retained B/A time sample mismatch");
+                require(2*(4096-valid_begin)==8188,"HW valid interlaced length changed");
                 require(start_serial==edge_serial+(dut.Tm_Link[2]?4:3) && ready_serial==edge_serial+(dut.Tm_Link[2]?6:5),
                     "HW trigger pipeline timing changed");
                 $display("PASS HW mode %h: Bptr=%0d start=%0d, valid=[%0d,4096)=%0d words, input edge=%0d",
@@ -284,11 +290,11 @@ module tb_capture_window;
 
     // Width predicates use the original Signal.v counters. The event is the
     // closing edge, qualified one clock later than an edge/level trigger.
-    task automatic pulse_record(input [7:0] mode, input integer history,
-        input integer pulse_width, input bit rising, input bit accepted);
+    task automatic pulse_record_pre(input [7:0] mode, input integer history,
+        input integer pulse_width, input bit rising, input bit accepted, input integer pre_count);
         integer j;
         begin
-            reset_record(mode,150,1,rising);
+            reset_record(mode,pre_count,1,rising);
             repeat(history) @(negedge MCI);
             #1; require(dut.Sampled_Link===1,"pulse prehistory absent");
             stim_high=!rising;
@@ -296,7 +302,7 @@ module tb_capture_window;
             #1; require(dut.Start_Link===0,"pulse triggered before closing edge");
             stim_high=rising;
             if(accepted) begin
-                wait_full; read_full_frame(1,150,rising);
+                wait_full; read_full_frame(1,pre_count,rising);
             end else begin
                 for(j=0;j<256;j=j+1) begin
                     @(negedge MCI); #1;
@@ -305,6 +311,11 @@ module tb_capture_window;
                 end
             end
         end
+    endtask
+
+    task automatic pulse_record(input [7:0] mode, input integer history,
+        input integer pulse_width, input bit rising, input bit accepted);
+        pulse_record_pre(mode,history,pulse_width,rising,accepted,150);
     endtask
 
     task automatic edge_record(input [7:0] mode, input integer history,
@@ -354,7 +365,7 @@ module tb_capture_window;
         end
     endtask
 
-    integer index;
+    integer index, pre_index, pre_value, source_index, kind_index;
     initial begin
         // Model a deterministic prior capture; this is testbench state only.
         dut.U1.Wptr=0;
@@ -440,7 +451,26 @@ module tb_capture_window;
             pulse_record((index==0?0:index==1?16:24)+7,220,33,0,1);
             pulse_record((index==0?0:index==1?16:24)+7,220,32,0,0);
         end
+        // Runtime pretrigger candidates: include a nonzero high byte. The
+        // DUT produces every pointer and trigger; the independent serial
+        // scoreboard above verifies prime + 4096 reads and the fresh suffix.
+        for(pre_index=0;pre_index<4;pre_index=pre_index+1) begin
+            pre_value=(pre_index==0?150:pre_index==1?183:pre_index==2?235:256);
+            for(source_index=0;source_index<3;source_index=source_index+1) begin
+                edge_record((source_index==0?0:source_index==1?16:24)+1,
+                    pre_value+2,pre_value,1);
+                edge_record((source_index==0?0:source_index==1?16:24),
+                    pre_value+3,pre_value,0);
+                for(kind_index=0;kind_index<4;kind_index=kind_index+1)
+                    edge_record((source_index==0?0:source_index==1?16:24)+kind_index,
+                        5000,pre_value,(kind_index & 1));
+                for(kind_index=4;kind_index<8;kind_index=kind_index+1)
+                    pulse_record_pre((source_index==0?0:source_index==1?16:24)+kind_index,
+                        5000,(kind_index & 1)?64:16,kind_index<6,1,pre_value);
+            end
+        end
         require(write_wraps>0,"suite did not exercise Wptr wrap");
+        require(prime_wraps>0,"suite did not exercise Bptr-PerCnt modulo wrap");
         $display("PASS tb_capture_window: %0d marked scenarios, %0d assertions, %0d write wraps",scenarios,checks,write_wraps);
         $display("HDL MODEL ONLY: actual DS203 bus timing, analog mux, B-to-A phase and hardware capacity NOT VERIFIED");
         $finish;

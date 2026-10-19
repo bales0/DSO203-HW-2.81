@@ -30,8 +30,6 @@ typedef struct {
  */
 int ViewWindow_Build(uint32_t count,uint32_t render_width,uint32_t step_q16,
     int64_t requested_start_q16,ViewWindowGeometry *);
-int ViewWindow_FromCapture(const CaptureWindow *,uint32_t render_width,
-    uint32_t step_q16,ViewWindowGeometry *);
 /* Place an in-record trigger/anchor at anchor_column, then apply signed
  * XPOS in temporal-sample Q16 units. Positive displacement browses later.
  * Extreme signed requests saturate before the usual start clamp.

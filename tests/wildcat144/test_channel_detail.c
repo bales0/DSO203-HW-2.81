@@ -29,7 +29,7 @@ int main(void)
     /* Native title groups now use the common tail after special navigation. */
     for(interlace=0;interlace<2;++interlace)for(n=0;n<22;++n) {
         Current=(u8)n;ShowFFT=0;_Mode=AUTO;
-        if((!interlace && n<METER_0) || (interlace && (n==TRACK1 || n==V_VERNIE || n==T_VERNIE)))continue;
+        if((!interlace && n<METER_0) || (interlace && (n==TRACK1 || n==V_VERNIE || n==T_VERNIE || n==T_BASE)))continue;
         memcpy(before,Title,sizeof before);memcpy(before_detail,Detail,sizeof before_detail);
         CHECK(!UiCommon_NextDetail(interlace));
         CHECK(!memcmp(Title,before,sizeof before) && !memcmp(Detail,before_detail,sizeof before_detail));

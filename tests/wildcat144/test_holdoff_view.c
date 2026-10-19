@@ -7,18 +7,20 @@
 #include "Process.h"
 #include "Draw.h"
 #include "Interrupt.h"
-static unsigned checks,t_prints,sample_labels,screen_x,screen_y,interlace;
+static unsigned checks,pixel_writes,t_prints,sample_labels,screen_x,screen_y,interlace;
 static u16 pixels[400][16],colors[5]={0x0005,0x0105,0x0205,0x0305,0x0405};
 #define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);exit(1);}}while(0)
-u8 Current,Detail[14],FrameMode,FlagFrameMode,Options,OsBufferLogicFlag,OSBuffer,OSAvg,FPGAosFlag;
+u8 Current,Detail[14],FrameMode,FlagFrameMode,OffsetSelect,Options,OsBufferLogicFlag,OSBuffer,OSAvg,FPGAosFlag;
 vu16 NotificationTimer;menu Title[13][4];
 const u16 RULE_BASE[8]={0x020,0x040,0x080,0x040,0x020,0x010,0x008,0x010};
 int Wildcat144_Active(void){return (int)interlace;}
-int Process_NativeOverview(unsigned *first,unsigned *last){*first=91;*last=105;return 1;}
-int Wildcat144_Overview(unsigned *first,unsigned *last){*first=120;*last=145;return 1;}
+static unsigned native_visible=1,native_first=91,native_last=105;
+static unsigned interlace_visible=1,interlace_first=120,interlace_last=145;
+int Process_NativeOverview(unsigned *first,unsigned *last){*first=native_first;*last=native_last;return (int)native_visible;}
+int Wildcat144_Overview(unsigned *first,unsigned *last){*first=interlace_first;*last=interlace_last;return (int)interlace_visible;}
 void __Point_SCR(u16 x,u16 y){CHECK(x<400 && y<16);screen_x=x;screen_y=y;}
-void __LCD_SetPixl(u16 color){CHECK(screen_x<400 && screen_y<16);pixels[screen_x][screen_y++]=color;}
-void DrawPixel(u16 x,u8 y,u16 color){CHECK(x<400 && y<16);pixels[x][y]=color;}
+void __LCD_SetPixl(u16 color){CHECK(screen_x<400 && screen_y<16);++pixel_writes;pixels[screen_x][screen_y++]=color;}
+void DrawPixel(u16 x,u8 y,u16 color){CHECK(x<400 && y<16);++pixel_writes;pixels[x][y]=color;}
 void Print_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
 {(void)color;(void)mode;CHECK(x<400 && y<16);CHECK(!strcmp(s,"T"));++t_prints;pixels[x][y]=0xdead;}
 void DisplaySamples(void){++sample_labels;}

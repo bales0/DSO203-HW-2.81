@@ -3,35 +3,46 @@
 #include "Interlace144.h"
 #define SCOPE144_RANGES 8u
 #define SCOPE144_CAL_BYTES 1024u
-#define SCOPE144_CAL_VERSION 3u
-#define SCOPE144_RECORD_BYTES 52u
+#define SCOPE144_CAL_VERSION 4u
+#define SCOPE144_RECORD_BYTES 60u
 #define SCOPE144_SAMPLES 1024u
 #define SCOPE144_MAX_SAMPLES 8192u
 #define SCOPE144_IMAGE_CRC 0x66B80BD2u
 #define SCOPE144_PIVOT 40u
-/* Shared Normal hardware pivot. YPOS is display-only in 144. */
+/* Shared Normal hardware pivot; capture calibration owns its DAC state. */
 typedef struct {
     int32_t gain_q10, bias_q10, zero_q10, span_q10, reference_uv;
     uint32_t valid;
     int32_t a_gain_q10,a_bias_q10,dac_a_q10,dac_b_q10,adc_offset;
     /* Offset response at the reference voltage, independent of ground. */
     int32_t ref_dac_a_q10,ref_dac_b_q10;
+    uint32_t dac_anchor,dac_window; /* A/B anchors + signed native Ka3/Kb3; A/B min/max. Zero means legacy. */
 } Scope144Cal;
 typedef struct {
     Scope144Cal range[SCOPE144_RANGES],high[SCOPE144_RANGES];
     uint32_t generation,battery[2],native_crc;
 } Scope144Bank;
 unsigned Scope144_Command(int adc_offset);
+int CalNative_Command(int,int,int);
+void Scope144_NativeBank(const Scope144Bank *);
+unsigned Scope144_NativeProfiles(unsigned);
+int CalNative_Interpolate(int,int,unsigned,unsigned,unsigned);
+int CalNative_Position(unsigned,unsigned,int,int,int,unsigned,unsigned *);
 /* 0 invalid, 1 single profile, 2 two supply profiles. */
 int Scope144_Select(const Scope144Bank *,unsigned,int,uint32_t,Scope144Cal *);
+int Scope144_SelectAt(const Scope144Bank *,unsigned,int,uint32_t,int,Scope144Cal *,unsigned commands[2]);
 int Scope144_Normalize(const Scope144Cal *,int32_t *,unsigned);
 typedef struct {
     int32_t minimum_uv, maximum_uv, average_uv, rms_uv;
     uint32_t frequency_hz, period_ps, duty_ppm, high_ps, low_ps;
     uint32_t clips, samples;
+    uint32_t clip_rails; /* bit 0: low ADC rail; bit 1: high ADC rail */
 } Scope144Measurements;
 /* read must be deterministic over one call: the owner freezes data, count,
- * calibration and period until all measurement passes have completed. */
+ * calibration and period until all measurement passes have completed.
+ * Zero means failure; any positive result means success. The Clipped adapter
+ * interprets bit 1 as one raw ADC clipping event; optional bits 2/3
+ * distinguish low/high raw rails. Legacy result 2 has unknown direction. */
 typedef struct {
     const void *user;
     unsigned count;
@@ -39,14 +50,15 @@ typedef struct {
     uint64_t period_ps_q16; /* zero retains the legacy live-clock calculation */
 } Scope144Source;
 int Scope144_MeasureSource(const Scope144Cal *,const Scope144Source *,unsigned clips,Scope144Measurements *);
+/* Same calculation; clipping is collected only during the amplitude pass. */
+int Scope144_MeasureSourceClipped(const Scope144Cal *,const Scope144Source *,Scope144Measurements *);
+/* Zero timing omits only the edge pass; its output fields remain zero. */
+int Scope144_MeasureSourceRequested(const Scope144Cal *,const Scope144Source *,unsigned timing,Scope144Measurements *);
 unsigned Scope144_CsvPoint(char out[80],const Scope144Cal *,unsigned sample,
     uint32_t time_ps,int32_t q,unsigned clip,int factor,char adc);
 /* Snapshot of native saved clock correction; positive PPM means CPU clock high. */
 int Scope144_SetClock(int ppm);
 int Scope144_RunPresses(uint32_t published,uint32_t *seen,int *held);
-typedef struct {uint32_t acquisition,processing,drawing,draws;} Scope144Performance;
-extern Scope144Performance Wildcat144Performance;
-extern char Wildcat144Timing[40];
 unsigned Scope144_ClockLine(char out[40]);
 unsigned Scope144_ClockValueLine(char out[40],int ppm);
 uint32_t Scope144_Crc(const void *data, uint32_t count);
@@ -112,19 +124,20 @@ unsigned Scope144_Field(unsigned group,unsigned detail);
 void Wildcat144_CheckImage(void);
 int Wildcat144_Service(void);
 int Wildcat144_ModeKey(void);
-void Process144_Draw(const Scope144Cal *cal, const int32_t *samples, unsigned start,
-    unsigned base, unsigned position, unsigned invert);
 void Menu144_NativeTitle(void);
 void Menu144_Cursor(unsigned base);
 void Menu144_Calibration(unsigned status);
 void Menu144_TriggerWait(unsigned waiting);
 void Menu144_Presentation(unsigned available);
+void Menu144_MeasurementTime(unsigned available);
 void Menu144_Meters(const Scope144Measurements *result);
-void Menu144_View(const Scope144Measurements *,int32_t dt_ps,int32_t dv_uv,unsigned valid,unsigned fps,unsigned refresh);
+void Menu144_View(const Scope144Measurements *,int32_t dt_ps,int32_t dv_uv,unsigned valid,unsigned refresh);
 int File144_CalLoad(Scope144Bank *bank);
 int File144_CalSave(Scope144Bank *bank);
 int File144_WptSave(Scope144Bank *bank,int native_updated);
 int File144_NativeLoad(void);
+int File144_ConfigSave(unsigned number);
+int File144_SaveParams(void);
 int File144_Csv(const Scope144Cal *cal, const int32_t *q10, const uint16_t *pairs,
     unsigned range, unsigned base, unsigned number, int factor);
 #endif

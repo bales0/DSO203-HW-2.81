@@ -11,8 +11,11 @@
 #include "UiCommon.h"
 #define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);exit(1);}}while(0)
 int Wildcat144_DigitalMeasurement(unsigned ch,Scope144Measurements *out) { (void)ch;memset(out,0,sizeof *out);out->frequency_hz=1000000;out->period_ps=1000000;out->duty_ppm=500000;return 1; }
+static unsigned fixture_clip[2];
+unsigned Process_NativeClip(unsigned ch){return ch<2?fixture_clip[ch]:0;}
 static unsigned checks,draws,title_calls,meter_calls,formatted,battery_calls,graph_calls;
 static unsigned header_clears;
+vu16 NotificationTimer;
 static u16 screen[400][240];
 static int cursor_valid=1;static int32_t cursor_origin_ps,xpos_time_ps;
 static unsigned overview_visible,overview_first=91,overview_last=106;
@@ -30,10 +33,11 @@ static char kinds[9][10]={"SIN","TRI","SAW","SQR","PWM","NOISE","OFF","ARB","UAR
 static char rates[23][10]={"1Hz"},mode_str[7][10]={"OFF","AUTO","NORM","NorCL","PERST","SGL","XY"};
 static char edge[9][10]={":!\\!",":!^!","<Vt",">Vt","L<[","L>[","H<[","H>[","GEN"},states[3][10]={"!RUN!","HOLD","HOLD"};
 static char dt_label[2][4]={"dT","1/d"};
-static char labels[12][5]={"Vbat","fps","Vdc","RMS","Freq","Max","Min","Vpp","T","Duty","Th","Tl"};
 #define E(s,x,y,l,v) {(char *)(s),colors,l,0,x,y,v,0}
 #define F(s,x,y,l,v) {(char *)(s),colors,l,FIX,x,y,v,0}
 #define P(s,x,y,l,v) {(char *)(s),colors,l,NUM2,x,y,v,0}
+static const char file_function[2][11]={"Save  File","Load  File"};
+static const char file_extension[8][10]={".BMP ",".DAT ",".BUF ",".CSV ",".CFG ",".ARB ",".UAR "," ROM "};
 menu Title[13][4]={
  {E(sources,35,228,4,1),E(couples,35,216,8,7),E(ranges,51,216,8,0),E("YPOS",0,0,200,100)},
  {E(sources,86,228,4,0),E(couples,86,216,4,0),E(ranges,102,216,8,1),E("YPOS",0,0,200,100)},
@@ -44,24 +48,32 @@ menu Title[13][4]={
  {E(mode_str,290,228,6,AUTO),E(ranges,290,216,21,0),F("XPOS",366,0,3703,0),E("VIEW",159,0,253,32)},
  {E(sources,333,228,4,0),E(edge,373,228,8,1),E("LEV",333,216,200,100),E("T",92,0,3400,0)},
  {F("!V1!",35,0,200,180),F("!V2!",62,0,200,40),E("dV",314,197,1,0),E("",342,197,240,0)},
- {E("SAVE",126,0,1,0),E("",206,0,999,0),E("CSV",230,0,7,3),E("DIR",166,0,15,0)},
+ {E(file_function,126,0,1,0),E("",206,0,999,0),E(file_extension,230,0,7,3),E("DIR",166,0,15,0)},
  {F("!T1!",312,0,300,30),F("!T2!",339,0,300,180),E(dt_label,314,182,1,0),E("",342,182,400,0)},
  {F("LIGHT",314,167,0,0),P("",342,167,9,5),E("",0,0,0,0),E("",0,0,0,0)},
  {F("VOLUME",314,152,0,0),P("",342,152,9,5),E("",0,0,0,0),E("",0,0,0,0)}
 };
 meter Meter[9]={
- {labels[0],0,FRQ,314,342,137,0},{labels[0],0,CIR,314,342,122,0},{labels[0],0,VPP,314,342,107,0},
- {labels[0],0,VDC,314,342,92,0},{labels[0],0,RMS,314,342,77,0},{labels[0],0,MIN,314,342,62,0},
- {labels[0],0,MAX,314,342,47,0},{labels[0],0,DUT,314,342,32,0},{labels[0],0,TH,314,342,17,0}
+ {0,0,FRQ,314,342,137,0},{0,0,CIR,314,342,122,0},{0,0,VPP,314,342,107,0},
+ {0,0,VDC,314,342,92,0},{0,0,RMS,314,342,77,0},{0,0,MIN,314,342,62,0},
+ {0,0,MAX,314,342,47,0},{0,0,DUT,314,342,32,0},{0,0,TH,314,342,17,0}
 };
 trigg V_Trigg[4];
-u8 ShowFFT;
+u8 ShowFFT,OffsetSelect,ADCoffset=40;
+s16 PPM_Comp;
 u8 Current,Detail[14],TrgAuto,FlagMeter=1,Update=0,SelectiveUpdate=0,ClearMeterAreaFlag,UpdateMeter=4,BTwink,EnablePaS;vu8 Twink,Cnt_20mS;vu16 Sec_Cnt;
 u8 EnableCursorDisplay,DisableCursorDisplay,CursorDisplaySelect,MinBypass;
 vu16 CursorDisplayTimer;
 char CursorDisplayStr[12];
 char NumStr[12];static unsigned big_calls;
-void DisplayBigMeter(u8 n){CHECK(n>=1 && n<=3);CHECK(strlen(NumStr)==11);++big_calls;}
+#ifdef REAL_UI_FORMAT
+void Test_NormalBigMeter(u8);
+#endif
+void DisplayBigMeter(u8 n){CHECK(n>=1 && n<=3);CHECK(strlen(NumStr)==11);++big_calls;
+#ifdef REAL_UI_FORMAT
+Test_NormalBigMeter(n);
+#endif
+}
 void Print_Str2(u16 x0,u16 x1,u16 y,u16 color,u8 mode,char *s,u8 a,u8 b)
 {
     unsigned x=x0,n,k,row,leading=a>10?a-10+2:a;(void)mode;
@@ -78,9 +90,15 @@ void ClearScreenArea(u16 x1,u16 x2,u8 y1,u8 y2)
     if(x1==172 && x2==237 && y1==216)++header_clears;
     for(x=x1;x<x2;++x)for(y=y1;y<y2;++y)screen[x][y]=0;
 }
+#ifdef REAL_UI_FORMAT
+const char F_UNIT[12]={'H','z',0,'K','@',0,'M','@',0,'G','@',0};
+const char T_UNIT[12]={'n','S',0,'u','S',0,'m','S',0,'S',' ',0};
+const char V_UNIT[12]={'m','V',0,'m','V',0,'V',' ',0,'V',' ',0};
+#else
 const char F_UNIT[12]="Hz",T_UNIT[12]="ns",V_UNIT[12]="uV";
+#endif
 const char P_UNIT[12]={'%',' ',0,'%',' ',0,'%',' ',0,0,0,0};
-#ifdef REAL_UI_PERCENT
+#if defined(REAL_UI_PERCENT) || defined(REAL_UI_FORMAT)
 void Native_Int2Str(char *,s32,const char *,u8,u8,s8);
 #endif
 static Y_attr attrs[8];Y_attr *Y_Attr=attrs;
@@ -108,6 +126,9 @@ void Print_Str(u16 x,u16 y,u16 color,u8 mode,char *text)
 void Int2Str(char *out,s32 value,const char *unit,u8 precision,u8 mode,s8 shift)
 {
     CHECK(formatted<32);formats[formatted].value=value;formats[formatted++].unit=unit;
+#ifdef REAL_UI_FORMAT
+    Native_Int2Str(out,value,unit,precision,mode,shift);
+#else
     if(unit==P_UNIT && mode==STD) {
 #ifdef REAL_UI_PERCENT
         Native_Int2Str(out,value,unit,precision,mode,shift);
@@ -115,12 +136,19 @@ void Int2Str(char *out,s32 value,const char *unit,u8 precision,u8 mode,s8 shift)
         (void)shift;sprintf(out," %ld%% ",(long)value);
 #endif
     } else strcpy(out,unit==V_UNIT && precision==2 && mode==UNSIGN?"1.4V ":"12.3mV");
+#endif
 }
 void Display_Title(void){++title_calls;Menu144_NativeTitle();}
 void Display_Meter(void){++meter_calls;Menu144_Meters(0);}
 void Update_Battery(void){++battery_calls;}
 void Update_Mark(void){}
-void Update_View_Area(void){unsigned x,y;++graph_calls;for(x=91;x<307;++x)for(y=0;y<12;++y)screen[x][y]=0xf81f;}
+static unsigned box_seen,box_first,box_last,box_visible;
+void Update_View_Area(void){unsigned x,y;++graph_calls;for(x=91;x<307;++x)for(y=0;y<12;++y)screen[x][y]=0xf81f;
+box_seen=1;box_first=overview_first;box_last=overview_last;box_visible=overview_visible;}
+void Update_Buffer_Overview(void){
+ if(Current==FILE || NotificationTimer){box_seen=0;return;}
+ if(!box_seen || box_visible!=overview_visible || (overview_visible && (box_first!=overview_first || box_last!=overview_last)))Update_View_Area();
+}
 static unsigned Find(unsigned x,unsigned y,const char *text)
 {unsigned i;size_t n=strlen(text);for(i=0;i<draws;++i)if(painted[i].x==x && painted[i].y==y && !strncmp(painted[i].text,text,n) && strspn(painted[i].text+n," ")==strlen(painted[i].text+n))return i;fprintf(stderr,"Missing %u/%u %s\n",x,y,text);for(i=0;i<draws;++i)if(painted[i].x==x && painted[i].y==y)fprintf(stderr,"  actual: [%s]\n",painted[i].text);exit(1);}
 /* Print_Str's actual PRN background is the low byte; INV swaps it.
@@ -141,9 +169,9 @@ static void CheckGeneratorValueBackgrounds(void)
 static void Draw(unsigned group,unsigned detail,unsigned valid)
 {
     unsigned i,width,j;
-    Scope144Measurements m={-20000,80000,30000,40000,1000000,1000000,500000,500000,500000,0,1024};
+    Scope144Measurements m={-20000,80000,30000,40000,1000000,1000000,500000,500000,500000,0,1024,0};
     draws=formatted=0;Current=(u8)group;if(group<13)Detail[group]=(u8)detail;else Detail[13]=(u8)detail;
-    Menu144_View(&m,1000000,200000,valid,50,2);
+    Menu144_View(&m,1000000,200000,valid,2);
     for(i=0;i<draws;++i)if(painted[i].y==0) {
         width=0;for(j=0;painted[i].text[j];++j)width+=painted[i].text[j]=='!'?4:8;
         if(painted[i].x<89)CHECK((painted[i].x==0 && !strcmp(painted[i].text,"YPOS")) ||
@@ -192,14 +220,14 @@ int main(void)
     for(i=0;i<draws;++i)CHECK(!(painted[i].x==0 && painted[i].y==216));
     Find(35,216,"DC");Find(51,216,"50mV");
     CHECK(painted[Find(86,228,"CH(A)")].color==0x0905); /* B source uses fixture source label, in gray. */
-    for(i=0;i<9;++i){Find(Meter[i].XPOS1,Meter[i].YPOS,Meter[i].Str+Meter[i].Item*5);Find(Meter[i].XPOS2,Meter[i].YPOS,"12.3mV");}
+    for(i=0;i<9;++i){Find(Meter[i].XPOS1,Meter[i].YPOS,UiCommon_MeterLabel(Meter[i].Item));Find(Meter[i].XPOS2,Meter[i].YPOS,"12.3mV");}
     Title[0][SOURCE].Value=3;Draw(0,2,1);Find(51,216,"0.5V");Title[0][SOURCE].Value=1;
-    {unsigned before=graph_calls;Draw(T_BASE,MODE,1);CHECK(graph_calls==before+1);}
-    {unsigned before=graph_calls;Draw(TRACK4,0,1);CHECK(graph_calls==before+1);}
+    {unsigned before=graph_calls;Draw(T_BASE,MODE,1);CHECK(graph_calls==before);}
+    {unsigned before=graph_calls;Draw(TRACK4,0,1);CHECK(graph_calls==before);}
     Draw(TRIGG,0,1);Find(333,228,"OFF");
     Draw(OUTPUT,0,1);Find(239,228,"SIN");Find(172,216,"Vo 1.4V");
-    Draw(FILE,3,1);Find(230,0,"CSV");
-    for(i=0;i<12;++i){Meter[0].Item=(u8)i;Meter[0].Track=i<=FPS?4:0;Draw(METER_0,0,1);}
+    Draw(FILE,3,1);Find(230,0,".CSV ");
+    for(i=0;i<12;++i){if(i!=VBT && i<VDC)continue;Meter[0].Item=(u8)i;Meter[0].Track=i==VBT?4:0;Draw(METER_0,0,1);}
     Meter[0].Item=VPP;Meter[0].Track=1;Draw(METER_0,0,1);CHECK(painted[Find(342,137,"--")].color==0x0905);
     for(i=TRACK3;i<=TRACK4;++i) {
         Title[i][SOURCE].Value=1;Meter[0].Track=(u8)i;Meter[0].Item=FRQ;
@@ -236,28 +264,30 @@ int main(void)
     CHECK(formats[0].unit==V_UNIT && formats[0].value==-120000);
     DisableCursorDisplay=2;Menu144_Cursor(0);CHECK(!EnableCursorDisplay);DisableCursorDisplay=0;
     Current=TRACK1;Menu144_Cursor(0);CHECK(!EnableCursorDisplay);FlagMeter=1;
+    /* Settle the newly enabled panel before measuring idle update gates. */
+    Draw(TRACK1,0,1);
     { Scope144Measurements m={0};unsigned calls=meter_calls;
-      draws=formatted=0;Menu144_View(&m,0,0,1,50,0);CHECK(meter_calls==calls);
-      Cnt_20mS=8;Menu144_View(&m,0,0,1,50,0);CHECK(meter_calls==calls);
-      Sec_Cnt++;draws=formatted=0;Menu144_View(&m,0,0,1,50,0);CHECK(meter_calls==calls+1);
-      Twink=!Twink;draws=formatted=0;Menu144_View(&m,0,0,1,50,0);CHECK(meter_calls==calls+2);
+      draws=formatted=0;Menu144_View(&m,0,0,1,0);CHECK(meter_calls==calls);
+      Cnt_20mS=8;Menu144_View(&m,0,0,1,0);CHECK(meter_calls==calls);
+      Sec_Cnt++;draws=formatted=0;Menu144_View(&m,0,0,1,0);CHECK(meter_calls==calls+1);
+      Twink=!Twink;draws=formatted=0;Menu144_View(&m,0,0,1,0);CHECK(meter_calls==calls+2);
       FlagMeter=0;Draw(0,1,1);CHECK(!big_calls);
       FlagMeter=2;UpdateMeter=4;Meter[2].Track=0;Meter[3].Track=0;Draw(0,1,1);CHECK(big_calls==2);
       UpdateMeter=0;Meter[1].Track=0;Draw(0,1,1);CHECK(big_calls==5);
       Meter[1].Track=1;Draw(0,1,1);CHECK(big_calls==7);
       /* The large panel follows the ordinary 16x20 ms gate, not each frame. */
       {unsigned calls=meter_calls;
-       draws=formatted=0;Menu144_View(&m,0,0,1,50,0);CHECK(meter_calls==calls);
-       Cnt_20mS=16;draws=formatted=0;Menu144_View(&m,0,0,1,50,0);CHECK(meter_calls==calls+1);
-       Cnt_20mS=17;draws=formatted=0;Menu144_View(&m,0,0,1,50,0);CHECK(meter_calls==calls+1);
-       Cnt_20mS=24;draws=formatted=0;Menu144_View(&m,0,0,1,50,0);CHECK(meter_calls==calls+1);
-       Cnt_20mS=32;draws=formatted=0;Menu144_View(&m,0,0,1,50,0);CHECK(meter_calls==calls+2);}
+       draws=formatted=0;Menu144_View(&m,0,0,1,0);CHECK(meter_calls==calls);
+       Cnt_20mS=16;draws=formatted=0;Menu144_View(&m,0,0,1,0);CHECK(meter_calls==calls+1);
+       Cnt_20mS=17;draws=formatted=0;Menu144_View(&m,0,0,1,0);CHECK(meter_calls==calls+1);
+       Cnt_20mS=24;draws=formatted=0;Menu144_View(&m,0,0,1,0);CHECK(meter_calls==calls+1);
+       Cnt_20mS=32;draws=formatted=0;Menu144_View(&m,0,0,1,0);CHECK(meter_calls==calls+2);}
       FlagMeter=1;
     }
     /* Selection blinking must not erase/repaint the lower waveform. */
     Draw(T_BASE,MODE,1);
     {Scope144Measurements m={0};unsigned graphs=graph_calls;
-     draws=formatted=0;Twink=!Twink;Menu144_View(&m,0,0,1,50,0);
+     draws=formatted=0;Twink=!Twink;Menu144_View(&m,0,0,1,0);
      CHECK(graph_calls==graphs);}
     /* WAIT is delayed and confined to the RUN cell; capture stages never
      * force title, panel or footer redraws. Completed readings stay visible. */
@@ -271,11 +301,11 @@ int main(void)
         TrgAuto=2;Menu144_Cursor(0);CHECK(!EnableCursorDisplay);TrgAuto=0;
         titles=title_calls;meters=meter_calls;graphs=graph_calls;
         Cnt_20mS=0;Menu144_TriggerWait(1);draws=formatted=0;
-        Menu144_View(&m,0,0,0,50,0);
+        Menu144_View(&m,0,0,0,0);
         CHECK(title_calls==titles && meter_calls==meters && graph_calls==graphs);
-        Cnt_20mS=10;draws=formatted=0;Menu144_View(&m,0,0,0,50,0);
+        Cnt_20mS=10;draws=formatted=0;Menu144_View(&m,0,0,0,0);
         Find(0,228,"WAIT");CHECK(title_calls==titles && meter_calls==meters);
-        Menu144_TriggerWait(2);draws=formatted=0;Menu144_View(&m,0,0,0,50,0);
+        Menu144_TriggerWait(2);draws=formatted=0;Menu144_View(&m,0,0,0,0);
         Find(0,228,"RUN");CHECK(title_calls==titles && meter_calls==meters);
         for(i=25;i<33;++i)for(j=228;j<239;++j)CHECK(!screen[i][j]);
         Menu144_TriggerWait(0);Draw(TRIGG,2,0);Find(342,137,"12.3mV");
@@ -289,20 +319,21 @@ int main(void)
         }
         TrgAuto=0;TriggerLevelSelect=0;Twink=PRN;
     }
-    Current=T_BASE;Detail[T_BASE]=XPOSI;xpos_time_ps=1234567;formatted=0;
-    Menu144_Cursor(2);CHECK(EnableCursorDisplay && CursorDisplaySelect==10);
-    CHECK(formats[0].unit==T_UNIT && formats[0].value==1234);
+    Current=T_BASE;Detail[T_BASE]=XPOSI;Detail[T_VERNIE]=T2;_T2=180;
+    xpos_time_ps=1234567;cursor_origin_ps=-1000000;formatted=0;
+    Menu144_Cursor(2);CHECK(EnableCursorDisplay && CursorDisplaySelect==2);
+    CHECK(formats[0].unit==T_UNIT && formats[0].value==(cursor_origin_ps+Scope144_CursorTime(0,_T2))/1000);
     Current=T_VERNIE;Detail[T_VERNIE]=T1;_T1=30;cursor_origin_ps=-1000000;formatted=0;
     Menu144_Cursor(2);CHECK(EnableCursorDisplay && formats[0].value<=-899 && formats[0].value>=-901);
     cursor_valid=0;Menu144_Cursor(2);CHECK(!EnableCursorDisplay);cursor_valid=1;
     _State.Value=HOLD;overview_visible=1;Draw(TRACK1,0,1);
     {Scope144Measurements m={0};unsigned graphs=graph_calls,titles=title_calls;
      overview_first++;overview_last++;draws=formatted=0;
-     Menu144_View(&m,0,0,1,50,0);CHECK(graph_calls==graphs+1 && title_calls==titles);
-     Menu144_View(&m,0,0,1,50,0);CHECK(graph_calls==graphs+1);
-     overview_visible=0;Menu144_View(&m,0,0,0,50,0);CHECK(graph_calls==graphs+2);
+     Menu144_View(&m,0,0,1,0);CHECK(graph_calls==graphs+1 && title_calls==titles);
+     Menu144_View(&m,0,0,1,0);CHECK(graph_calls==graphs+1);
+     overview_visible=0;Menu144_View(&m,0,0,0,0);CHECK(graph_calls==graphs+2);
      Draw(TRIGG,0,1);graphs=graph_calls;overview_visible=1;
-     Menu144_View(&m,0,0,1,50,0);CHECK(graph_calls==graphs+1);}
+     Menu144_View(&m,0,0,1,0);CHECK(graph_calls==graphs+1);}
     /* Regression: pre-existing Normal digits and units must be erased even
      * when the new field only contains '--'; keep the original U/0 header. */
     {
@@ -324,14 +355,19 @@ int main(void)
             unsigned graphs;
             _State.Value=(s16)state;Draw(TRIGG,d,1);graphs=graph_calls;
             for(x=91;x<307;++x)for(y=0;y<12;++y)CHECK(screen[x][y]==0xf81f);
-            draws=formatted=0;Twink=!Twink;Menu144_View(&m,0,0,1,50,0);
+            draws=formatted=0;Twink=!Twink;Menu144_View(&m,0,0,1,0);
             CHECK(graph_calls==graphs);
             for(x=91;x<307;++x)for(y=0;y<12;++y)CHECK(screen[x][y]==0xf81f);
             for(x=0;x<draws;++x)CHECK(!strstr(painted[x].text,"CAL1")&&!strstr(painted[x].text,"CAL2"));
         }
         _State.Value=RUN;Draw(TRACK1,0,1);
         {unsigned graphs=graph_calls;overview_first++;overview_last++;draws=formatted=0;
-         Menu144_View(&m,0,0,1,50,0);CHECK(graph_calls==graphs);}
+         Menu144_View(&m,0,0,1,0);CHECK(graph_calls==graphs+1);}
+        {unsigned graphs=graph_calls;
+         NotificationTimer=20;overview_first++;overview_last++;draws=formatted=0;
+         Menu144_View(&m,0,0,1,0);CHECK(graph_calls==graphs);
+         NotificationTimer=0;draws=formatted=0;Menu144_View(&m,0,0,1,0);
+         CHECK(graph_calls==graphs+1);}
     }
     {
         unsigned kind,source,base,x,y,graphs;Scope144Measurements m={0};
@@ -342,7 +378,7 @@ int main(void)
             Find(172,216,"Vo 1.4V");
             for(x=137;x<170;++x)for(y=216;y<227;++y)CHECK(screen[x][y]==0x1234);
             for(x=91;x<307;++x)for(y=0;y<12;++y)CHECK(screen[x][y]==0xf81f);
-            graphs=graph_calls;draws=formatted=0;Twink=!Twink;Menu144_View(&m,0,0,1,50,0);
+            graphs=graph_calls;draws=formatted=0;Twink=!Twink;Menu144_View(&m,0,0,1,0);
             CHECK(graph_calls==graphs);Find(373,228,edge[kind]);
             for(x=91;x<307;++x)for(y=0;y<12;++y)CHECK(screen[x][y]==0xf81f);
             if(source!=TRACK1) {
@@ -379,14 +415,14 @@ int main(void)
             CheckGeneratorValueBackgrounds();
             CHECK(painted[Find(239,228,kinds[kind])].color==(kind==5?0x0504:0x050f));
             graphs=graph_calls;draws=formatted=0;Twink=!Twink;
-            Menu144_View(&m,0,0,1,50,0);CHECK(graph_calls==graphs);
+            Menu144_View(&m,0,0,1,0);CHECK(graph_calls==graphs);
             for(x=91;x<307;++x)for(y=0;y<12;++y)CHECK(screen[x][y]==0xf81f);
             /* HOLD overview changes while GEN is selected update the graphic
              * alone. RUN still has a waveform without a selection box. */
             if(state==HOLD) {
                 overview_visible=1;overview_first=overview_first<290?overview_first+1:91;
                 overview_last=overview_first+8;titles=title_calls;
-                draws=formatted=0;Menu144_View(&m,0,0,1,50,0);
+                draws=formatted=0;Menu144_View(&m,0,0,1,0);
                 CHECK(graph_calls==graphs+1 && title_calls==titles);
                 for(x=91;x<307;++x)for(y=0;y<12;++y)CHECK(screen[x][y]==0xf81f);
             }
@@ -416,7 +452,7 @@ int main(void)
         for(detail=0;detail<Scope144_DetailLimit(group);++detail) {
             _State.Value=(s16)state;Draw(group,detail,1);
             for(x=91;x<307;++x)for(y=0;y<12;++y)CHECK(screen[x][y]==0xf81f);
-            draws=formatted=0;Twink=!Twink;Menu144_View(&m,0,0,1,50,0);
+            draws=formatted=0;Twink=!Twink;Menu144_View(&m,0,0,1,0);
             for(x=91;x<307;++x)for(y=0;y<12;++y)CHECK(screen[x][y]==0xf81f);
         }
     }
@@ -436,12 +472,44 @@ int main(void)
       _Kind=6;Draw(OUTPUT,FRQN,1);Current=TRACK1;Detail[TRACK1]=COUPLE;
       for(g=0;g<13;++g)for(d=0;d<4;++d)Title[g][d].Flag=0;
       UiCommon_ModeTransition();draws=formatted=0;
-      Menu144_View(&m,0,0,0,50,1);
+      Menu144_View(&m,0,0,0,1);
       for(n=0;n<draws;++n)CHECK(!(painted[n].x==239 && painted[n].y>=216));
-      Twink=!Twink;draws=formatted=0;Menu144_View(&m,0,0,0,50,0);
+      Twink=!Twink;draws=formatted=0;Menu144_View(&m,0,0,0,0);
       for(n=0;n<draws;++n)CHECK(!(painted[n].x==239 && painted[n].y>=216));
       Title[OUTPUT][KIND].Flag|=UPDAT;draws=formatted=0;
-      Menu144_View(&m,0,0,0,50,1);Find(239,228,kinds[Generator_DisplayKind()]);
+      Menu144_View(&m,0,0,0,1);Find(239,228,kinds[Generator_DisplayKind()]);
+    }
+    /* Raw ADC saturation must appear without a key press, blink transition
+     * or full redraw; OFFSCREEN alone has no raw clipping event. */
+    { Scope144Measurements m={0};unsigned calls;
+      Current=TRIGG;Detail[TRIGG]=0;fixture_clip[0]=fixture_clip[1]=0;
+      Menu144_Presentation(0);Menu144_View(&m,0,0,1,2);
+      CHECK(!strcmp(Menu_ChannelSource(0),sources[_1_source]));
+      calls=title_calls;draws=0;m.clips=1;m.clip_rails=1;
+      Menu144_View(&m,0,0,1,0);Find(35,228,"ACLIP-");CHECK(title_calls==calls+1);
+      _State.Value=HOLD;draws=0;Menu144_View(&m,0,0,1,2);Find(35,228,"ACLIP-");
+      m.clip_rails=2;draws=0;Menu144_View(&m,0,0,1,0);Find(35,228,"ACLIP+");
+      m.clip_rails=3;draws=0;Menu144_View(&m,0,0,1,0);Find(35,228,"ACLIP*");
+      {Scope144Measurements inverted;unsigned rail,factor;
+       for(rail=1;rail<4;++rail)for(factor=0;factor<2;++factor){
+        m.clip_rails=rail;CHECK(Scope144_Scale(&m,factor?-10:-1,&inverted));
+        CHECK(inverted.clips==m.clips && inverted.clip_rails==(((rail&1)<<1)|((rail&2)>>1)));
+        draws=0;Menu144_View(&inverted,0,0,1,0);
+        CHECK(!strcmp(Menu_ChannelSource(0),rail==1?"ACLIP+":rail==2?"ACLIP-":"ACLIP*"));
+       }}
+      m.clips=0;m.clip_rails=0;draws=0;Menu144_View(&m,0,0,1,0);Find(35,228,sources[_1_source]);
+      m.clips=2;m.clip_rails=3;Menu144_View(&m,0,0,1,0);draws=0;Menu144_View(&m,0,0,0,0);
+      Find(35,228,sources[_1_source]);
+      /* Normal warnings remain channel-specific and independent of the
+       * interlace measurement cached by this renderer. */
+      fixture_clip[1]=2;CHECK(!strcmp(Menu_ChannelSource(1),"BCLIP+"));fixture_clip[1]=0;
+    }
+    {unsigned i,j;Current=T_BASE;OffsetSelect=2;PPM_Comp=-999;
+     draws=0;CHECK(UiCommon_ServiceTitle());i=Find(127,0,"Clock PPM Adj=-999  ");
+     CHECK(painted[i].mode==PRN);OffsetSelect=1;ADCoffset=0;draws=0;
+     CHECK(UiCommon_ServiceTitle());Find(127,0,"ADCoffset= 00       ");
+     for(i=127+13*8+1;i<287;++i)for(j=0;j<11;++j)CHECK(!screen[i][j]);
+     OffsetSelect=0;CHECK(!UiCommon_ServiceTitle());
     }
     printf("PASS shared 144 UI: %u checks; all generator kinds/details, persistent footer and upper field ownership, blink, RUN/HOLD, pulse context, meters, bounds\n",checks);
     return 0;

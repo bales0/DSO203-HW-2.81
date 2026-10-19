@@ -125,12 +125,13 @@ Capture144Status Capture144_Abort(Capture144Session *s)
 }
 Capture144Status Capture144_Begin(Capture144Session *s,const FpgaProfile *profile,
     const Capture144AsyncOps *ops,uint32_t *words,uint32_t epoch,uint64_t period,
-    uint32_t wait_timeout,uint32_t read_timeout,CaptureWindow *window)
+    uint32_t wait_timeout,uint32_t read_timeout,unsigned pretrigger,CaptureWindow *window)
 {
     const Capture144WordOps *io;
     Capture144Status check;
     if(!s || !profile || !ops || !window || !words || s->stage || !period ||
-        !wait_timeout || wait_timeout>0x7fffffffu || !read_timeout || read_timeout>0x7fffffffu)
+        !wait_timeout || wait_timeout>0x7fffffffu || !read_timeout || read_timeout>0x7fffffffu ||
+        Capture144_TriggerPosition(pretrigger,0,0,0)==UINT32_MAX)
         return CAPTURE144_ARGUMENT;
     io=&ops->io;
     if(!io->configure || !io->start || !io->status || !io->read_word || !io->now ||
@@ -142,11 +143,13 @@ Capture144Status Capture144_Begin(Capture144Session *s,const FpgaProfile *profil
         Overlaps(words,16384,ops,sizeof *ops) || Overlaps(words,16384,profile,sizeof *profile))
         return CAPTURE144_ARGUMENT;
     CaptureWindow_Reset(window,epoch,CAPTURE_WINDOW_ERROR);
-    if(!Interlace144_Available(profile))return CAPTURE144_UNSUPPORTED;
+    if(!Interlace144_Available(profile) ||
+        (pretrigger!=CAPTURE144_DEFAULT_PRETRIGGER && profile->kind!=FPGA_W12))return CAPTURE144_UNSUPPORTED;
     memset(s,0,sizeof *s);s->ops=*ops;s->words=words;s->window=window;s->epoch=epoch;
-    s->period=period;s->wait_timeout=wait_timeout;s->read_timeout=read_timeout;s->stage=1;
+    s->pretrigger=pretrigger;s->period=period;s->wait_timeout=wait_timeout;s->read_timeout=read_timeout;s->stage=1;
     s->started=io->now(io->user);window->status=CAPTURE_WINDOW_ARMED;
-    window->trigger_kind=CAPTURE_TRIGGER_HARDWARE_A;window->trigger_q16=295u*65536u;
+    window->trigger_kind=CAPTURE_TRIGGER_HARDWARE_A;
+    window->trigger_q16=Capture144_TriggerPosition(pretrigger,0,0,0);
     check=WordCheck(io,s->started,wait_timeout);
     if(check!=CAPTURE144_OK)return EndSession(s,check);
     if(!io->configure(io->user))return EndSession(s,CAPTURE144_IO);
@@ -159,7 +162,7 @@ int Capture144_DigitalTrigger(Capture144Session *s,unsigned channel,int32_t shif
 {
     if(!s || s->stage!=1 || s->index || channel>1 || shift<-(32*65536) || shift>32*65536)return 0;
     s->window->trigger_kind=(uint8_t)(CAPTURE_TRIGGER_HARDWARE_C+channel);
-    s->window->trigger_q16=(uint32_t)(294*65536+shift)-s->trigger_delay*65536u;return 1;
+    s->window->trigger_q16=Capture144_TriggerPosition(s->pretrigger,channel+2,s->trigger_delay?4:0,shift);return 1;
 }
 int Capture144_TriggerKind(Capture144Session *s,unsigned kind)
 {
@@ -183,7 +186,7 @@ Capture144Status Capture144_Poll(Capture144Session *s,unsigned budget)
     if(s->stage==1) {
         if((status&0x2cu)!=0x2cu)return CAPTURE144_PENDING;
         /* Full is not enough: require the real Start and Ready as well.
-         * One separate prime loads Bptr-150. The first two data words are
+         * One separate prime loads Bptr-PerCnt. The first two data words are
          * overwritten after Full; the remaining prehistory is valid. */
         s->stage=2;s->started=io->now(io->user);
         if(!io->read_word(io->user,&word))return EndSession(s,CAPTURE144_IO);
@@ -203,7 +206,7 @@ Capture144Status Capture144_Poll(Capture144Session *s,unsigned budget)
     s->window->valid_begin=2;s->window->valid_words=4094;s->window->time_samples=8188;
     s->window->fifo_status=status;s->window->sample_phase=CAPTURE_PHASE_B_A;
     /* Coordinates were frozen before the first read. Edge/level events are
-     * raw word 149; pulse closing edges raw 148. A occupies its odd B->A
+     * raw word PerCnt-1; pulse closing edges PerCnt-2. A occupies its odd B->A
      * slot; C/D use their own alignment policy, with the same pulse delay. */
     s->window->flags=CAPTURE_WINDOW_TRUNCATED|CAPTURE_WINDOW_HAS_TRIGGER|CAPTURE_WINDOW_PRETRIGGER;
     s->window->status=CAPTURE_WINDOW_READY;s->stage=0;

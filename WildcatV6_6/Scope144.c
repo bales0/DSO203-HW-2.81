@@ -1,3 +1,6 @@
+#if defined(__GNUC__)
+#pragma GCC optimize ("Os")
+#endif
 #include "Scope144.h"
 #include "UiCommon.h"
 #include <string.h>
@@ -5,6 +8,73 @@
 static int clock_ppm;
 static int32_t RoundRatio(int64_t n,int64_t d)
 { return (int32_t)(n>=0?(n+d/2)/d:-((-n+d/2)/d)); }
+int CalNative_Command(int adc_offset,int correction,int ypos)
+{
+    int command=(int)Scope144_Command(adc_offset)+RoundRatio((int64_t)(1024+correction)*(ypos-40),1024);
+    if(command<0)command=0;
+    if(command>200)command=200;
+    return command;
+}
+static uint32_t native_windows[2][8],native_battery[2];
+static int8_t native_correction[2][8][2];
+void Scope144_NativeBank(const Scope144Bank *bank)
+{
+    unsigned i;
+    memset(native_windows,0,sizeof(native_windows));memset(native_battery,0,sizeof(native_battery));
+    if(!bank)return;
+    for(i=0;i<16;++i) {
+        const Scope144Cal *c=i<8?&bank->range[i]:&bank->high[i-8];
+        if(Scope144_Valid(c)) {
+            native_windows[i/8][i%8]=c->dac_window;
+            native_correction[i/8][i%8][0]=(int8_t)(c->dac_anchor>>16);
+            native_correction[i/8][i%8][1]=(int8_t)(c->dac_anchor>>24);
+        }
+    }
+    native_battery[0]=bank->battery[0];native_battery[1]=bank->battery[1];
+}
+unsigned Scope144_NativeProfiles(unsigned range)
+{ return range<8?((!!native_windows[0][range]) | (!!native_windows[1][range]<<1)):0; }
+int CalNative_Interpolate(int low,int high,unsigned lo,unsigned hi,unsigned battery)
+{
+    if(hi<=lo || battery<=lo)return low;
+    if(battery>=hi)return high;
+    return low+RoundRatio((int64_t)(high-low)*(battery-lo),hi-lo);
+}
+int CalNative_Position(unsigned range,unsigned ch,int offset,int correction,int ypos,unsigned battery,unsigned *command)
+{
+    int lo=CalNative_Command(offset,correction,25),hi=CalNative_Command(offset,correction,100);
+    unsigned a=0,b=1;int target,effective;
+    if(range<8 && ch<2) {
+        uint32_t w;
+        if(native_battery[0]>native_battery[1]){a=1;b=0;}
+        if(!native_windows[a][range])a=b;
+        if(!native_windows[b][range])b=a;
+        if(battery<=native_battery[a])b=a;
+        else if(battery>=native_battery[b])a=b;
+        w=native_windows[a][range];
+        if(w && native_windows[b][range]) {
+            int l2=(native_windows[b][range]>>(ch*16))&255u;
+            correction=CalNative_Interpolate(native_correction[a][range][ch],native_correction[b][range][ch],native_battery[a],native_battery[b],battery);
+            int h2=(native_windows[b][range]>>(ch*16+8))&255u;
+            lo=(w>>(ch*16))&255u;hi=(w>>(ch*16+8))&255u;
+            if(l2>lo)lo=l2;
+            if(h2<hi)hi=h2;
+        }
+    }
+    target=CalNative_Command(offset,correction,ypos);
+    if(target<lo)target=lo;
+    if(target>hi)target=hi;
+    effective=ypos;
+    if(CalNative_Command(offset,correction,ypos)!=target || !target || target==200 || ypos<10 || ypos>190) {
+        effective=40+RoundRatio((int64_t)(target-offset-40)*1024,1024+correction);
+        if(effective<10)effective=10;
+        if(effective>190)effective=190;
+        while(effective<190 && CalNative_Command(offset,correction,effective)<lo)++effective;
+        while(effective>10 && CalNative_Command(offset,correction,effective)>hi)--effective;
+    }
+    if(command)*command=(unsigned)CalNative_Command(offset,correction,effective);
+    return effective;
+}
 int Scope144_SetClock(int ppm) { clock_ppm=(ppm>=-999 && ppm<=999)?ppm:0; return clock_ppm; }
 uint32_t Scope144_Crc(const void *data, uint32_t count)
 {
@@ -27,6 +97,11 @@ int Scope144_Valid(const Scope144Cal *c)
         c->ref_dac_a_q10>=512 && c->ref_dac_a_q10<=2048 &&
         c->ref_dac_b_q10>=512 && c->ref_dac_b_q10<=2048 &&
         c->adc_offset>=0 && c->adc_offset<=54 &&
+        ((!c->dac_window && !c->dac_anchor) || ((c->dac_window&255u)<((c->dac_window>>8)&255u) &&
+         ((c->dac_window>>16)&255u)<(c->dac_window>>24) && ((c->dac_window>>8)&255u)<=200 &&
+         (c->dac_window>>24)<=200 && (c->dac_anchor&255u)>=(c->dac_window&255u) &&
+         (c->dac_anchor&255u)<=((c->dac_window>>8)&255u) && ((c->dac_anchor>>8)&255u)>=((c->dac_window>>16)&255u) &&
+         ((c->dac_anchor>>8)&255u)<=(c->dac_window>>24))) &&
         c->reference_uv>=1000 && c->reference_uv<=60000000 &&
         (int64_t)c->reference_uv*1024<=(int64_t)c->span_q10*800000;
 }
@@ -72,7 +147,7 @@ void Scope144_Relative(const Scope144Cal *c,unsigned range,Interlace144Calibrati
 static void Put(uint8_t *p,uint32_t v) { unsigned i; for(i=0;i<4;++i) p[i]=(uint8_t)(v>>(i*8)); }
 static uint32_t Get(const uint8_t *p) { return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24); }
 typedef char Scope144RecordSize[(sizeof(Scope144Cal)==SCOPE144_RECORD_BYTES)?1:-1];
-/* Explicit little-endian v3; 40-byte header + 16*52-byte records + padding + CRC. */
+/* Explicit little-endian v4; 40-byte header + 16*60-byte records + padding + CRC. */
 int Scope144_Encode(const Scope144Bank *bank,uint32_t serial,uint8_t out[SCOPE144_CAL_BYTES])
 {
     unsigned i,j;const Scope144Cal *c;uint8_t *p;
@@ -88,13 +163,14 @@ int Scope144_Encode(const Scope144Bank *bank,uint32_t serial,uint8_t out[SCOPE14
     Put(out+16,bank->generation);Put(out+20,SCOPE144_CAL_BYTES);
     Put(out+24,bank->battery[0]);Put(out+28,bank->battery[1]);Put(out+32,bank->native_crc);
     for(i=0;i<16;++i) {
-        int32_t fields[13];c=i<8?&bank->range[i]:&bank->high[i-8];p=out+40+i*SCOPE144_RECORD_BYTES;
+        int32_t fields[15];c=i<8?&bank->range[i]:&bank->high[i-8];p=out+40+i*SCOPE144_RECORD_BYTES;
         if(!c->valid)continue;
         fields[0]=c->gain_q10;fields[1]=c->bias_q10;fields[2]=c->zero_q10;fields[3]=c->span_q10;
         fields[4]=c->reference_uv;fields[5]=1;fields[6]=c->a_gain_q10;fields[7]=c->a_bias_q10;
         fields[8]=c->dac_a_q10;fields[9]=c->dac_b_q10;fields[10]=c->adc_offset;
         fields[11]=c->ref_dac_a_q10;fields[12]=c->ref_dac_b_q10;
-        for(j=0;j<13;++j)Put(p+j*4,(uint32_t)fields[j]);
+        fields[13]=(int32_t)c->dac_anchor;fields[14]=(int32_t)c->dac_window;
+        for(j=0;j<15;++j)Put(p+j*4,(uint32_t)fields[j]);
     }
     Put(out+1020,Scope144_Crc(out,1020));return 1;
 }
@@ -109,62 +185,99 @@ static void DecodeCal(const uint8_t *p,Scope144Cal *c)
 }
 int Scope144_Decode(const uint8_t in[SCOPE144_CAL_BYTES],uint32_t serial,Scope144Bank *bank)
 {
-    unsigned i;Scope144Cal c;
+    unsigned i,stride;Scope144Cal c;
     if(!in || !bank || memcmp(in,"I144",4) || Get(in+4)!=SCOPE144_CAL_VERSION || Get(in+8)!=serial ||
         Get(in+12)!=SCOPE144_IMAGE_CRC || Get(in+20)!=SCOPE144_CAL_BYTES ||
         Get(in+1020)!=Scope144_Crc(in,1020))return 0;
+    stride=SCOPE144_RECORD_BYTES;
     for(i=36;i<40;++i)if(in[i])return 0;
-    for(i=40+16*SCOPE144_RECORD_BYTES;i<1020;++i)if(in[i])return 0;
+    for(i=40+16*stride;i<1020;++i)if(in[i])return 0;
     for(i=0;i<16;++i) {
-        const uint8_t *p=in+40+i*SCOPE144_RECORD_BYTES;unsigned j;DecodeCal(p,&c);
+        const uint8_t *p=in+40+i*stride;unsigned j;DecodeCal(p,&c);
+        c.dac_anchor=Get(p+52);c.dac_window=Get(p+56);
         if(c.valid>1 || (c.valid && (!Scope144_Valid(&c) || Get(in+24+(i/8)*4)<2800 || Get(in+24+(i/8)*4)>5200)))return 0;
-        if(!c.valid)for(j=0;j<SCOPE144_RECORD_BYTES;++j)if(p[j])return 0;
+        if(!c.valid)for(j=0;j<stride;++j)if(p[j])return 0;
     }
     memset(bank,0,sizeof(*bank));bank->generation=Get(in+16);
     bank->battery[0]=Get(in+24);bank->battery[1]=Get(in+28);bank->native_crc=Get(in+32);
-    for(i=0;i<16;++i)DecodeCal(in+40+i*SCOPE144_RECORD_BYTES,i<8?&bank->range[i]:&bank->high[i-8]);
+    for(i=0;i<16;++i) {
+        Scope144Cal *out=i<8?&bank->range[i]:&bank->high[i-8];
+        const uint8_t *p=in+40+i*stride;DecodeCal(p,out);
+        out->dac_anchor=Get(p+52);out->dac_window=Get(p+56);
+    }
     return 1;
 }
 unsigned Scope144_Command(int adc_offset)
 { return adc_offset>=0 && adc_offset<=54?(unsigned)adc_offset+SCOPE144_PIVOT:0; }
 static int32_t Blend(int32_t a,int32_t b,uint32_t weight)
 { return a+(int32_t)(((int64_t)b-a)*weight/65536); }
-static int Rebase(const Scope144Cal *c,int offset,Scope144Cal *out)
+static int Rebase(const Scope144Cal *c,int offset,int ypos,Scope144Cal *out,unsigned commands[2],const unsigned fixed[2])
 {
-    int delta=offset-c->adc_offset;*out=*c;
-    if(!delta)return 1; /* Preserve the measured anchor exactly. */
+    int delta=offset-c->adc_offset,db=delta;unsigned ch,anchors=0;*out=*c;
+    for(ch=0;ch<2;++ch) {
+        int command=offset+40,anchor=c->adc_offset+40;
+        if(c->dac_window) {
+            int k=(int8_t)(c->dac_anchor>>(16+ch*8));
+            int64_t d=(int64_t)(1024+k)*(ypos-40);
+            command+=RoundRatio(d,1024);anchor=(c->dac_anchor>>(ch*8))&255u;
+        } else if(command<40 || command>94)return 0;
+        if(fixed)command=(int)fixed[ch];
+        if(!c->dac_window && (command<40 || command>94))return 0;
+        anchors|=(unsigned)command<<(ch*8);
+        if(c->dac_window && (command<(int)((c->dac_window>>(ch*16))&255u) || command>(int)((c->dac_window>>(ch*16+8))&255u)))return 0;
+        if(commands)commands[ch]=(unsigned)command;
+        if(ch)db=command-anchor;else delta=command-anchor;
+    }
+    if(c->dac_window)out->dac_anchor=(c->dac_anchor&0xffff0000u)|anchors;
+    if(!delta && !db)return 1; /* Preserve the measured anchor exactly. */
     if(c->ref_dac_a_q10==c->dac_a_q10 && c->ref_dac_b_q10==c->dac_b_q10) {
         /* Preserve the previous rounding when the two responses coincide. */
-        out->bias_q10+=(int32_t)((int64_t)delta*(c->dac_a_q10-(int64_t)c->dac_b_q10*c->gain_q10/1024));
+        out->bias_q10+=(int32_t)((int64_t)delta*c->dac_a_q10-(int64_t)db*c->dac_b_q10*c->gain_q10/1024);
         out->a_bias_q10-=(int32_t)((int64_t)delta*c->dac_a_q10*c->a_gain_q10/1024);
     } else {
         int32_t za=(int32_t)(((int64_t)c->zero_q10-c->a_bias_q10)*1024/c->a_gain_q10);
         int32_t zb=(int32_t)(((int64_t)za-c->bias_q10)*1024/c->gain_q10);
         int32_t da=(int32_t)((int64_t)c->span_q10*1024/c->a_gain_q10);
-        int32_t db=(int32_t)((int64_t)da*1024/c->gain_q10);
+        int32_t span_b=(int32_t)((int64_t)da*1024/c->gain_q10);
         /* Rebase BOTH measured endpoints. Their difference changes when
          * reference and ground have distinct offset slopes. */
-        za+=delta*c->dac_a_q10;zb+=delta*c->dac_b_q10;
+        za+=delta*c->dac_a_q10;zb+=db*c->dac_b_q10;
         da+=delta*(c->ref_dac_a_q10-c->dac_a_q10);
-        db+=delta*(c->ref_dac_b_q10-c->dac_b_q10);
-        if(da<8*1024 || db<8*1024 || da>235*1024 || db>235*1024)return 0;
-        out->gain_q10=RoundRatio((int64_t)da*1024,db);
+        span_b+=db*(c->ref_dac_b_q10-c->dac_b_q10);
+        if(da<8*1024 || span_b<8*1024 || da>235*1024 || span_b>235*1024)return 0;
+        out->gain_q10=RoundRatio((int64_t)da*1024,span_b);
         out->bias_q10=za-RoundRatio((int64_t)zb*out->gain_q10,1024);
         out->a_gain_q10=RoundRatio((int64_t)c->span_q10*1024,da);
         out->a_bias_q10=c->zero_q10-RoundRatio((int64_t)za*out->a_gain_q10,1024);
     }
     out->adc_offset=offset;return Scope144_Valid(out);
 }
-int Scope144_Select(const Scope144Bank *bank,unsigned range,int offset,uint32_t battery,Scope144Cal *out)
+static int Select(const Scope144Bank *bank,unsigned range,int offset,uint32_t battery,int ypos,Scope144Cal *out,unsigned commands[2])
 {
-    Scope144Cal a,b;uint32_t weight;int va,vb;
+    Scope144Cal a,b;uint32_t weight;int va,vb;unsigned ca[2],cb[2],fixed[2],ch;
     if(!bank || !out || range>=8 || !Scope144_Command(offset) || battery<2800 || battery>5200)return 0;
     va=Scope144_Valid(&bank->range[range]) && bank->battery[0]>=2800 && bank->battery[0]<=5200;
     vb=Scope144_Valid(&bank->high[range]) && bank->battery[1]>=2800 && bank->battery[1]<=5200;
     if(!va && !vb)return 0;
-    if(va)va=Rebase(&bank->range[range],offset,&a);
-    if(vb)vb=Rebase(&bank->high[range],offset,&b);
+    if(commands) {
+        uint32_t lo=bank->battery[0],hi=bank->battery[1];
+        weight=!va?65536:!vb || lo==hi?0:
+            lo<hi?(battery<=lo?0:battery>=hi?65536:(battery-lo)*65536/(hi-lo)):
+            (battery<=hi?65536:battery>=lo?0:(lo-battery)*65536/(lo-hi));
+        for(ch=0;ch<2;++ch) {
+            int ka=(int8_t)(bank->range[range].dac_anchor>>(16+ch*8));
+            int kb=(int8_t)(bank->high[range].dac_anchor>>(16+ch*8));
+            int k=!va?kb:!vb?ka:lo<=hi?CalNative_Interpolate(ka,kb,lo,hi,battery):CalNative_Interpolate(kb,ka,hi,lo,battery),command=offset+40;
+            if((va && bank->range[range].dac_window) || (vb && bank->high[range].dac_window))
+                command+=RoundRatio((int64_t)(1024+k)*(ypos-40),1024);
+            if(command<0 || command>200)return 0;
+            fixed[ch]=(unsigned)command;
+        }
+    }
+    if(va)va=Rebase(&bank->range[range],offset,ypos,&a,ca,commands?fixed:0);
+    if(vb)vb=Rebase(&bank->high[range],offset,ypos,&b,cb,commands?fixed:0);
     if(!va && !vb)return 0;
+    if(commands){commands[0]=va?ca[0]:cb[0];commands[1]=va?ca[1]:cb[1];}
     if(!va){*out=b;return Scope144_Valid(out)?1:0;}
     if(!vb || bank->battery[0]==bank->battery[1]){*out=a;return Scope144_Valid(out)?1:0;}
     if(bank->battery[0]>bank->battery[1]){Scope144Cal swap=a;a=b;b=swap;}
@@ -196,11 +309,20 @@ int Scope144_Select(const Scope144Bank *bank,unsigned range,int offset,uint32_t 
         out->a_gain_q10=RoundRatio((int64_t)out->span_q10*1024,da);
         out->a_bias_q10=out->zero_q10-RoundRatio((int64_t)za*out->a_gain_q10,1024);
     }
+    if(out->dac_window) {
+        int ka=(int8_t)(a.dac_anchor>>16)+RoundRatio((int64_t)((int8_t)(b.dac_anchor>>16)-(int8_t)(a.dac_anchor>>16))*weight,65536);
+        int kb=(int8_t)(a.dac_anchor>>24)+RoundRatio((int64_t)((int8_t)(b.dac_anchor>>24)-(int8_t)(a.dac_anchor>>24))*weight,65536);
+        out->dac_anchor=(out->dac_anchor&65535u)|((uint32_t)(uint8_t)ka<<16)|((uint32_t)(uint8_t)kb<<24);
+    }
     out->dac_a_q10=Blend(a.dac_a_q10,b.dac_a_q10,weight);out->dac_b_q10=Blend(a.dac_b_q10,b.dac_b_q10,weight);
     out->ref_dac_a_q10=Blend(a.ref_dac_a_q10,b.ref_dac_a_q10,weight);
     out->ref_dac_b_q10=Blend(a.ref_dac_b_q10,b.ref_dac_b_q10,weight);
     return Scope144_Valid(out)?2:0;
 }
+int Scope144_Select(const Scope144Bank *bank,unsigned range,int offset,uint32_t battery,Scope144Cal *out)
+{ return Select(bank,range,offset,battery,40,out,0); }
+int Scope144_SelectAt(const Scope144Bank *bank,unsigned range,int offset,uint32_t battery,int ypos,Scope144Cal *out,unsigned commands[2])
+{ return Select(bank,range,offset,battery,ypos,out,commands); }
 int Scope144_Normalize(const Scope144Cal *cal,int32_t *q,unsigned count)
 {
     unsigned i;if(!Scope144_Valid(cal) || !q || count>1024)return 0;
@@ -228,36 +350,52 @@ static uint32_t Sqrt(uint64_t value)
     while(bit) { if(value>=root+bit) { value-=root+bit; root=(root>>1)+bit; } else root>>=1; bit>>=2; }
     return (uint32_t)root;
 }
-int Scope144_MeasureSource(const Scope144Cal *cal,const Scope144Source *source,unsigned clips,Scope144Measurements *out)
+/* NULL collects raw clipping from the validated reader; the legacy API
+ * supplies its explicit count unchanged. The requested timing pass is
+ * independent of raw clipping. The existing extra region holds this core;
+ * installation region addresses and limits remain unchanged. */
+static int __attribute__((section(".text.scope144_measure"),optimize("O2"))) MeasureSource(const Scope144Cal *cal,const Scope144Source *source,const unsigned *known_clips,Scope144Measurements *out,unsigned timing)
 {
-    Scope144Measurements m; unsigned i,count,edges=0; int64_t sum=0,center,d;
-    uint64_t square=0,first=0,last=0,pos,high=0,rise=0; int32_t lo,hi,threshold,q,previous;
+    Scope144Measurements m; unsigned i,count,edges=0,rails=0,clips=known_clips?*known_clips:0; int status; int64_t sum=0,center,d;
+    uint64_t square=0,first=0,last=0,pos,high=0,rise=0,pending_high=0; int32_t lo,hi,threshold,q,previous;
     if(!Scope144_Valid(cal) || !source || !source->read || !out || source->count<16 ||
         source->count>SCOPE144_MAX_SAMPLES || source->period_ps_q16>8000ULL*65536 ||
         (source->period_ps_q16 && source->period_ps_q16<6000ULL*65536)) return 0;
     count=source->count;
-    if(!source->read(source->user,0,&q))return 0;
-    lo=hi=q;
-    for(i=0;i<count;++i) {
+    status=source->read(source->user,0,&q);
+    if(!status)return 0;
+    lo=hi=previous=q;
+    for(i=0;;) {
         /* Acquisition corrections have a tighter bound than arbitrary int32 input. */
-        if(!source->read(source->user,i,&q) || q<-4000000 || q>4000000) return 0;
+        if(q<-4000000 || q>4000000) return 0;
+        if(!known_clips)clips+=!!(status&2);
+        rails|=((unsigned)status>>2)&3u;
         if(q<lo)lo=q;
         if(q>hi)hi=q;
         d=(int64_t)q-cal->zero_q10; sum+=d; square+=(uint64_t)(d*d);
+        if(++i==count)break;
+        status=source->read(source->user,i,&q);
+        if(!status)return 0;
     }
-    memset(&m,0,sizeof(m)); m.samples=count; m.clips=clips;
+    memset(&m,0,sizeof(m)); m.samples=count; m.clips=clips;m.clip_rails=rails;
     m.minimum_uv=Scope144_Voltage(cal,lo); m.maximum_uv=Scope144_Voltage(cal,hi);
     center=sum/count; m.average_uv=Scope144_Voltage(cal,(int32_t)center+cal->zero_q10);
     {uint64_t rms=(uint64_t)Sqrt(square/count)*cal->reference_uv/cal->span_q10;
      m.rms_uv=rms>INT32_MAX?INT32_MAX:(int32_t)rms;}
+    if(!timing){*out=m;return 1;}
     threshold=lo+(hi-lo)/2;
-    if(!source->read(source->user,0,&previous))return 0;
+    /* The source is immutable for this call; reuse its first sample. */
     for(i=1;i<count;++i) {
         if(!source->read(source->user,i,&q))return 0;
         if(previous<threshold && q>=threshold && hi-lo>=10*1024) {
             pos=((uint64_t)(i-1)<<16)+((uint64_t)(threshold-previous)<<16)/(q-previous);
             if(!edges)first=pos;
+            else high+=pending_high;
+            pending_high=0;rise=pos;
             last=pos; ++edges;
+        } else if(previous>=threshold && q<threshold && edges) {
+            pos=((uint64_t)(i-1)<<16)+((uint64_t)(previous-threshold)<<16)/(previous-q);
+            if(pos>=rise)pending_high+=pos-rise;
         }
         previous=q;
     }
@@ -271,25 +409,25 @@ int Scope144_MeasureSource(const Scope144Cal *cal,const Scope144Source *source,u
             m.frequency_hz=(uint32_t)(((uint64_t)(144u*(1000000+clock_ppm))<<16)/period);
             m.period_ps=(uint32_t)(period*62500*1000000/((uint64_t)9*65536*(1000000+clock_ppm)));
         }
-        /* Integrate high time over complete cycles only; exclude record ends. */
-        rise=first;
-        if(!source->read(source->user,0,&previous))return 0;
-        for(i=1;i<count;++i) {
-            if(!source->read(source->user,i,&q))return 0;
-            if(previous<threshold && q>=threshold) {
-                pos=((uint64_t)(i-1)<<16)+((uint64_t)(threshold-previous)<<16)/(q-previous);
-                if(pos>=first && pos<=last)rise=pos;
-            } else if(previous>=threshold && q<threshold) {
-                pos=((uint64_t)(i-1)<<16)+((uint64_t)(previous-threshold)<<16)/(previous-q);
-                if(pos>first && pos<=last && pos>=rise)high+=pos-rise;
-            }
-            previous=q;
-        }
+        /* Commit high time only when the next rising edge closes a cycle.
+         * The pending tail after the last rise is excluded exactly as before. */
         m.duty_ppm=(uint32_t)(high*1000000/(last-first));
         m.high_ps=(uint32_t)((uint64_t)m.period_ps*m.duty_ppm/1000000);
         m.low_ps=m.period_ps-m.high_ps;
     }
     *out=m; return 1;
+}
+int Scope144_MeasureSource(const Scope144Cal *cal,const Scope144Source *source,unsigned clips,Scope144Measurements *out)
+{
+    return MeasureSource(cal,source,&clips,out,1);
+}
+int Scope144_MeasureSourceClipped(const Scope144Cal *cal,const Scope144Source *source,Scope144Measurements *out)
+{
+    return MeasureSource(cal,source,0,out,1);
+}
+int Scope144_MeasureSourceRequested(const Scope144Cal *cal,const Scope144Source *source,unsigned timing,Scope144Measurements *out)
+{
+    return MeasureSource(cal,source,0,out,timing);
 }
 static int ArrayRead(const void *user,unsigned i,int32_t *q)
 { *q=((const int32_t *)user)[i];return 1; }
@@ -383,6 +521,7 @@ int Scope144_Scale(const Scope144Measurements *in,int factor,Scope144Measurement
     Scope144Measurements next; int64_t minimum,maximum,average,rms;
     if(!in || !out || (factor!=1 && factor!=-1 && factor!=10 && factor!=-10))return 0;
     next=*in;
+    if(factor<0)next.clip_rails=((in->clip_rails&1u)<<1)|((in->clip_rails&2u)>>1);
     minimum=(int64_t)(factor<0?in->maximum_uv:in->minimum_uv)*factor;
     maximum=(int64_t)(factor<0?in->minimum_uv:in->maximum_uv)*factor;
     average=(int64_t)in->average_uv*factor; rms=(int64_t)in->rms_uv*(factor<0?-factor:factor);
@@ -487,7 +626,7 @@ unsigned Scope144_GroupStep(unsigned group,int delta)
 unsigned Scope144_DetailLimit(unsigned group)
 {
     if(group==8)return 2;
-    if(group==10)return 3;
+    if(group==6 || group==10)return 3;
     if(group<=3 || group==5 || group==6 || group==7 || group==8 || group==9 || group==10)return 4;
     if(group==11 || group==12 || (group>=13 && group<=21))return 2;
     return 1;

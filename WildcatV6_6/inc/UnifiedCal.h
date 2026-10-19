@@ -44,6 +44,7 @@ typedef struct {
     int32_t reference,zero_ref[8][2],zero_low[8][2],zero_high[8][2],zero144[8][2];
     int32_t dac144[8][2];
     CalMean dac144_low[8],dac144_high[8];
+    uint16_t working_y[8][4];
     /* Current reference curve/verification, kept in the wizard DataBuf. */
     int32_t ref_dac144[2];CalMean ref144_low,ref144_high,ref144_verify[4];
     CalCaptureStats ref144_stats[4];
@@ -71,7 +72,7 @@ int CalNative_Uncorrect(int display,int ypos,int zero,unsigned gain);
 int CalNative_Threshold(int display,int ypos,int zero,unsigned gain,int adc_offset,int inverted);
 int CalNative_Correct(int raw_minus_offset,int ypos,int zero,unsigned gain);
 int CalNative_Command(int adc_offset,int correction,int ypos);
-int CalNative_Solve(int adc_offset,int32_t low,int32_t high,unsigned high_command,int8_t *zero,int8_t *offset);
+int CalNative_Points(int adc_offset,const int8_t zero[2],const int8_t correction[2],unsigned reference_steps,uint16_t ypos[4]);
 int CalNative_Gain(int32_t zero,int32_t high,int32_t reference,uint32_t scale,uint16_t *gain);
 int CalMean_Valid(const CalMean *);
 void UnifiedCal_Init(UnifiedCal *,int adc_offset,int ppm,const uint32_t scale[8],int include144,const Scope144Bank *);

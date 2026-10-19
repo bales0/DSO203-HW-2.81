@@ -66,7 +66,6 @@ char DbScaleStr[3];
 u16 COLOR_INDEX=0x0503;		        //green fft values display             
                                         //0x0500 = cyan w black bg
                                         //0x0501 = yellow w black bg
-u16 Count_FPS = 0;
 u8 SpecMode=0;
 u8 InitXY=1;
 u8 XYper=0;
@@ -437,6 +436,23 @@ u8 LeadingLine=0;
 /*******************************************d************************************
  Draw_Row : to ease the DMA conflict, in two buffers alternately
 *******************************************************************************/
+/* Decide visibility before clamping indices. Offscreen pairs cannot be
+ * revived by bolding. Preserve the original 3/2/1 pixel trace widths;
+ * the two-pixel style extends upwards, independent of YPOS. */
+int __attribute__((noinline,section(".text.trace_segment")))
+Draw_TraceSegment(unsigned a,unsigned b,unsigned bold,u8 *y)
+{
+    unsigned lo=a<b?a:b,hi=a>b?a:b;
+    if(hi<1 || lo>199)return 0;
+    if(lo<1)lo=1;
+    if(hi>199)hi=199;
+    if(a==b && bold<2) {
+        if(!bold && lo>1)--lo;
+        if(hi<199)++hi;
+    }
+    y[0]=(u8)lo;y[1]=(u8)hi;return 1;
+}
+
 void Draw_Row(u16 Row)
 { 
   u8  i, y[8], Dot_Hide[8];       //,Zm=0,Zn=0; 
@@ -466,6 +482,19 @@ if((Row > MIN_X)&&(Row <= MAX_X)){                  // waveform display data pre
         Dot_Hide[i]=1;y[i]=y[i+1]=1;continue;
       }
 
+      if(i<4 || (i==6 && ((_4_source==A_add_B)||(_4_source==A_sub_B)||
+          (_4_source>=REC_1 && _4_source<=REC_4)))) {
+        unsigned a=y[i],b=y[i+1];
+        if(((OsBufferLogicFlag && !OSAvg) || OsChartFlag) && Row>MIN_X+1) {
+            if(a<b)a=b;
+            b=TrackBuff[m+2+i/2];
+            if(b>TrackBuff[n+2+i/2])b=TrackBuff[n+2+i/2];
+        }
+        if(Raw && _Mode==NORHLD)b=a;
+        Dot_Hide[i]=(u8)!Draw_TraceSegment(a,b,Raw && _Mode==NORHLD?2:Hbold,&y[i]);
+        if(Dot_Hide[i])y[i]=y[i+1]=1;
+        continue;
+      }
       if(y[i]>199)y[i]= 199;                        // bounds   
       else if(y[i]<1)y[i]=1;                               
       if(y[i+1]>199)y[i+1]=199;
@@ -473,8 +502,7 @@ if((Row > MIN_X)&&(Row <= MAX_X)){                  // waveform display data pre
      
       if(y[i] == y[i+1]){
         if((y[i] == Y_BASE+1)||(y[i] == Y_SIZE-1)){                
-          if(  (((!OsBufferLogicFlag)||(OSAvg))&&(!OsChartFlag))  ||(y[i]==TrackBuff[m + 2+(i/2)])||
-            ((y[i]==1)&&(TrackBuff[m + 2+(i/2)]==0)))Dot_Hide[i] = 1;                //regular mode or not being drawn down by OS data 
+          Dot_Hide[i] = 1; /* Only digital lanes reach this legacy branch. */
         }else{                                                                                                                     // else if((FPGAosFlag==0)||(!OsBufferLogicFlag)){
           if((y[i] >= Y_BASE+2)&&(Hbold<1))           y[i]   -= 1;                   // alt config, allows OS display bold on display 2 & 3
           if((y[i+1] <= Y_BASE+Y_SIZE-2)&&(Hbold<2))  y[i+1] += 1;                   // non OS modes: 1, 2 or 3 bold lines
@@ -487,10 +515,7 @@ if((Row > MIN_X)&&(Row <= MAX_X)){                  // waveform display data pre
       if(y[i] > y[i+1]){                                           // order of
         Tmp = y[i+1]; y[i+1]= y[i]; y[i]= Tmp;                       
       } 
-      if(  ( ((OsBufferLogicFlag)&&(!OSAvg))||(OsChartFlag) )  &&(Row>(MIN_X+1))){
-        if(TrackBuff[m + 2+(i/2)]<TrackBuff[n + 2+(i/2)])y[i]=TrackBuff[m + 2+(i/2)]; 
-          else y[i]=TrackBuff[n + 2+(i/2)];                                              
-      }
+
 
     }
 } 
@@ -510,13 +535,14 @@ if(Row & 1){                                       // Odd row process
   if (_Mode!=SCAN){ 
 
       for(i=0;i<4;i++){
-        if((Title[TRIGG][SOURCE].Value == i)&&(Title[i][SOURCE].Value != HIDE)) 
+        if((Title[TRIGG][SOURCE].Value == i)&&(Title[i][SOURCE].Value != HIDE) &&
+            V_Trigg[i].Value>=0 && V_Trigg[i].Value<=Y_SIZE) 
           LCD_Buffer[1][V_Trigg[i].Value] |= Color[i];
       }
 
       if(Title[TRIGG][SOURCE].Value == 4){                    //display both trigger verniers in alt mode
-        LCD_Buffer[1][V_Trigg[TRACK1].Value] |= Color[0];
-        LCD_Buffer[1][V_Trigg[TRACK2].Value] |= Color[1];
+        if(_Vt1>=0 && _Vt1<=Y_SIZE)LCD_Buffer[1][_Vt1] |= Color[0];
+        if(_Vt2>=0 && _Vt2<=Y_SIZE)LCD_Buffer[1][_Vt2] |= Color[1];
       }
 
 //------------------------- Draw the X Vernie data -----------------------------
@@ -679,6 +705,22 @@ if(Row & 1){                                       // Odd row process
 ****************************************************************
  Draw_Window :  
 *******************************************************************************/
+/* Title dirty flags may already be consumed by either UI. Compare the
+ * authoritative geometry once per frame, never infer it from old pixels. */
+static void __attribute__((noinline,section(".text.trace_marks"))) RefreshMarks(void)
+{
+    static u32 positions,levels;static unsigned sources,known;
+    u32 p=0,t=0;unsigned mask=0,i;
+    for(i=0;i<4;++i) {
+        p=(p<<8)|(u8)Title[i][POSI].Value;
+        t=(t<<8)|(u8)(i<2?V_Trigg[i].Value:Title[i][POSI].Value+10);
+        mask|=!!Title[i][SOURCE].Value<<i;
+    }
+    mask|=(unsigned)_Tr_source<<4;
+    if(!known || p!=positions || t!=levels || mask!=sources) {
+        UpdateMarkLogic();positions=p;levels=t;sources=mask;known=1;
+    }
+}
 void Draw_Window(void)						
 { 
   s32 Tmp;
@@ -687,6 +729,7 @@ void Draw_Window(void)
   u16 TrackColor=0;
   u8  j,end=0;
 	
+  RefreshMarks();
   if(FlagMeter)Limit=213;else Limit=299;
   ListBottom=174+11;
   for(i=0;i<15;i++){if(Label[i][0]==0)break;else ListBottom-=11;}
@@ -700,7 +743,6 @@ void Draw_Window(void)
                
                 if(_T_base==8){                         //special case to align with data flow and other timebases
                   Delayms(2);
-                  Count_FPS++;
                   Delayms(4);
                 }      
 
@@ -748,7 +790,6 @@ void Draw_Window(void)
 
 
  if ((_Mode!=X_Y)&&(((_4_source!=SPEC_A)&&(_4_source!=SPEC_B))||(ChartLogic()))){
-   Count_FPS++;
    if((_Mode==NORHLD)&&(PerstFrameNumber>0)){
      if(ClearPerst==0){
        if(FrameCount>PerstFrameNumber){
@@ -828,7 +869,6 @@ void Draw_Window(void)
 
   if (_Mode==X_Y){
     PrintConfigName();
-    Count_FPS++; 
     FactorX=((s16)OffsetX-100)+((-ADCoffset)+Ka1[_A_Range]);
     FactorY=((s16)OffsetY-100)+((-ADCoffset)+Kb1[_B_Range]);
     FactorY13=FactorY+13;							//for direct screen access, need offset 13
@@ -856,7 +896,6 @@ if(((_4_source==SPEC_A)||(_4_source==SPEC_B))&&(!ChartLogic())){
       }
 
     if(_4_source==SPEC_B){ 				//MAP mode
-        Count_FPS++;
 
         if (SpecLine<MIN_Y)SpecLine=MAX_Y;		
 
@@ -883,7 +922,6 @@ if(((_4_source==SPEC_A)||(_4_source==SPEC_B))&&(!ChartLogic())){
     }
 
     if(_4_source==SPEC_A){				//now defines A/B spec and envelope display
-      Count_FPS++;
 
       if((SpecRow==25)||(UpdateScale)){                //>>>> need to reset specrow @ 25 every time mode is engaged
 
@@ -998,6 +1036,7 @@ void Update_Mark(void)
   u8  j=0;
   __Row_DMA_Ready();
 
+  __LCD_Set_Block(LCD_X1,LCD_X2,LCD_Y1,LCD_Y2);
   ClearScreenArea(0,11,MIN_Y-2,MAX_Y+3);
 
   if(ConfNameTimer>0)PrintConfigName();                                 //marks cover text
@@ -1048,6 +1087,59 @@ void Update_Mark(void)
 /*******************************************************************************
  Update_View_Area: Disegna rettangolo con zig zag posizione buffer 
 *******************************************************************************/
+/* State of the rectangle actually painted on the LCD, independent of titles
+ * and meters. An ordinary position update restores only its old outline. */
+static unsigned overview_known,overview_visible,overview_first,overview_last;
+static u16 overview_color;
+static u16 OverviewColor(void)
+{
+    if(Wildcat144_Active())return PURPL;
+    if(!OSBuffer)return ORANGE;
+    if(OSAvg)return GRN;
+    return FPGAosFlag?BLUE:RED;
+}
+static unsigned OverviewBox(unsigned *first,unsigned *last)
+{
+    *first=*last=0;
+    if(Wildcat144_Active())return (unsigned)Wildcat144_Overview(first,last);
+    return !FlagFrameMode && !OSBuffer && _Mode!=SCAN && Process_NativeOverview(first,last);
+}
+static void OverviewPixel(unsigned x,unsigned y,u16 color,int restore)
+{
+    if(restore)color=(RULE_BASE[(x-91u)&7u]&(1u<<y))?color:BLACK;
+    DrawPixel((u16)x,(u8)y,color);
+}
+static void OverviewOutline(unsigned first,unsigned last,u16 color,int restore)
+{
+    unsigned x,y;
+    for(x=first;x<=last;++x) {
+        OverviewPixel(x,0,color,restore);OverviewPixel(x,9,color,restore);
+    }
+    for(y=1;y<9;++y) {
+        OverviewPixel(first,y,color,restore);
+        if(first!=last)OverviewPixel(last,y,color,restore);
+    }
+}
+static void OverviewPaint(unsigned full)
+{
+    unsigned first,last,visible=OverviewBox(&first,&last);u16 color=OverviewColor();
+    if(!full && overview_known && visible==overview_visible && color==overview_color &&
+        (!visible || (first==overview_first && last==overview_last)))return;
+    if(!full && overview_visible)OverviewOutline(overview_first,overview_last,color,1);
+    if(visible)OverviewOutline(first,last,WHT,0);
+    overview_known=1;overview_visible=visible;overview_first=first;overview_last=last;overview_color=color;
+}
+void Update_Buffer_Overview(void)
+{
+    /* An overlay owns these pixels; defer and remember that its eventual
+     * removal needs the background restored, even if geometry is unchanged. */
+    if(Current==FILE || NotificationTimer || OffsetSelect){overview_known=0;return;}
+    if(!overview_known || overview_color!=OverviewColor() || NativeHoldoffAvailable())
+        Update_View_Area();
+    else OverviewPaint(0);
+    _X_View.Flag&=~UPDAT;
+    if(!NativeHoldoffAvailable())Title[TRIGG][3].Flag&=~UPDAT;
+}
 void Update_View_Area(void)
 {  
   s16 i, j, k;
@@ -1059,12 +1151,7 @@ void Update_View_Area(void)
     if(i==90)i+=217;
   }
 
-    if(Wildcat144_Active())color=PURPL;
-    else if(OSBuffer==0)color=ORANGE; else{
-      if(OSAvg)color=GRN;else{
-        if(FPGAosFlag)color=BLUE; else color=RED;
-      }
-    }
+    color=OverviewColor();
 
     for(i=91; i<307; i+=8){
       for(j=0; j<8; ++j){
@@ -1078,30 +1165,10 @@ void Update_View_Area(void)
     __Point_SCR(307,0);
     for (i=0;i<12;i++) __LCD_SetPixl(BLACK);
     
-    if(Wildcat144_Active()) {
-      unsigned first,last;
-      if(_State.Value==HOLD && Wildcat144_Overview(&first,&last)) {
-        __Point_SCR((u16)first,0);for(j=0;j<9;++j)__LCD_SetPixl(WHT);
-        __Point_SCR((u16)last,0);for(j=0;j<9;++j)__LCD_SetPixl(WHT);
-        for(i=(s16)first;i<=(s16)last;++i) {
-          DrawPixel((u16)i,0,WHT);DrawPixel((u16)i,9,WHT);
-        }
-      }
-    }
-    else {
-      unsigned first,last;
-      if(!FlagFrameMode && !OSBuffer && _Mode!=SCAN && Process_NativeOverview(&first,&last)) {
-        color=OSBuffer?ORANGE:WHT;
-        __Point_SCR((u16)first,0);for(j=0;j<9;++j)__LCD_SetPixl(color);
-        __Point_SCR((u16)last,0);for(j=0;j<9;++j)__LCD_SetPixl(color);
-        for(i=(s16)first;i<=(s16)last;++i) {
-          DrawPixel((u16)i,0,color);DrawPixel((u16)i,9,color);
-        }
-      }
-      if(NativeHoldoffAvailable() && Current!=FILE && !NotificationTimer)
-        Print_Str(Title[TRIGG][3].XPOS,0,Title[TRIGG][3].Color[Title[TRIGG][0].Value],PRN,"T");
+    OverviewPaint(1);
+    if(!Wildcat144_Active() && NativeHoldoffAvailable() && Current!=FILE && !NotificationTimer)
+      Print_Str(Title[TRIGG][3].XPOS,0,Title[TRIGG][3].Color[Title[TRIGG][0].Value],PRN,"T");
 
-    }
     _X_View.Flag &= !UPDAT;
     if(!Wildcat144_Active())DisplaySamples();
 }
@@ -2011,7 +2078,8 @@ void LoadBuffer(u16 Row, u8 buffer,u8 *y,u8 *Dot_Hide,u8 service){
    if((_T_base>7)||(Row!=skip) ||((_T_base>3)&&(_Mode!=SCAN))){
      for(j=0;j<end;j+=2){
        h=j/2;
-       if((Dot_Hide[j] == 0)&&(Title[h][SOURCE].Value != HIDE)){                           
+       if((Dot_Hide[j] == 0)&&(Title[h][SOURCE].Value != HIDE)&&
+          y[j]>=1 && y[j+1]<=199 && y[j]<=y[j+1]){                           
          Col=Color[h];
          if((y[j+1]-y[j])>5)Col-=Dim[h];
          for(i=y[j]; i<=y[j+1]; ++i) LCD_Buffer[buffer][i] |=Col;        
@@ -2027,7 +2095,8 @@ void LoadBuffer(u16 Row, u8 buffer,u8 *y,u8 *Dot_Hide,u8 service){
 
       for(j=0;j<end;j+=2){
         h=j/2;
-        if((Dot_Hide[j] == 0)&&(Title[h][SOURCE].Value != HIDE)){                           
+        if((Dot_Hide[j] == 0)&&(Title[h][SOURCE].Value != HIDE)&&
+          y[j]>=1 && y[j+1]<=199 && y[j]<=y[j+1]){                           
           __Point_SCR(Row,MIN_Y+y[j]);
           Col=Color[h];
           if((Raw)&&(h<2)){

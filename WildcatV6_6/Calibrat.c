@@ -186,13 +186,13 @@ static void DacPanel(const UnifiedCal *s)
     unsigned r=s->range,ch=s->failed_channel;char row[49];unsigned n;
     const CalDacDiagnostic *d=&s->dac_diagnostic;
     if(r>=8 || ch>1)return;
-    strcpy(row,s->retry==CAL_GROUND?"144 ZERO R":"144 REF R");n=(unsigned)strlen(row);
+    strcpy(row,s->capture_path?(s->retry==CAL_GROUND?"144 ZERO R":"144 REF R"):(s->retry==CAL_GROUND?"Normal ZERO R":"Normal REF R"));n=(unsigned)strlen(row);
     n+=Decimal(row+n,r+1);strcpy(row+n,ch?"/8 ADC B: ":"/8 ADC A: ");
     strcat(row,d->reason==CAL_DAC_SLOPE?"DAC SLOPE":d->step==CAL_DAC_DRIFT?"DRIFT ERROR":d->step==CAL_DAC_RETURN?"RETURN ERROR":"POINT ERROR");Line(222,row);
-    Line(208,"Both ADCs sample input A; values in mADC");
+    Line(208,s->capture_path?"Both ADCs sample input A; values in mADC":"Separate inputs A/B; values in mADC");
     DiagnosticFrame("144 OFFSET CHECK");
-    PairValue(164,"Zero C40 A/B: ",s->dac144_low[r].a*1000/1024,s->dac144_low[r].b*1000/1024);
-    PairValue(150,"Zero C94 A/B: ",s->dac144_high[r].a*1000/1024,s->dac144_high[r].b*1000/1024);
+    PairValue(164,"Zero LOW A/B: ",s->dac144_low[r].a*1000/1024,s->dac144_low[r].b*1000/1024);
+    PairValue(150,"Zero HIGH A/B: ",s->dac144_high[r].a*1000/1024,s->dac144_high[r].b*1000/1024);
     PairValue(136,"Slope A/B (mADC/CMD): ",s->dac144[r][0]*1000/1024,s->dac144[r][1]*1000/1024);
     if(s->retry==CAL_REFERENCE)PairValue(122,"Ref slope A/B: ",s->ref_dac144[0]*1000/1024,s->ref_dac144[1]*1000/1024);
     PairValue(108,"Point CMD A/B: ",s->capture_commands[0],s->capture_commands[1]);
@@ -204,8 +204,8 @@ static void DacPanel(const UnifiedCal *s)
         PairValue(80,"Error/limit (mADC): ",d->residual[ch]*1000/1024,CAL_OFFSET_STABILITY*1000/1024);
     }
     if(s->retry==CAL_REFERENCE) {
-        PairValue(66,"Ref C40 A/B: ",s->ref144_low.a*1000/1024,s->ref144_low.b*1000/1024);
-        PairValue(52,"Ref C94 A/B: ",s->ref144_high.a*1000/1024,s->ref144_high.b*1000/1024);
+        PairValue(66,"Ref LOW A/B: ",s->ref144_low.a*1000/1024,s->ref144_low.b*1000/1024);
+        PairValue(52,"Ref HIGH A/B: ",s->ref144_high.a*1000/1024,s->ref144_high.b*1000/1024);
     }
 }
 static void Render(const UnifiedCal *s,int full)
@@ -259,6 +259,11 @@ static void Render(const UnifiedCal *s,int full)
         } else if(s->error==5) {
             Value(222,s->failed_channel?"Offset B limit, range: ":"Offset A limit, range: ",s->range+1);
             Line(208,"Stable raw response cannot fit saved format");OffsetPanel(s);
+        } else if(s->error==15) {
+            Value(222,"Four-point DAC limits, range: ",s->range+1);
+            Line(208,"No common DAC/ADC headroom for four points");
+            PairValue(164,"Required Y anchors: ",25,100);
+            PairValue(150,"Last commands A/B: ",s->capture_commands[0],s->capture_commands[1]);
         } else if(s->error==12 || s->error==3 || s->error==2) {
             Value(222,"Calibration error: ",s->error);
             Line(208,s->error==12?"DC blocks did not settle before deadline":s->error==3?(s->capture_mean.clips?"Too many raw 0/255 samples (>4 per ADC)":"ADC mean outside 10..245; see raw limits"):"FIFO/capture failed");
@@ -334,7 +339,7 @@ static int Save(void *user,UnifiedCal *s,int charger)
     PPM_Comp=(s16)s->ppm;Versions=6;
     Line(6,"Saving calibration WPT/WPB - please wait");
     result=File144_WptSave(&s->bank,1);
-    if(result)CopyBanks(w,1);
+    if(result)CopyBanks(w,1);else Scope144_NativeBank(&s->bank);
     return result;
 }
 static CalKey Event(unsigned key)

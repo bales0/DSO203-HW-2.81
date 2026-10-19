@@ -24,7 +24,7 @@ if((FlagMeter==0)&&((Current==V_VERNIE)||(Current==T_VERNIE))&&(_Det==V2)){ //sk
  			  _Curr[_Det].Flag |= BLINK;
 			} else {                                                                   // change the measurement object
 
-                          if(Meter[Current-METER_0].Item>1){                     //don't change source for VBT AND FPS (items 0 and 1) 		
+                          if(Meter[Current-METER_0].Item>1){                     // original source cycle applies to channel measurements
 			  Meter[Current-METER_0].Flag |= UPDAT;
 
 			  if((Meter[Current-METER_0].Item>VPP)||(Meter[Current-METER_0].Item==FRQ)){

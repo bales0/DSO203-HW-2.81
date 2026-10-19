@@ -38,7 +38,7 @@ int main(void)
     memcpy(copy,encoded,SCOPE144_CAL_BYTES);copy[4]=2; /* v2 is not imported. */
     {uint32_t crc=Scope144_Crc(copy,1020);for(i=0;i<4;++i)copy[1020+i]=(unsigned char)(crc>>(i*8));}
     CHECK(!Scope144_Decode(copy,123,&decoded));
-    CHECK(encoded[4]==3 && SCOPE144_RECORD_BYTES==52 && sizeof(Scope144Cal)==52);
+    CHECK(encoded[4]==4 && SCOPE144_RECORD_BYTES==60 && sizeof(Scope144Cal)==60);
     {
         Scope144Cal invalid=bank.range[0];Scope144Bank bad=bank;
         invalid.ref_dac_a_q10=511;CHECK(!Scope144_Valid(&invalid));
@@ -196,6 +196,55 @@ int main(void)
             CHECK(TriggerMenu_LevelStep(TriggerMenu_LevelStep(mode,1),-1)==mode);
             CHECK(TriggerMenu_LevelStep(mode,1)==(mode+1)%4);
         }
+    }
+    /* Measured command anchors are independent for A/B. Ground and
+     * reference slopes may differ; verify against reconstructed raw ADCs. */
+    {
+        Scope144Bank b={0};Scope144Cal a,c;unsigned commands[2],y,supply;
+        CHECK(Scope144_CalibrateMeans(80*1024,88*1024,155*1024,160*1024,1000000,&a));
+        a.adc_offset=50;a.dac_a_q10=970;a.dac_b_q10=1120;
+        a.ref_dac_a_q10=1010;a.ref_dac_b_q10=1180;
+        a.dac_anchor=75u|(74u<<8)|(64u<<24);
+        a.dac_window=50u|(175u<<8)|(49u<<16)|(180u<<24);
+        CHECK(Scope144_Valid(&a));b.range[0]=a;b.battery[0]=3200;
+        b.high[0]=a;b.high[0].dac_anchor=75u|(75u<<8);b.battery[1]=4300;
+        CHECK(Scope144_Encode(&b,567,encoded));CHECK(Scope144_Decode(encoded,567,&decoded));
+        CHECK(!memcmp(&b,&decoded,sizeof b));
+        memcpy(copy,encoded,sizeof copy);copy[4]=3;
+        {uint32_t crc=Scope144_Crc(copy,1020);for(i=0;i<4;++i)copy[1020+i]=(unsigned char)(crc>>(i*8));}
+        CHECK(!Scope144_Decode(copy,567,&decoded)); /* explicit recalibration, no reinterpretation */
+        for(supply=0;supply<3;++supply)for(y=10;y<=190;++y) {
+            uint32_t bat=supply==0?3200:supply==1?3750:4300;
+            if(Scope144_SelectAt(&b,0,50,bat,(int)y,&c,commands)) {
+                unsigned ch;int32_t za[2],ha[2],raw,norm;int da=(int)commands[0]-75;
+                int db0=(int)commands[1]-74,db1=(int)commands[1]-75;
+                za[0]=80*1024+da*970;ha[0]=155*1024+da*1010;
+                za[1]=88*1024+(supply==0?db0:supply==2?db1:(db0+db1)/2)*1120;
+                ha[1]=160*1024+(supply==0?db0:supply==2?db1:(db0+db1)/2)*1180;
+                /* Middle supply endpoints use half commands before rounding. */
+                if(supply==1){za[1]=88*1024+(db0+db1)*560;ha[1]=160*1024+(db0+db1)*590;}
+                for(ch=0;ch<2;++ch)for(i=0;i<=10;++i) {
+                    raw=za[ch]+(int32_t)(((int64_t)ha[ch]-za[ch])*i/10);
+                    norm=ch?(int32_t)((int64_t)raw*c.gain_q10/1024)+c.bias_q10:raw;
+                    norm=(int32_t)((int64_t)norm*c.a_gain_q10/1024)+c.a_bias_q10;
+                    CHECK(abs(Scope144_Voltage(&c,norm)-(int32_t)i*100000)<2500);
+                }
+                CHECK(commands[0]>=50 && commands[0]<=175 && commands[1]>=49 && commands[1]<=180);
+                CHECK((c.dac_anchor&255u)==commands[0] && ((c.dac_anchor>>8)&255u)==commands[1]);
+            }
+        }
+        Scope144_NativeBank(&b);
+        for(supply=0;supply<3;++supply)for(y=10;y<=190;++y) {
+            unsigned cmd,bat=supply==0?3200:supply==1?3750:4300;
+            int effective=CalNative_Position(0,0,50,0,(int)y,bat,&cmd);
+            CHECK(cmd>=50 && cmd<=175 && effective>=10 && effective<=190);
+            CHECK(Scope144_SelectAt(&b,0,50,bat,effective,&c,commands));
+            CHECK(commands[0]==cmd);
+        }
+        Scope144_NativeBank(0);
+        {unsigned cmd;CHECK(CalNative_Position(0,0,54,0,190,3700,&cmd)==100 && cmd==154);}
+        CHECK(!Scope144_SelectAt(&b,0,50,3750,190,&c,commands));
+        CHECK(!Scope144_SelectAt(&b,0,50,3750,-100,&c,commands));
     }
     printf("PASS Scope144: %u checks; calibration banks, eight ranges, timebase, meters, nine A/C/D trigger kinds, 72 MHz width, CSV\n",checks);
     return 0;

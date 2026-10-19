@@ -67,9 +67,10 @@ int main(void)
         _T_base=(s16)(source%12);Options=(u8)(source&1);OsBufferLogicFlag=(u8)(source&2);
         Compare(1);
     }
-    /* Real native meter tail is unchanged: Vbat/FPS no source change;
+    /* Real native meter tail is unchanged: Vbat no source change;
      * voltage-only versus digital-capable items retain their source cycles. */
     for(g=METER_0;g<=METER_0+8;++g)for(item=0;item<12;++item)for(track=0;track<5;++track) {
+        if(item!=VBT && item<VDC)continue;
         Fixture(g,0,1);Meter[g-METER_0].Item=(u8)item;Meter[g-METER_0].Track=(u8)track;Compare(0);
     }
     CHECK(!outputs && !adc_controls && !range_sets && !record_count && !files);

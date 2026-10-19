@@ -1,3 +1,6 @@
+#if defined(__GNUC__)
+#pragma GCC optimize ("Os")
+#endif
 #include "UnifiedCal.h"
 #include <string.h>
 #include <limits.h>
@@ -20,34 +23,6 @@ int CalNative_Threshold(int display,int ypos,int zero,unsigned gain,int adc_offs
 }
 int CalNative_Correct(int raw_minus_offset,int ypos,int zero,unsigned gain)
 { return ypos+Rounded((int64_t)gain*(raw_minus_offset+zero-ypos),1024); }
-int CalNative_Command(int adc_offset,int correction,int ypos)
-{
-    int command=(int)Scope144_Command(adc_offset)+Rounded((int64_t)(1024+correction)*(ypos-40),1024);
-    if(command<0)command=0;
-    if(command>200)command=200;
-    return command;
-}
-/* Fit the inverse offset slope and the software zero at the Y=40 pivot.
- * Both the pivot and the Y=25 measurement point are inside the sampled span. */
-static int FitOffset(int adc_offset,int32_t low,int32_t high,unsigned low_command,
-    unsigned high_command,int8_t *zero,int8_t *offset,int32_t *wanted_zero,int32_t *wanted_offset)
-{
-    int z,k;int32_t delta=high-low,pivot;
-    if(adc_offset<0 || adc_offset>140 || low_command>200 ||
-        high_command<low_command+16 || high_command>200 || delta<16*1024)return 0;
-    pivot=low+Rounded((int64_t)(adc_offset+40-(int)low_command)*delta,high_command-low_command);
-    z=adc_offset+40-Rounded(pivot,1024);
-    k=Rounded((int64_t)(high_command-low_command)*1024*1024,delta)-1024;
-    if(wanted_zero)*wanted_zero=z;
-    if(wanted_offset)*wanted_offset=k;
-    if(z<INT8_MIN || z>INT8_MAX || k<INT8_MIN || k>INT8_MAX)return 0;
-    *zero=(int8_t)z;*offset=(int8_t)k;return 1;
-}
-int CalNative_Solve(int adc_offset,int32_t low,int32_t high,unsigned high_command,int8_t *zero,int8_t *offset)
-{
-    if(adc_offset<0 || adc_offset>140)return 0;
-    return FitOffset(adc_offset,low,high,(unsigned)adc_offset+40,high_command,zero,offset,0,0);
-}
 int CalNative_Gain(int32_t zero,int32_t high,int32_t reference,uint32_t scale,uint16_t *gain)
 {
     int32_t delta=high-zero;int g;
@@ -92,121 +67,150 @@ static int CheckDac(UnifiedCal *s,const CalMean *actual,int32_t a,int32_t b,CalS
     }
     return 1;
 }
-/* Refine at the actual Y=25 / Y=100 commands. Two consecutive accepted
- * pairs must also agree within one ADC step: a transient cannot pass alone. */
-static int GroundRange(UnifiedCal *s,const CalOps *ops)
+int CalNative_Points(int adc_offset,const int8_t zero[2],const int8_t correction[2],unsigned reference_steps,uint16_t ypos[4])
 {
-    unsigned r=s->range,ch,attempt,passing=0;
-    unsigned low_command[2],high_command[2];CalMean low,high;
-    int32_t previous[2][2]={{0,0},{0,0}};
-    int8_t zero[2],offset[2];
-    s->offset_attempt=0;s->offset_reason=0;
+    int low=10,high=190,ch;
+    if(!Scope144_Command(adc_offset) || reference_steps>235)return 0;
     for(ch=0;ch<2;++ch) {
-        s->native[ch].zero[r]=s->native[ch].offset[r]=0;s->native[ch].gain[r]=1024;
-        s->offset_low_command[ch]=s->adc_offset+25;s->offset_high_command[ch]=s->adc_offset+100;
-        s->requested_zero[ch]=s->requested_offset[ch]=0;
+        int y;
+        while(low<25 && adc_offset+low-zero[ch]<12)++low;
+        y=239-adc_offset+zero[ch]-(int)reference_steps;
+        if(y<high)high=y;
+        while(high>100 && CalNative_Command(adc_offset,correction[ch],high)>=200)--high;
     }
-    if(!Capture(s,ops,0,s->adc_offset+25,s->adc_offset+25,&low,CAL_GROUND) ||
-       !Capture(s,ops,0,s->adc_offset+100,s->adc_offset+100,&high,CAL_GROUND))return 0;
+    if(low>17 || high<102 || high>190)return 0;
+    ypos[0]=(uint16_t)low;ypos[1]=25;ypos[2]=100;ypos[3]=(uint16_t)high;
     for(ch=0;ch<2;++ch) {
-        s->zero_low[r][ch]=ch?low.b:low.a;s->zero_high[r][ch]=ch?high.b:high.a;
-        if(!FitOffset(s->adc_offset,s->zero_low[r][ch],s->zero_high[r][ch],s->adc_offset+25,
-            s->adc_offset+100,&zero[ch],&offset[ch],&s->requested_zero[ch],&s->requested_offset[ch])){s->failed_channel=ch;Fail(s,CAL_GROUND,5);return 0;}
-    }
-    for(attempt=1;attempt<=CAL_OFFSET_ATTEMPTS;++attempt) {
-        int acceptable=1,stable=1;
-        s->offset_attempt=attempt;
-        for(ch=0;ch<2;++ch) {
-            low_command[ch]=CalNative_Command(s->adc_offset,offset[ch],25);
-            high_command[ch]=CalNative_Command(s->adc_offset,offset[ch],100);
-            s->offset_low_command[ch]=low_command[ch];s->offset_high_command[ch]=high_command[ch];
-        }
-        if(!Capture(s,ops,0,low_command[0],low_command[1],&low,CAL_GROUND) ||
-           !Capture(s,ops,0,high_command[0],high_command[1],&high,CAL_GROUND))return 0;
-        for(ch=0;ch<2;++ch) {
-            int32_t l=ch?low.b:low.a,h=ch?high.b:high.a;
-            s->zero_low[r][ch]=l;s->zero_high[r][ch]=h;
-            s->offset_residual[ch]=l+(int32_t)zero[ch]*1024-(s->adc_offset+25)*1024;
-            s->offset_high_residual[ch]=h+(int32_t)zero[ch]*1024-(s->adc_offset+100)*1024;
-            if(Magnitude(s->offset_residual[ch])>CAL_OFFSET_TOLERANCE ||
-               Magnitude(s->offset_high_residual[ch])>CAL_OFFSET_TOLERANCE) {
-                acceptable=0;s->failed_channel=ch;
-            }
-            if(passing && (Magnitude(l-previous[ch][0])>CAL_OFFSET_STABILITY ||
-                Magnitude(h-previous[ch][1])>CAL_OFFSET_STABILITY)) {
-                stable=0;s->failed_channel=ch;
-            }
-            previous[ch][0]=l;previous[ch][1]=h;
-        }
-        if(acceptable) {
-            if(passing && stable) {
-                for(ch=0;ch<2;++ch) {
-                    s->native[ch].zero[r]=zero[ch];s->native[ch].offset[r]=offset[ch];
-                    s->zero_ref[r][ch]=ch?low.b:low.a;
-                }
-                return 1;
-            }
-            passing=1;s->offset_reason=2; /* Another stable measurement needed. */
-        } else {
-            passing=0;s->offset_reason=1; /* Residual not yet corrected. */
-            for(ch=0;ch<2;++ch) {
-                if(!FitOffset(s->adc_offset,ch?low.b:low.a,ch?high.b:high.a,
-                    low_command[ch],high_command[ch],&zero[ch],&offset[ch],&s->requested_zero[ch],&s->requested_offset[ch])) {
-                    s->failed_channel=ch;s->offset_reason=3;Fail(s,CAL_GROUND,11);return 0;
-                }
-            }
-        }
-    }
-    Fail(s,CAL_GROUND,11);return 0;
-}
-/* Fit a DC-specific offset response. Ground and reference use independent
- * fits, with the same physical slope limits and fresh verification. */
-static int FitDacCurve(UnifiedCal *s,const CalMean points[4],int32_t slope[2],
-    int32_t intercept[2],CalStage retry)
-{
-    static const unsigned offsets[]={0,20,40,54};unsigned ch,k;
-    for(ch=0;ch<2;++ch) {
-        int64_t sum=0,weighted=0;
+        unsigned k,previous=0;
         for(k=0;k<4;++k) {
-            int32_t value=ch?points[k].b:points[k].a;
-            sum+=value;weighted+=(int64_t)offsets[k]*value;
+            unsigned command=CalNative_Command(adc_offset,correction[ch],ypos[k]);
+            if(command>200 || (k && command<previous+2))return 0;
+            previous=command;
         }
-        slope[ch]=Rounded(4*weighted-114*sum,6668);
-        intercept[ch]=Rounded(sum-114*(int64_t)slope[ch],4);
-    }
-    for(ch=0;ch<2;++ch)if(slope[ch]<512 || slope[ch]>2048) {
-        s->failed_channel=ch;s->dac_diagnostic.reason=CAL_DAC_SLOPE;Fail(s,retry,13);return 0;
     }
     return 1;
 }
-/* Fit all measured operating points. A line pinned to the two endpoints
- * amplifies endpoint error and can reject a usable interior point. Fresh
- * verification below still enforces the original one-step residual limit. */
+/* One line, actual commands as X; 64-bit sums and signed rounding. */
+static int FitDacCurve(UnifiedCal *s,const CalMean points[4],const unsigned commands[4][2],
+    int32_t slope[2],int32_t intercept[2],CalStage retry)
+{
+    unsigned ch,k;
+    for(ch=0;ch<2;++ch) {
+        int64_t sx=0,sy=0,sxx=0,sxy=0,den;
+        for(k=0;k<4;++k) {
+            int32_t x=commands[k][ch],y=ch?points[k].b:points[k].a;
+            if(x>200 || (k && x<(int32_t)commands[k-1][ch]+2))goto bad;
+            sx+=x;sy+=y;sxx+=(int64_t)x*x;sxy+=(int64_t)x*y;
+        }
+        den=4*sxx-sx*sx;if(den<=0)goto bad;
+        slope[ch]=Rounded(4*sxy-sx*sy,den);s->gain_result[ch]=slope[ch];
+        intercept[ch]=Rounded(sy-sx*slope[ch],4);
+        if(slope[ch]<512 || slope[ch]>2048)goto bad;
+    }
+    return 1;
+bad:
+    s->failed_channel=ch;s->dac_diagnostic.reason=CAL_DAC_SLOPE;Fail(s,retry,13);return 0;
+}
+static void Commands(UnifiedCal *s,unsigned commands[4][2])
+{
+    unsigned k,ch;for(k=0;k<4;++k)for(ch=0;ch<2;++ch)
+        commands[k][ch]=CalNative_Command(s->adc_offset,s->native[ch].offset[s->range],s->working_y[s->range][k]);
+}
+static int Curve(UnifiedCal *s,const CalOps *ops,unsigned path,CalStage retry,
+    const unsigned commands[4][2],CalMean points[4],int32_t slope[2],int32_t intercept[2])
+{
+    unsigned k;
+    for(k=0;k<4;++k) {
+        s->dac_diagnostic.step=k==0?CAL_DAC_LOW:k==3?CAL_DAC_HIGH:CAL_DAC_FIT;
+        if(!Capture(s,ops,path,commands[k][0],commands[k][1],&points[k],retry))return 0;
+        s->ref144_stats[k]=s->capture_stats;
+    }
+    if(!FitDacCurve(s,points,commands,slope,intercept,retry))return 0;
+    for(k=0;k<4;++k) {
+        s->dac_diagnostic.step=CAL_DAC_POINT;
+        s->capture_mean=points[k];s->capture_stats=s->ref144_stats[k];
+        s->capture_commands[0]=commands[k][0];s->capture_commands[1]=commands[k][1];
+        if(!CheckDac(s,&points[k],intercept[0]+commands[k][0]*slope[0],intercept[1]+commands[k][1]*slope[1],retry))return 0;
+    }
+    return 1;
+}
+static int GroundRange(UnifiedCal *s,const CalOps *ops)
+{
+    unsigned r=s->range,ch,k,attempt,passing=0,commands[4][2],cap=s->working_y[s->range][3];
+    int32_t slope[2],intercept[2];CalMean points[4],previous[4];int8_t zero[2]={0,0},offset[2]={0,0};
+    s->offset_attempt=0;s->offset_reason=0;
+    for(ch=0;ch<2;++ch){s->native[ch].zero[r]=s->native[ch].offset[r]=0;s->native[ch].gain[r]=1024;}
+    if(!CalNative_Points(s->adc_offset,zero,offset,0,s->working_y[r])){Fail(s,CAL_GROUND,15);return 0;}
+    if(cap && s->working_y[r][3]>cap)s->working_y[r][3]=(uint16_t)cap;
+    Commands(s,commands);
+    if(!Curve(s,ops,0,CAL_GROUND,commands,points,slope,intercept))return 0;
+    for(ch=0;ch<2;++ch) {
+        s->zero_low[r][ch]=ch?points[1].b:points[1].a;s->zero_high[r][ch]=ch?points[2].b:points[2].a;
+        s->offset_low_command[ch]=commands[1][ch];s->offset_high_command[ch]=commands[2][ch];
+    }
+    for(attempt=1;attempt<=CAL_OFFSET_ATTEMPTS;++attempt) {
+        int acceptable=1,stable=1;s->offset_attempt=attempt;
+        for(ch=0;ch<2;++ch) {
+            int z=s->adc_offset+40-Rounded((int64_t)(s->adc_offset+40)*slope[ch]+intercept[ch],1024);
+            int o=Rounded(1024LL*1024,slope[ch])-1024;
+            s->requested_zero[ch]=z;s->requested_offset[ch]=o;
+            if(z<INT8_MIN || z>INT8_MAX || o<INT8_MIN || o>INT8_MAX) {
+                s->failed_channel=ch;Fail(s,CAL_GROUND,5);return 0;
+            }
+            zero[ch]=(int8_t)z;offset[ch]=(int8_t)o;s->native[ch].offset[r]=offset[ch];
+        }
+        if(!CalNative_Points(s->adc_offset,zero,offset,(unsigned)(s->reference_input[r]/(int32_t)s->scale[r]),s->working_y[r])) {
+            if(attempt==1 && Curve(s,ops,0,CAL_GROUND,commands,points,slope,intercept))continue;
+            if(s->stage!=CAL_ERROR)Fail(s,CAL_GROUND,15);
+            return 0;
+        }
+        if(cap && s->working_y[r][3]>cap)s->working_y[r][3]=(uint16_t)cap;
+        Commands(s,commands);
+        for(k=0;k<4;++k) {
+            CalMean m;
+            if(!Capture(s,ops,0,commands[k][0],commands[k][1],&m,CAL_GROUND))return 0;
+            for(ch=0;ch<2;++ch) {
+                int32_t raw=ch?m.b:m.a;
+                int32_t residual=raw+(int32_t)zero[ch]*1024-(s->adc_offset+s->working_y[r][k])*1024;
+                if(Magnitude(residual)>CAL_OFFSET_TOLERANCE){acceptable=0;s->failed_channel=ch;}
+                if(passing && Magnitude(raw-(ch?previous[k].b:previous[k].a))>CAL_OFFSET_STABILITY){stable=0;s->failed_channel=ch;}
+                if(k==1){s->offset_residual[ch]=residual;s->zero_low[r][ch]=raw;s->zero_ref[r][ch]=raw;s->offset_low_command[ch]=commands[k][ch];}
+                if(k==2){s->offset_high_residual[ch]=residual;s->zero_high[r][ch]=raw;s->offset_high_command[ch]=commands[k][ch];}
+            }
+            points[k]=previous[k]=m;
+        }
+        if(acceptable && passing && stable) {
+            for(ch=0;ch<2;++ch){s->native[ch].zero[r]=zero[ch];s->native[ch].offset[r]=offset[ch];}
+            return 1;
+        }
+        passing=acceptable;s->offset_reason=acceptable?2:1;
+        if(!acceptable && !FitDacCurve(s,points,commands,slope,intercept,CAL_GROUND))return 0;
+    }
+    Fail(s,CAL_GROUND,11);return 0;
+}
 static __attribute__((noinline)) int Ground144(UnifiedCal *s,const CalOps *ops)
 {
-    static const unsigned offsets[]={0,20,40,54};
-    CalMean points[4],m;int32_t intercept[2];unsigned r=s->range,k;
-    memset(&s->dac_diagnostic,0,sizeof(s->dac_diagnostic));
-    s->dac_diagnostic.step=CAL_DAC_LOW;
-    if(!Capture(s,ops,1,Scope144_Command(0),Scope144_Command(0),&points[0],CAL_GROUND))return 0;
-    s->dac144_low[r]=points[0];s->dac_diagnostic.step=CAL_DAC_HIGH;
-    if(!Capture(s,ops,1,Scope144_Command(54),Scope144_Command(54),&points[3],CAL_GROUND))return 0;
-    s->dac144_high[r]=points[3];
-    for(k=1;k<3;++k) {
-        s->dac_diagnostic.step=CAL_DAC_FIT;
-        if(!Capture(s,ops,1,Scope144_Command(offsets[k]),Scope144_Command(offsets[k]),&points[k],CAL_GROUND))return 0;
+    unsigned r=s->range,k,commands[4][2];CalMean points[4],m;int32_t intercept[2];
+    Commands(s,commands);memset(&s->dac_diagnostic,0,sizeof(s->dac_diagnostic));
+    if(!Curve(s,ops,1,CAL_GROUND,commands,points,s->dac144[r],intercept))return 0;
+    s->dac144_low[r]=points[0];s->dac144_high[r]=points[3];
+    {
+        int y=s->working_y[r][3];unsigned ch;
+        for(ch=0;ch<2;++ch)while(y>=102 &&
+            (int64_t)CalNative_Command(s->adc_offset,s->native[ch].offset[r],y)*s->dac144[r][ch]+intercept[ch]+
+            (int64_t)s->reference_input[r]*1024/s->scale[r]>245*1024)--y;
+        if(y<102){Fail(s,CAL_GROUND,15);return 0;}
+        if(y<s->working_y[r][3]){s->working_y[r][3]=(uint16_t)y;return 2;}
     }
-    if(!FitDacCurve(s,points,s->dac144[r],intercept,CAL_GROUND))return 0;
-    /* Verification records are independent of the records used to fit.
-     * Return to the user's actual offset before accepting raw ground. */
-    for(k=0;k<5;++k) {
-        unsigned offset=k<4?offsets[k]:(unsigned)s->adc_offset;
-        s->dac_diagnostic.step=k==4?CAL_DAC_RETURN:CAL_DAC_POINT;
-        if(!Capture(s,ops,1,Scope144_Command(offset),Scope144_Command(offset),&m,CAL_GROUND))return 0;
-        if(!CheckDac(s,&m,intercept[0]+(int32_t)offset*s->dac144[r][0],
-            intercept[1]+(int32_t)offset*s->dac144[r][1],CAL_GROUND))return 0;
-        if(k==4){s->zero144[r][0]=m.a;s->zero144[r][1]=m.b;}
+    for(k=0;k<4;++k) {
+        s->dac_diagnostic.step=CAL_DAC_POINT;
+        if(!Capture(s,ops,1,commands[k][0],commands[k][1],&m,CAL_GROUND) ||
+           !CheckDac(s,&m,intercept[0]+commands[k][0]*s->dac144[r][0],intercept[1]+commands[k][1]*s->dac144[r][1],CAL_GROUND))return 0;
     }
+    s->dac_diagnostic.step=CAL_DAC_RETURN;
+    if(!Capture(s,ops,1,commands[1][0],commands[1][1],&m,CAL_GROUND) ||
+       !CheckDac(s,&m,intercept[0]+commands[1][0]*s->dac144[r][0],intercept[1]+commands[1][1]*s->dac144[r][1],CAL_GROUND))return 0;
+    s->zero144[r][0]=m.a;s->zero144[r][1]=m.b;
     return 1;
 }
 static int Ground(UnifiedCal *s,const CalOps *ops)
@@ -219,7 +223,15 @@ static int Ground(UnifiedCal *s,const CalOps *ops)
         if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_GROUND,14);return 0;}
         s->range=r;
         if(!GroundRange(s,ops))return 0;
-        if(s->include144 && !Ground144(s,ops))return 0;
+        if(s->include144) {
+            int result=Ground144(s,ops);
+            if(result==2) {
+                if(!GroundRange(s,ops))return 0;
+                result=Ground144(s,ops);
+                if(result==2){Fail(s,CAL_GROUND,15);return 0;}
+            }
+            if(!result)return 0;
+        }
     }
     if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_GROUND,14);return 0;}
     s->range=0;s->reference=s->reference_input[0];
@@ -264,44 +276,30 @@ int UnifiedCal_PreviewMean(UnifiedCal *s,const CalMean *m)
  * Verification stats live in the wizard's existing DataBuf, not the stack. */
 static __attribute__((noinline)) int Reference144(UnifiedCal *s,const CalOps *ops,CalMean *result)
 {
-    static const unsigned offsets[]={0,20,40,54};
-    CalMean anchor,points[4];int32_t intercept[2];unsigned k,index;
-    memset(&s->dac_diagnostic,0,sizeof(s->dac_diagnostic));
-    memset(s->ref_dac144,0,sizeof(s->ref_dac144));
-    memset(&s->ref144_low,0,sizeof(s->ref144_low));memset(&s->ref144_high,0,sizeof(s->ref144_high));
-    s->dac_diagnostic.step=CAL_DAC_REFERENCE;
-    if(!Capture(s,ops,1,Scope144_Command(s->adc_offset),Scope144_Command(s->adc_offset),&anchor,CAL_REFERENCE))return 0;
-    for(k=0;k<4;++k) {
-        index=k==0?0:k==1?3:k-1;
-        s->dac_diagnostic.step=k==0?CAL_DAC_LOW:k==1?CAL_DAC_HIGH:CAL_DAC_FIT;
-        if(!Capture(s,ops,1,Scope144_Command(offsets[index]),Scope144_Command(offsets[index]),&points[index],CAL_REFERENCE))return 0;
-        if(!k)s->ref144_low=points[0];
-        if(k==1)s->ref144_high=points[3];
-    }
-    if(!FitDacCurve(s,points,s->ref_dac144,intercept,CAL_REFERENCE))return 0;
+    unsigned commands[4][2],k;CalMean anchor,points[4];int32_t intercept[2];
+    Commands(s,commands);memset(&s->dac_diagnostic,0,sizeof(s->dac_diagnostic));
+    if(!Capture(s,ops,1,commands[1][0],commands[1][1],&anchor,CAL_REFERENCE))return 0;
+    if(!Curve(s,ops,1,CAL_REFERENCE,commands,points,s->ref_dac144,intercept))return 0;
+    s->ref144_low=points[0];s->ref144_high=points[3];
     for(k=0;k<4;++k) {
         s->dac_diagnostic.step=CAL_DAC_POINT;
-        if(!Capture(s,ops,1,Scope144_Command(offsets[k]),Scope144_Command(offsets[k]),&s->ref144_verify[k],CAL_REFERENCE))return 0;
+        if(!Capture(s,ops,1,commands[k][0],commands[k][1],&s->ref144_verify[k],CAL_REFERENCE))return 0;
         s->ref144_stats[k]=s->capture_stats;
     }
     s->dac_diagnostic.step=CAL_DAC_RETURN;
-    if(!Capture(s,ops,1,Scope144_Command(s->adc_offset),Scope144_Command(s->adc_offset),result,CAL_REFERENCE))return 0;
+    if(!Capture(s,ops,1,commands[1][0],commands[1][1],result,CAL_REFERENCE))return 0;
     if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_REFERENCE,14);return 0;}
     s->dac_diagnostic.step=CAL_DAC_DRIFT;
-    if(!CheckDac(s,result,anchor.a,anchor.b,CAL_REFERENCE))return 0;
-    s->dac_diagnostic.step=CAL_DAC_RETURN;
-    if(!CheckDac(s,result,intercept[0]+s->adc_offset*s->ref_dac144[0],
-        intercept[1]+s->adc_offset*s->ref_dac144[1],CAL_REFERENCE))return 0;
+    if(!CheckDac(s,result,anchor.a,anchor.b,CAL_REFERENCE) ||
+       !CheckDac(s,result,intercept[0]+commands[1][0]*s->ref_dac144[0],intercept[1]+commands[1][1]*s->ref_dac144[1],CAL_REFERENCE))return 0;
     for(k=0;k<4;++k) {
         s->dac_diagnostic.step=CAL_DAC_POINT;
-        if(!CheckDac(s,&s->ref144_verify[k],result->a+((int)offsets[k]-s->adc_offset)*s->ref_dac144[0],
-            result->b+((int)offsets[k]-s->adc_offset)*s->ref_dac144[1],CAL_REFERENCE)) {
-            /* Error UI must describe the failed point, not the later return. */
+        if(!CheckDac(s,&s->ref144_verify[k],intercept[0]+commands[k][0]*s->ref_dac144[0],intercept[1]+commands[k][1]*s->ref_dac144[1],CAL_REFERENCE)) {
             s->capture_mean=s->ref144_verify[k];s->capture_stats=s->ref144_stats[k];s->capture_path=1;
-            s->capture_commands[0]=s->capture_commands[1]=Scope144_Command(offsets[k]);return 0;
+            s->capture_commands[0]=commands[k][0];s->capture_commands[1]=commands[k][1];return 0;
         }
     }
-    s->dac_diagnostic.step=CAL_DAC_REFERENCE;return 1;
+    return 1;
 }
 static int Reference(UnifiedCal *s,const CalOps *ops)
 {
@@ -312,6 +310,19 @@ static int Reference(UnifiedCal *s,const CalOps *ops)
     Diagnose(s,&m,0);native_delta[0]=s->delta[0];native_delta[1]=s->delta[1];
     for(ch=0;ch<2;++ch)if(!CalNative_Gain(s->zero_ref[r][ch],ch?m.b:m.a,s->reference,s->scale[r],&gains[ch])) {
         s->failed_channel=ch;Fail(s,CAL_REFERENCE,6);return 0;
+    }
+    {
+        unsigned commands[4][2],k;CalMean p;Commands(s,commands);
+        for(k=0;k<4;++k) {
+            if(!Capture(s,ops,0,commands[k][0],commands[k][1],&p,CAL_REFERENCE))return 0;
+            for(ch=0;ch<2;++ch) {
+                int32_t raw=ch?p.b:p.a;
+                int32_t ground=(s->adc_offset+s->working_y[r][k]-s->native[ch].zero[r])*1024;
+                if(Magnitude(raw-ground-native_delta[ch])>CAL_OFFSET_TOLERANCE) {
+                    s->failed_channel=ch;Fail(s,CAL_REFERENCE,13);return 0;
+                }
+            }
+        }
     }
     if(s->include144) {
         if(!Reference144(s,ops,&m))return 0;
@@ -329,6 +340,13 @@ static int Reference(UnifiedCal *s,const CalOps *ops)
             candidate.reference_uv=Rounded((int64_t)target_span*s->scale[r],1024);
             candidate.dac_a_q10=s->dac144[r][0];candidate.dac_b_q10=s->dac144[r][1];candidate.adc_offset=s->adc_offset;
             candidate.ref_dac_a_q10=s->ref_dac144[0];candidate.ref_dac_b_q10=s->ref_dac144[1];
+            candidate.dac_anchor=CalNative_Command(s->adc_offset,s->native[0].offset[r],25) |
+                (CalNative_Command(s->adc_offset,s->native[1].offset[r],25)<<8) |
+                ((uint32_t)(uint8_t)s->native[0].offset[r]<<16) | ((uint32_t)(uint8_t)s->native[1].offset[r]<<24);
+            candidate.dac_window=CalNative_Command(s->adc_offset,s->native[0].offset[r],s->working_y[r][0]) |
+                (CalNative_Command(s->adc_offset,s->native[0].offset[r],s->working_y[r][3])<<8) |
+                (CalNative_Command(s->adc_offset,s->native[1].offset[r],s->working_y[r][0])<<16) |
+                (CalNative_Command(s->adc_offset,s->native[1].offset[r],s->working_y[r][3])<<24);
             if(!Scope144_Valid(&candidate)){Fail(s,CAL_REFERENCE,7);return 0;}
             s->pending144[r]=candidate;
         }
@@ -379,10 +397,12 @@ void UnifiedCal_Step(UnifiedCal *s,CalKey key,const CalOps *ops)
         uint32_t battery=ops->battery(ops->user),previous_battery=s->bank.battery[profile];
         if(battery<2800 || battery>5200 || Magnitude((int32_t)battery-(int32_t)s->battery)>100){Fail(s,CAL_SAVE,14);return;}
         s->battery=battery;
-        if(s->include144){memcpy(s->rollback144,dest,sizeof(s->rollback144));memcpy(dest,s->pending144,sizeof(s->pending144));s->bank.battery[profile]=s->battery;}
+        memcpy(s->rollback144,dest,sizeof(s->rollback144));
+        if(s->include144)memcpy(dest,s->pending144,sizeof(s->pending144));else memset(dest,0,sizeof(s->pending144));
+        s->bank.battery[profile]=s->battery;
         if(ops->save(ops->user,s,profile)==0)s->stage=CAL_DONE;
         else {
-            if(s->include144){memcpy(dest,s->rollback144,sizeof(s->rollback144));s->bank.battery[profile]=previous_battery;}
+            memcpy(dest,s->rollback144,sizeof(s->rollback144));s->bank.battery[profile]=previous_battery;
             Fail(s,CAL_SAVE,10);
         }
     }

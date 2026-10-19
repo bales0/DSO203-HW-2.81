@@ -23,7 +23,29 @@ typedef struct {
 } Capture144WordOps;
 typedef enum { CAPTURE144_OK, CAPTURE144_ARGUMENT, CAPTURE144_UNSUPPORTED,
     CAPTURE144_CANCELLED, CAPTURE144_TIMEOUT, CAPTURE144_IO, CAPTURE144_PENDING } Capture144Status;
-/* Cooperative real A/C/D capture, PerCnt=150. configure sets the trigger;
+/* RTL tb_capture_window verifies Bptr-PerCnt, one separate prime and
+ * two overwritten prefix words. An edge is at raw word PerCnt-1, or
+ * PerCnt-2 for pulse closing edges. A occupies the odd B->A time slot.
+ * Digital C/D retain their existing (separate) display alignment. */
+#define CAPTURE144_DEFAULT_PRETRIGGER 150u
+static inline uint32_t Capture144_TriggerPosition(unsigned pre,unsigned source,unsigned kind,int32_t shift)
+{
+    int32_t sample;
+    if(pre<20 || pre>1024 || (source!=0 && source!=2 && source!=3) || kind>8 ||
+        (source && (shift<-(32*65536) || shift>32*65536)))return UINT32_MAX;
+    sample=(int32_t)(2u*pre-5u-(source?1u:0u)-(kind>=4 && kind<=7?2u:0u))*65536;
+    return (uint32_t)(sample+(source?shift:0));
+}
+/* Stable runtime policy, independent of phase and individual XPOS presses.
+ * 256 at 500 ns/div gives >=472 pre-samples even for C/D shift=-32 and
+ * pulse delay: enough for 193*2.4 samples at the wide graph center.
+ * At least 7000 chronological time samples remain after the event. */
+static inline unsigned Capture144_Pretrigger(unsigned base,unsigned width)
+{
+    if(base>2 || (width!=300 && width!=386))return 0;
+    return base==2?256u:CAPTURE144_DEFAULT_PRETRIGGER;
+}
+/* Cooperative real A/C/D capture with frozen pretrigger. configure sets the trigger; configure sets the trigger;
  * stop disarms it on every unsuccessful exit. All callbacks are bounded.
  * Initialize session to zero before its first use. The caller keeps
  * ops/user, session, window and DataBuf exclusively owned
@@ -38,11 +60,11 @@ typedef struct {
     CaptureWindow *window;
     uint64_t period;
     uint32_t epoch,started,wait_timeout,read_timeout,index;
-    unsigned stage,trigger_delay;
+    unsigned stage,trigger_delay,pretrigger;
 } Capture144Session;
 Capture144Status Capture144_Begin(Capture144Session *,const FpgaProfile *,
     const Capture144AsyncOps *,uint32_t *,uint32_t epoch,uint64_t period,
-    uint32_t wait_timeout,uint32_t read_timeout,CaptureWindow *);
+    uint32_t wait_timeout,uint32_t read_timeout,unsigned pretrigger,CaptureWindow *);
 Capture144Status Capture144_Poll(Capture144Session *,unsigned read_budget);
 /* After Begin, before Poll: configure has selected C/D; use the same frozen
  * alignment policy for the raw PerCnt-1 edge and the digital trace. */

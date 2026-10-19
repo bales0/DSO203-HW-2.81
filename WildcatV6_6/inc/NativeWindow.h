@@ -1,7 +1,9 @@
 #ifndef WILDCAT_NATIVE_WINDOW_H
 #define WILDCAT_NATIVE_WINDOW_H
 #include "ViewWindowGeometry.h"
-/* Metadata only. Counts describe completed Native DataBuf cells; OS cells
+/* Metadata only. Capacity is the stable overview axis. A separate validity
+ * bitmap proves every raw/interpolated endpoint in the current viewport;
+ * gaps elsewhere never imply that unknown history is available. OS cells
  * are aggregates, not raw FIFO words. No acquisition or persistent writes. */
 typedef struct {
     uint16_t capacity,points,step_q10;

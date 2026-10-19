@@ -48,12 +48,6 @@ int ViewWindow_Build(uint32_t count,uint32_t width,uint32_t step,int64_t request
     return 1;
 }
 
-int ViewWindow_FromCapture(const CaptureWindow *capture,uint32_t width,uint32_t step,
-    ViewWindowGeometry *view)
-{
-    if(!CaptureWindow_Valid(capture))return Clear(view);
-    return ViewWindow_Build(capture->time_samples,width,step,capture->first_visible_q16,view);
-}
 
 int ViewWindow_Anchor(uint32_t count,uint32_t width,uint32_t step,uint32_t anchor,
     uint32_t column,int64_t displacement,ViewWindowGeometry *view)

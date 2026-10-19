@@ -1,14 +1,39 @@
 #ifndef WILDCAT_UI_COMMON_H
 #define WILDCAT_UI_COMMON_H
-#include "Fft144.h"
+#include <stdint.h>
+#define UI_KEY_SHORT_MS 500u
+#define UI_K2_SERVICE_MS 3000u
+#define UI_K3_CONFIG_MS 1500u
+int UiCommon_ServiceKey(unsigned key);
+int UiCommon_ServiceTitle(void);
+/* Runtime analog commands; reset after any external owner of input settings. */
+void UiCommon_AnalogReset(void);
+void UiCommon_AnalogSet(unsigned char object,uint32_t value);
 /* Shared actions over the native Title/Detail state. Acquisition is not owned
  * here. The caller reconciles dirty output once, after handling an action. */
+/* Signed step; reference_units distinguishes Normal reference pixels from
+ * its native interpolated position. 144 maps either decision onto Q16 time. */
+int UiCommon_XposStep(int reference,int direction,unsigned accelerated,unsigned middle,
+    unsigned *reference_units);
+/* Stops and approach use the caller's physical coordinate units. */
+int UiCommon_XposApproach(int step,int64_t room,int64_t quantum);
+int64_t UiCommon_XposBound(int64_t current,int64_t delta,int64_t minimum,int64_t maximum);
+/* offset is temporal Q16 from the theoretical Normal reference (150 px).
+ * Native value steps use PSC/ARR timer periods; reference steps use pixels. */
+int64_t UiCommon_Xpos144Delta(int64_t offset,unsigned base,unsigned psc,unsigned arr,
+    int64_t maximum,int direction,unsigned accelerated,unsigned middle);
 typedef struct { unsigned char details,frequency_max; } GeneratorCapability;
 extern const GeneratorCapability GeneratorCapabilities[9];
 unsigned Generator_Detail(unsigned kind,unsigned detail);
 unsigned Generator_NextDetail(unsigned kind,unsigned detail);
 int Generator_Key(unsigned key,unsigned interlace);
 int UiCommon_ValueKey(unsigned key,unsigned interlace);
+unsigned UiCommon_MeterStep(unsigned item,int delta);
+unsigned UiCommon_MeterMask(void);
+int UiCommon_TimeItem(unsigned item);
+unsigned UiCommon_TimeDemand(unsigned required_channels);
+const char *UiCommon_MeterLabel(unsigned item);
+void UiCommon_HeaderText(unsigned short color,unsigned selected,const char *text);
 int UiCommon_NextDetail(unsigned interlace);
 void Generator_Reconcile(void);
 int Generator_Validate(void);
@@ -18,6 +43,7 @@ void UiCommon_Status(unsigned status);
 void UiCommon_ModeTransition(void);
 void UiCommon_FixedTitle(unsigned group,unsigned detail,unsigned mode);
 void UiCommon_PercentTitle(unsigned group,unsigned mode);
+void UiFile_Begin(void);
 void UiFile_Result(unsigned status);
 const char *UiCommon_Message(void);
 void Generator_Text(char text[9]);
@@ -45,18 +71,4 @@ unsigned TriggerMenu_K2(unsigned mode,unsigned manual);
 #define UI_ARB_INVALID 202u
 #define UI_UART_INVALID 203u
 #define UI_UNAVAILABLE 204u
-#ifdef GENERATOR_DIAGNOSTICS
-#include "Clock144.h"
-typedef struct {
-    unsigned irq_calls[2],irq_max_cycles[2],poll_calls,poll_max_cycles,poll_gap_cycles,poll_timeouts,last_poll;
-} GeneratorRuntimeStats;
-extern volatile GeneratorRuntimeStats GeneratorRuntime;
-void Generator_IrqSample(unsigned irq,unsigned cycles);
-void Generator_PollSample(unsigned started,unsigned cycles,unsigned timeout);
-#define GEN_IRQ_BEGIN unsigned fft_irq_started=Fft144_IrqBegin(),gen_irq_started=DWT_CYCLES
-#define GEN_IRQ_END(n) do {Generator_IrqSample(n,DWT_CYCLES-gen_irq_started);Fft144_IrqEnd(fft_irq_started);}while(0)
-#else
-#define GEN_IRQ_BEGIN uint32_t fft_irq_started=Fft144_IrqBegin()
-#define GEN_IRQ_END(n) Fft144_IrqEnd(fft_irq_started)
-#endif
 #endif

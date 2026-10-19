@@ -513,7 +513,7 @@ u8 Save_Buf(u8 FileNum)
     *p++ = Title[i][0].Value;
     *p++ = Title[i][1].Value;
     *p++ = Title[i][2].Value;
-    *p++ = Title[i][3].Value;
+    *p++ = i<2?Process_NativeYpos(i):Title[i][3].Value;
   }
   *p++ = Title[6][0].Value;
   *p++ = Title[6][1].Value;
@@ -863,6 +863,7 @@ u8 Load_Buf(u8 FileNum)
   UpdateFileMenu();
   BufferRestore=1;
   NativeWindow_Loaded();
+  Process_NativeLoaded();
   return 0;
 }
 
@@ -953,9 +954,10 @@ s32 CSVdata(u8 Ch,u8 Inv,u16 i,u8 data){
 u8 range=Title[Ch][RANGE].Value;
 s32 temp;
 s8 *p1[2];u16 *p2[2];
+(void)i;
 p1[0]=Ka1;p1[1]=Kb1;p2[0]=Ka2;p2[1]=Kb2;
 
-    p1[Ch]+=range;temp=*p1[Ch]+((data-ADCoffset)-Title[Ch][POSI].Value);                  
+    p1[Ch]+=range;temp=*p1[Ch]+((data-Process_NativeOffset(Ch))-Process_NativeYpos(Ch));                  
     p2[Ch]+=range;if(CalFlag>0)temp=(*p2[Ch]*temp)/1024;
     temp*= Y_Attr[range].SCALE;
     if(Title[Ch][SOURCE].Value>2)temp*=10;
@@ -1104,9 +1106,9 @@ u8 Save_Csv(u8 FileNum)
 //============================================DATA===========================================
                                                                                     //CH A
     if(CSVdataModeLogic()){                                                           //direct buffer value copy mode w/digital ch's 
-      temp=Ka1[_A_Range]+((Ka2[_A_Range]*((DataBuf[i] & 0xff)-ADCoffset))+512)/1024;
+      temp=Ka1[_A_Range]+((Ka2[_A_Range]*((DataBuf[i] & 0xff)-Process_NativeOffset(0)))+512)/1024;
       u8ToDec3(Num[0],temp,0);
-      temp = Kb1[_B_Range]+((Kb2[_B_Range]*(((DataBuf[i] & 0xff00)>>8)-ADCoffset))+512)/1024;
+      temp = Kb1[_B_Range]+((Kb2[_B_Range]*(((DataBuf[i] & 0xff00)>>8)-Process_NativeOffset(1)))+512)/1024;
       u8ToDec3(Num[1],temp,0);
       temp=Title[TRACK3][POSI].Value;
       if((DataBuf[i]&0x010000)!=0)temp+=20;
@@ -1186,6 +1188,7 @@ Load_Parameter: ����֮ǰ�Ĺ�������                      
 *******************************************************************************/
 u8 Load_Param(u8 FileNum)
 {
+  const u8 reserved_cfg_item=1;
   if(Generator_SecBusy())return UI_FILE_BUSY;
   u8  Sum = 0,BootLoad=0; 
   char Filename[12]="CONF    CFG";
@@ -1240,6 +1243,9 @@ u8 Load_Param(u8 FileNum)
   for(i=0; i<9; i++){
     Meter[i].Item     = *p;
     Meter[i].Track    =(*p++ >>8);       // load measurements and the measurement object
+    if(Meter[i].Item==reserved_cfg_item || Meter[i].Item>TL || Meter[i].Track>4) {
+      Meter[i].Item=VDC;Meter[i].Track=TRACK1;
+    }
 	  }
 
  if(BootLoad){
@@ -1300,7 +1306,7 @@ u8 Load_Param(u8 FileNum)
 
     if(BootLoad){                                            //"system" variable, only load on boot
       Sum=*p;  
-      if((*p++>>8)==0xAB)ADCoffset=Sum; else ADCoffset=54;     //0xAB "key" assures default of 54 if ADCoffset value not originally saved         
+      if((*p++>>8)==0xAB)ADCoffset=Sum; else ADCoffset=40;     //0xAB "key" assures default of 40 if ADCoffset value not originally saved         
     }else p++;
 
     SweepIndex =     *p++;
@@ -1362,10 +1368,8 @@ u8 Save_Param(u8 FileNum) // save the operating parameters table
   u16 pCluster[3];
   u32 pDirAddr[1];
   if(FileNum==0) {
-    Scope144Bank bank;
-    File144_CalLoad(&bank);
     Versions=0x06;
-    return (u8)File144_WptSave(&bank,1);
+    return (u8)File144_SaveParams();
   }
   if (InitFileSystem() != 0)
     return 1;
@@ -1413,6 +1417,11 @@ void storeParameter(void)
       *p++ = Title[i][2].Value;
       *p++ = Title[i][3].Value;
     }
+    if(Wildcat144_Active()) {
+      u16 *native=(u16 *)SecBuff;
+      native[8+TRACK1*4+COUPLE]=Title[TRACK1][COUPLE].Value==SCOPE144_AC?AC:DC;
+      native[8+T_BASE*4+XPOSI]=0;
+    }
     for(i=0; i<9; i++){
       *p++ =(Meter[i].Track<<8)+ Meter[i].Item;    // Save the measurement items and measurement object
     }
@@ -1429,7 +1438,7 @@ void storeParameter(void)
     *p++ = (CurDefTime<<8)+FlagFrameMode;     // include Cursor defined selection 
     *p++ = (UpdateMeter<<8)+FlagMeter;        // include meter "page" along with flag		
     *p++ = (CalFlag<<8)+TrgAuto;		    // include wave amplitude calibration flag	
-    *p++ = (SaveShortBuffXpos<<8)+OffsetX;    // include short buffer xpos
+    *p++ = ((Wildcat144_Active()?0:SaveShortBuffXpos)<<8)+OffsetX;    // include short buffer xpos
     *p++ = (Options<<8)+OffsetY; 		    // include Options
     *p++ = LoBatLevel[0];
     *p++ = LoBatLevel[1];

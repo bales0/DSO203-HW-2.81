@@ -6,31 +6,130 @@
 #include "Function.h"
 #include "File.h"
 #include "Scope144.h"
+#include "Calibrat.h"
 #include "UiCommon.h"
 #include <string.h>
+
+/* Return 1 consumed, 2 changed ADC command, 3 changed clock correction.
+ * Both acquisition owners perform their own safe hardware reconciliation. */
+int __attribute__((optimize("Os"))) UiCommon_ServiceKey(unsigned key)
+{
+    int delta;
+    if(!OffsetSelect || Current<=TRACK2 || Current==FILE)return 0;
+    if(key==K_INDEX_S){OffsetSelect^=3u;return 1;}
+    if(key!=K_INDEX_INC && key!=K_INDEX_DEC)return 0;
+    delta=key==K_INDEX_INC?1:-1;
+    if(OffsetSelect==1) {
+        int next=ADCoffset+delta;
+        if(next<0 || next>54)return 1;
+        ADCoffset=(u8)next;return 2;
+    }
+    if(PPM_Comp+delta < -999 || PPM_Comp+delta > 999)return 1;
+    PPM_Comp+=(s16)delta;return 3;
+}
+int __attribute__((optimize("Os"))) UiCommon_ServiceTitle(void)
+{
+    char cell[21];unsigned n,value;
+    if(!OffsetSelect || Current<=TRACK2 || Current==FILE)return 0;
+    memset(cell,' ',20);cell[20]=0;
+    if(OffsetSelect==1) {
+        memcpy(cell,"ADCoffset= ",11);value=ADCoffset;
+        cell[11]=(char)('0'+value/10);cell[12]=(char)('0'+value%10);
+    } else {
+        memcpy(cell,"Clock PPM Adj=",14);n=PPM_Comp<0;
+        value=n?(unsigned)-PPM_Comp:(unsigned)PPM_Comp;
+        cell[14]=n?'-':'+';cell[15]=(char)('0'+value/100);
+        cell[16]=(char)('0'+value/10%10);cell[17]=(char)('0'+value%10);
+    }
+    Print_Str(127,0,0x0405,PRN,cell);return 1;
+}
+
+/* Only runtime input writes use this cache. Calibration keeps its direct
+ * BIOS writes and invalidates before entering that hardware ownership. */
+static u16 analog_values[6];
+static u8 analog_valid;
+void UiCommon_AnalogReset(void) { analog_valid=0; }
+void UiCommon_AnalogSet(unsigned char object,uint32_t value)
+{
+    unsigned slot,bit;
+    if(object<=CH_B_OFFSET)slot=object;
+    else if(object>=CH_A_COUPLE && object<=CH_B_RANGE)slot=object-CH_A_COUPLE+2u;
+    else {UiCommon_AnalogReset();__Set(object,value);return;}
+    /* Packed offset commands also change the shared TIM5 period. Never
+     * cache those; the next ordinary writes must restore both channels. */
+    if(value>=65536u){UiCommon_AnalogReset();__Set(object,value);return;}
+    bit=1u<<slot;
+    if((analog_valid&bit) && analog_values[slot]==value)return;
+    analog_values[slot]=(u16)value;analog_valid|=(u8)bit;
+    __Set(object,value);
+}
+
+/* Pure repeat policy. Normal's interpolated visible region uses reference
+ * pixels (4); outside it, the caller retains native GetXpos conversions.
+ * No key timing or capture state is owned here. Bounds belong to the caller. */
+int UiCommon_XposStep(int reference,int direction,unsigned accelerated,unsigned middle,
+    unsigned *reference_units)
+{
+    unsigned amount=1;
+    if(reference_units)*reference_units=0;
+    if(!direction)return 0;
+    if(accelerated) {
+        if(reference>150)amount=middle?6:30;
+        else if(direction<0?reference>30:reference>=30) {
+            amount=4;if(reference_units)*reference_units=1;
+        }
+    }
+    return direction<0?-(int)amount:(int)amount;
+}
+
+/* Shared approach to the right stop, expressed in caller units. */
+int UiCommon_XposApproach(int step,int64_t room,int64_t quantum)
+{
+    if(step>1 && quantum>0 && room<=30*quantum)step=room>6*quantum?6:1;
+    return step;
+}
+/* Clamp before and after an edit: inherited clipping must not turn the
+ * first reverse key into a repayment of invisible movement. */
+int64_t UiCommon_XposBound(int64_t current,int64_t delta,int64_t minimum,int64_t maximum)
+{
+    int64_t next;
+    if(minimum>maximum)return current;
+    if(current<minimum)current=minimum;
+    if(current>maximum)current=maximum;
+    if(delta>0 && current>INT64_MAX-delta)return maximum;
+    if(delta<0 && current<INT64_MIN-delta)return minimum;
+    next=current+delta;
+    if(next<minimum)return minimum;
+    if(next>maximum)return maximum;
+    return next;
+}
+/* Normal's XposRef is a display-pixel reference, but its ordinary value
+ * steps are timer periods, not pixels. 144 retains their physical time in
+ * Q16: one 72MHz period equals two interlace samples (four for ARR=1). */
+int64_t UiCommon_Xpos144Delta(int64_t offset,unsigned base,unsigned psc,unsigned arr,
+    int64_t maximum,int direction,unsigned accelerated,unsigned middle)
+{
+    int64_t pixel=Scope144_Step(base),reference,remainder,quantum,room;
+    unsigned reference_units;int step;
+    if(!pixel || psc>65535 || arr>65535)return 0;
+    reference=offset/pixel;remainder=offset%pixel;
+    if(remainder>=(pixel+1)/2)++reference;
+    else if(remainder<=-(pixel+1)/2)--reference;
+    if(reference>2147483647LL)reference=2147483647LL;
+    if(reference<(-2147483647LL-1))reference=(-2147483647LL-1);
+    step=UiCommon_XposStep((int)reference,direction,accelerated,middle,&reference_units);
+    if(reference_units)return (int64_t)step*pixel;
+    quantum=2LL*65536*(psc+1u)*(arr+1u);
+    room=maximum-offset;
+    step=UiCommon_XposApproach(step,room,quantum);
+    return (int64_t)step*quantum;
+}
 
 /* KIND, frequency and (where meaningful) duty or amplitude. */
 static unsigned output_dirty,ui_status,directory_count,file_changed;
 static int requested_kind=-1;
 static unsigned native_header_shown;
 extern u8 SelectiveUpdate;
-#ifdef GENERATOR_DIAGNOSTICS
-volatile GeneratorRuntimeStats GeneratorRuntime;
-void Generator_IrqSample(unsigned irq,unsigned cycles)
-{
-    if(irq>1)return;
-    ++GeneratorRuntime.irq_calls[irq];
-    if(cycles>GeneratorRuntime.irq_max_cycles[irq])GeneratorRuntime.irq_max_cycles[irq]=cycles;
-}
-void Generator_PollSample(unsigned started,unsigned cycles,unsigned timeout)
-{
-    unsigned gap=started-GeneratorRuntime.last_poll;
-    if(GeneratorRuntime.last_poll && gap>GeneratorRuntime.poll_gap_cycles)GeneratorRuntime.poll_gap_cycles=gap;
-    GeneratorRuntime.last_poll=started;++GeneratorRuntime.poll_calls;
-    if(cycles>GeneratorRuntime.poll_max_cycles)GeneratorRuntime.poll_max_cycles=cycles;
-    if(timeout)++GeneratorRuntime.poll_timeouts;
-}
-#endif
 /* Invalidate only mode-dependent native cells. GEN, battery and panel
  * layout are shared; their ordinary handlers retain their own dirty flags. */
 void UiCommon_ModeTransition(void)
@@ -113,6 +212,92 @@ static void BaudStep(int delta)
     if(delta>0)GenBaudIndex=(u16)(index>16+step?index-step:16);
     else GenBaudIndex=(u16)(index+step<15871?index+step:15871);
 }
+/* Compact labels are independent of the stable measurement IDs in CFG.
+ * Only actual measurements have storage; invalid IDs never index the table. */
+const char *UiCommon_MeterLabel(unsigned item)
+{
+    static const char names[11][5]={"Vbt","Vdc","RMS","Frq","Max","Min","Vpp","Per","Dut","!TH!","!TL!"};
+    if(item==VBT)return names[0];
+    if(item<VDC || item>TL)return "--";
+    return names[item-1u];
+}
+unsigned UiCommon_MeterStep(unsigned item,int delta)
+{
+    if(item!=VBT && (item<VDC || item>TL))return delta<0?TL:VBT;
+    if(delta<0)return item==VBT?TL:item==VDC?VBT:item-1u;
+    return item==TL?VBT:item==VBT?VDC:item+1u;
+}
+/* Shared default-page layout after a panel change, as in native Normal.
+ * User-defined single-channel pages are left untouched. */
+void MeterDefaults(void){
+              unsigned i;
+
+              if ((UpdateMeter==4)&&(FlagMeter>0)){
+
+                Meter[0].Flag |= UPDAT;
+                Meter[0].Item  =  VBT;
+                Meter[0].Track = 4;  
+                if(FlagMeter==1){
+                  for(i=1;i<9;++i)Meter[i].Flag|=UPDAT;
+                }else if(FlagMeter==2){
+                  for(i=1;i<4;++i)Meter[i].Flag|=UPDAT;
+                }
+
+                if ((_Mode==X_Y) || ( (Title[TRACK3][SOURCE].Value == HIDE) && (Title[TRACK4][SOURCE].Value == HIDE)))
+                {
+                  if(FlagMeter==1){              
+                    Meter[1].Item  =  RMS; Meter[1].Track = 0;
+                    Meter[2].Item  =  VDC; Meter[2].Track = 0;
+                    Meter[3].Item  =  VPP; Meter[3].Track = 0;
+                    Meter[4].Item  =  FRQ; Meter[4].Track = 0;
+                    Meter[5].Item  =  RMS; Meter[5].Track = 1;
+                    Meter[6].Item  =  VDC; Meter[6].Track = 1;
+                    Meter[7].Item  =  VPP; Meter[7].Track = 1;
+                    Meter[8].Item  =  FRQ; Meter[8].Track = 1;
+                  }else{
+                    Meter[2].Item  =  VDC; Meter[2].Track = 0;
+                    Meter[3].Item  =  VDC; Meter[3].Track = 1;
+                  }
+                }  
+                else  
+                {
+                  if(FlagMeter==1){              
+                    Meter[1].Item  =  FRQ; Meter[1].Track = 0;
+                    Meter[2].Item  =  VDC; Meter[2].Track = 0;
+                    Meter[3].Item  =  FRQ; Meter[3].Track = 1;
+                    Meter[4].Item  =  VDC; Meter[4].Track = 1;
+                    Meter[5].Item  =  FRQ; Meter[5].Track = 2;
+                    Meter[6].Item  =  CIR; Meter[6].Track = 2;
+                    Meter[7].Item  =  FRQ; Meter[7].Track = 3;
+                    Meter[8].Item  =  CIR; Meter[8].Track = 3;
+                  }else{ 
+                    Meter[2].Item  =  VDC; Meter[2].Track = 0;
+                    Meter[3].Item  =  VDC; Meter[3].Track = 1;
+                  }
+                }
+               }
+}
+
+/* One visibility rule for Normal, interlace and both digital channels.
+ * required contains consumers outside the panel (detector, autoset, ...). */
+int UiCommon_TimeItem(unsigned item)
+{ return item==FRQ || (item>=CIR && item<=TL); }
+/* Bit i denotes a visible Meter[i], including the small battery field
+ * above the two large default meters. Hidden fields retain their dirty flags. */
+unsigned UiCommon_MeterMask(void)
+{
+    if(FlagMeter==1)return 0x1ffu;
+    return FlagMeter==2?(UpdateMeter==4?0x0du:0x0eu):0;
+}
+unsigned UiCommon_TimeDemand(unsigned required)
+{
+    unsigned i,mask=UiCommon_MeterMask();
+    for(i=0;mask;++i,mask>>=1)if(mask&1u) {
+        const meter *m=&Meter[i];
+        if(m->Track<4 && UiCommon_TimeItem(m->Item))required|=1u<<m->Track;
+    }
+    return required&15u;
+}
 int UiCommon_ValueKey(unsigned key,unsigned interlace)
 {
     int next;
@@ -133,8 +318,8 @@ int UiCommon_NextDetail(unsigned interlace)
 {
     unsigned old,next,limit=4,cursor=Current==V_VERNIE || Current==T_VERNIE;
     if(interlace) {
-        if(!cursor && Current!=TRACK1)return 0;
-        if(cursor)limit=Scope144_DetailLimit(Current);
+        if(!cursor && Current!=TRACK1 && Current!=T_BASE)return 0;
+        limit=Scope144_DetailLimit(Current);
     } else if(Current>=METER_0)return 0;
     old=Detail[Current];if(old>=limit)return 0;
     Title[Current][old].Flag|=UPDAT;
@@ -333,6 +518,14 @@ void Generator_FrequencyTitle(void)
     cell[n]=0;
     Print_Str(e->XPOS,e->YPOS,Generator_ValueColor(),selected?Twink:PRN,cell);
 }
+/* Native eight-character status cell, shared by FILE and 144. */
+void UiCommon_HeaderText(unsigned short color,unsigned selected,const char *text)
+{
+    char cell[9];unsigned length=(unsigned)strlen(text);
+    if(length>8)length=8;
+    memset(cell,' ',8);memcpy(cell,text,length);cell[8]=0;
+    Print_Str(172,216,color,selected?Twink:PRN,cell);
+}
 unsigned UiCommon_HeaderOwned(void)
 {
     unsigned shared=Current!=FILE && !Sweep && !GenAdjustMode && !PWAdjustMode;
@@ -371,18 +564,18 @@ static void FileChanged(void)
 {
     unsigned n;file_changed=1;for(n=0;n<4;++n)Title[FILE][n].Flag|=UPDAT;
 }
-void UiFile_Enter(void)
+void __attribute__((optimize("Os"))) UiFile_Enter(void)
 {
-    unsigned supported=(Title[FILE][0].Value==SAVE && Title[FILE][2].Value==CSV) ||
+    unsigned supported=(Title[FILE][0].Value==SAVE && (Title[FILE][2].Value==CSV || Title[FILE][2].Value==CFG)) ||
         (Title[FILE][0].Value==LOAD && (Title[FILE][2].Value==5 || Title[FILE][2].Value==6));
     file_changed=0;
     if(!supported){Title[FILE][0].Value=SAVE;Title[FILE][2].Value=CSV;Detail[FILE]=0;}
     if(Title[FILE][1].Value<0 || Title[FILE][1].Value>999)Title[FILE][1].Value=0;
-    if(Title[FILE][0].Value==LOAD && Title[FILE][1].Value>255)Title[FILE][1].Value=255;
+    if((Title[FILE][0].Value==LOAD || Title[FILE][2].Value==CFG) && Title[FILE][1].Value>255)Title[FILE][1].Value=255;
     directory_count=0;
     if(UiFile_Directory())DirectoryRefresh();
 }
-int UiFile_Key(unsigned key,unsigned interlace)
+int __attribute__((optimize("Os"))) UiFile_Key(unsigned key,unsigned interlace)
 {
     unsigned d;int delta;
     if(Current!=FILE)return 0;
@@ -402,9 +595,12 @@ int UiFile_Key(unsigned key,unsigned interlace)
         Title[FILE][2].Value=Title[FILE][0].Value==SAVE?CSV:5;
         if(Title[FILE][0].Value==LOAD && Title[FILE][1].Value>255)Title[FILE][1].Value=255;
     } else if(d==1) {
-        int limit=Title[FILE][0].Value==SAVE && interlace?999:255;
+        int limit=Title[FILE][0].Value==SAVE && Title[FILE][2].Value==CSV && interlace?999:255;
         int next=Title[FILE][1].Value+delta;if(next<0)next=limit;if(next>limit)next=0;
         Title[FILE][1].Value=(s16)next;
+    } else if(d==2 && Title[FILE][0].Value==SAVE && interlace) {
+        Title[FILE][2].Value=Title[FILE][2].Value==CFG?CSV:CFG;
+        if(Title[FILE][2].Value==CFG && Title[FILE][1].Value>255)Title[FILE][1].Value=255;
     } else if(d==2 && Title[FILE][0].Value==LOAD) {
         Title[FILE][2].Value=Title[FILE][2].Value==5?6:5;DirRange=0;
     } else if(d==3 && UiFile_Directory()) {
@@ -437,19 +633,21 @@ int UiFile_Load(void)
     }
     UiFile_Result(status);return status;
 }
-void UiFile_Draw(void)
+void __attribute__((optimize("Os"))) UiFile_Draw(void)
 {
-    unsigned d=Detail[FILE];char num[4],cell[28];
+    unsigned d=Detail[FILE],type=(unsigned)Title[FILE][2].Value;char num[4],cell[28];
+    if(type<CSV || type>6)type=CSV;
     memset(cell,' ',27);cell[27]=0;Print_Str(92,0,0x0505,PRN,cell);
-    Print_Str(126,0,0x0405,d==0?Twink:PRN,Title[FILE][0].Value==LOAD?"LOAD":"SAVE");
+    Print_Str(126,0,0x0405,d==0?Twink:PRN,Title[FILE][0].Str+11u*(Title[FILE][0].Value==LOAD));
     num[0]=(char)('0'+Title[FILE][1].Value/100%10);num[1]=(char)('0'+Title[FILE][1].Value/10%10);num[2]=(char)('0'+Title[FILE][1].Value%10);num[3]=0;
     Print_Str(206,0,0x0405,d==1?Twink:PRN,num);
-    Print_Str(230,0,0x0405,d==2?Twink:PRN,Title[FILE][2].Value==5?"ARB":Title[FILE][2].Value==6?"UAR":"CSV");
+    Print_Str(230,0,0x0405,d==2?Twink:PRN,Title[FILE][2].Str+10u*type);
     if(Title[FILE][0].Value==LOAD)Print_Str(166,0,0x0405,d==DIR?Twink:PRN,"DIR");
     if(UiFile_Directory())PrintDir(0,0,1);
     if(!Wildcat144_Active()) {
-        unsigned n=(unsigned)strlen(UiCommon_Message());char header[9];if(n>8)n=8;
-        memset(header,' ',8);memcpy(header,UiCommon_Message(),n);header[8]=0;
-        Print_Str(172,216,0x0405,PRN,header);native_header_shown=2;
+        UiCommon_HeaderText(0x0405,0,UiCommon_Message());native_header_shown=2;
     }
 }
+
+void UiFile_Begin(void)
+{ Print_Str(230,0,(SCRN<<8)+TEXT1,PRN," >   "); }

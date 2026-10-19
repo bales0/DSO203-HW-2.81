@@ -62,7 +62,7 @@ u16 bag_max_buf = 4096;
 u8  freerun=0;					//flags for auto trig mode
 u8  exitflag=0;
 u8  entryflag=0;
-u8  ADCoffset=54; //shifts ADC/FIFO operating area away from non-linear first xx steps into previously unused linear 200-255 step area
+u8  ADCoffset=40; //shifts ADC/FIFO operating area away from non-linear first xx steps into previously unused linear 200-255 step area
 u16 TempKp1=1024;
 u8  CalFlag;
 u8  CurDefTime=0;			
@@ -440,6 +440,7 @@ void BackGround_Reset(u8 clear)
 *******************************************************************************/
 static void App_HardwareInit(void)
 { 
+  UiCommon_AnalogReset();
   __Set(ADC_CTRL, EN );       
   __Set(ADC_MODE, SEPARATE);
   __Set(STANDBY, DN);          // exit the power saving state
@@ -475,11 +476,11 @@ u8 Bmode=Title[TRACK2][COUPLE].Value;
   if (Amode>2)Amode=0;                                    //DC coupling for serial decode
   if (Bmode>2)Bmode=0;                                   
 
-  __Set(CH_A_COUPLE, Amode);
-  __Set(CH_A_RANGE,  Title[TRACK1][RANGE].Value);
+  UiCommon_AnalogSet(CH_A_COUPLE, Amode);
+  UiCommon_AnalogSet(CH_A_RANGE,  Title[TRACK1][RANGE].Value);
   SetOffset(0,_A_Range,_1_posi);
-  __Set(CH_B_COUPLE, Bmode);
-  __Set(CH_B_RANGE,  Title[TRACK2][RANGE].Value);                            
+  UiCommon_AnalogSet(CH_B_COUPLE, Bmode);
+  UiCommon_AnalogSet(CH_B_RANGE,  Title[TRACK2][RANGE].Value);                            
   SetOffset(1,_B_Range,_2_posi);
   if(SerialStatus)UpdateTLevels();
   if((Sweep)||(Det)){
@@ -551,6 +552,7 @@ void Update_Base(void)
   } 
   Wait_Cnt = Wait[_T_base];
   if(_Mode!=SCAN){
+    if(_Status == RUN)NativeWindow_Reset(); /* New timing cannot publish old record metadata. */
     if(_Status == RUN) __Set(FIFO_CLR, W_PTR);                     // FIFO write pointer reset
     if((_T_base>16)||(OSBufferLogic())){if(Title[TRIGG][SOURCE].Value==4) Update_Trig(0); else Update_Trig(1);}
     JumpCnt=0;
@@ -1092,9 +1094,83 @@ void UpdateTLevels(void){
  Process: Calculate processing buffer data
 *******************************************************************************/
 static u8 native_buffer_pending;
+/* Positions belong to the stored record, not to the later HOLD key press.
+ * No sample buffer or calibration coefficient is modified by presentation. */
+static s16 native_command_y[2],native_record_y[2],native_delta_y[2];
+static u8 native_y_valid,native_record_offset[2];
+static u8 native_clip[2],native_clip_work[2],native_clip_good,native_clip_mask;
+static u16 native_clip_count;
+/* ADC rail flags are taken only from actual raw writes, never LCD pixels.
+ * OS stores both extrema, including when its displayed trace is averaged. */
+static void NativeRecordSample(unsigned index,unsigned good)
+{
+    unsigned ch,raw;u32 word=DataBuf[index];
+    if(!index){native_clip_work[0]=native_clip_work[1]=0;native_clip_count=0;native_clip_good=1;
+        native_clip_mask=_Tr_source==4 && _Status==RUN?1u<<TrigSourceEnable:3;}
+    if(index!=native_clip_count)native_clip_good=0;
+    native_clip_count=(u16)(index+1);
+    /* Empty words cannot prove ADC saturation; nor can they erase a rail
+     * reached by a different, valid word. Frame validity stays independent. */
+    if(!good)return;
+    for(ch=0;ch<2;++ch) {
+        if(!(native_clip_mask&(1u<<ch)))continue;
+        raw=(word>>(8*ch))&255u;
+        native_clip_work[ch]|=raw==0?1:raw==255?2:0;
+        if(OsBufferLogicFlag || OsChartFlag) {
+            raw=(word>>(16+8*ch))&255u;
+            native_clip_work[ch]|=raw==0?1:raw==255?2:0;
+        }
+    }
+}
+unsigned Process_NativeClip(unsigned channel)
+{
+    unsigned bits;
+    if(channel>1 || CalibrateMode || ChartLogic() || native_buffer_pending ||
+       Wildcat144_Active() || !Title[channel][SOURCE].Value || Title[channel][COUPLE].Value>2)return 0;
+    bits=native_clip[channel];
+    return (channel?InvertB:InvertA)?((bits&1u)<<1)|((bits&2u)>>1):bits;
+}
+static void NativeClipPublish(unsigned available)
+{
+    unsigned ch;
+    for(ch=0;ch<2;++ch) {
+        u8 value=available?native_clip_work[ch]:0;
+        if(available && !(native_clip_mask&(1u<<ch)))continue;
+        if(native_clip[ch]!=value){native_clip[ch]=value;Title[ch][SOURCE].Flag|=UPDAT;}
+    }
+}
+int Process_NativeYpos(unsigned channel)
+{
+    if(channel>1)return 0;
+    return _Status!=RUN && !CalibrateMode && (native_y_valid&(1u<<channel)) ?
+        native_record_y[channel]:Title[channel][POSI].Value;
+}
+int Process_NativeOffset(unsigned channel)
+{
+    return channel<2 && _Status!=RUN && !CalibrateMode && (native_y_valid&(1u<<channel)) ?
+        native_record_offset[channel]:ADCoffset;
+}
+void Process_NativeLoaded(void)
+{
+    unsigned i;
+    native_record_y[0]=_1_posi;native_record_y[1]=_2_posi;native_y_valid=3;
+    native_record_offset[0]=native_record_offset[1]=ADCoffset;
+    native_clip_count=0;
+    /* OS BUF embeds auxiliary arrays in upper bytes: raw minima are no
+     * longer all intact. Alternate BUF retains stale shared status bits.
+     * Neither format can certify raw-rail availability after loading. */
+    if(!OSBufferLogic() && !ChartLogic() && _Tr_source!=4)
+        for(i=0;i<get_bag_max_buf();++i)NativeRecordSample(i,!(DataBuf[i]&0x00100000u));
+    NativeClipPublish(native_clip_count!=0 && native_clip_good);
+}
+static void NativeRecordY(unsigned channel)
+{
+    native_record_y[channel]=native_command_y[channel];native_record_offset[channel]=ADCoffset;native_y_valid|=1u<<channel;
+}
 void Process144_ReleaseBuffer(void)
 {
     NativeWindow_Reset();
+    native_y_valid=0;native_clip_count=0;NativeClipPublish(0);native_delta_y[0]=native_delta_y[1]=0;
     native_buffer_pending=1;JumpCnt=CountUnread=0;BufferRestore=0;
 }
 int Process144_NativePending(void) { return native_buffer_pending && !BufferRestore; }
@@ -1118,6 +1194,18 @@ int Process_NativeOverviewChanged(void)
     if(FlagFrameMode || OSBuffer || _Mode==SCAN || NativeViewUnsupported() || Process144_NativePending())NativeWindow_Hide();
     return NativeWindow_Changed((unsigned)(MAX_X-MIN_X));
 }
+/* Voltage averaging remains active even when no time meter is visible. */
+static u8 native_time_demand=15;
+static unsigned NativeTimeDemand(void)
+{
+    unsigned required=0;
+    if(AutoSetFlag || EnableMeterCalc || DownConvertMode || DownConvertInitiate ||
+       ShowFFT || _4_source>9 || Det || SerialStatus || OsBufferLogicFlag ||
+       ChartLogic() || _Mode==X_Y || _Mode==SCAN || CalibrateMode)required=15;
+    return UiCommon_TimeDemand(required);
+}
+int Process_TimeAvailable(unsigned channel)
+{ return channel<4 && (native_time_demand&(1u<<channel)); }
 void Process(void)
 { 
   s16 i, j = 0, k, V[8] = {0},a,b, n = 0,OsA=0,OsB=0,OsA_=0,OsB_=0;
@@ -1139,6 +1227,7 @@ void Process(void)
   s16  BWavCenter;
   s32  X=0,Y=0;
   s16 view_origin;
+  int native_offset_a=Process_NativeOffset(0),native_offset_b=Process_NativeOffset(1);
 
   if(native_buffer_pending) {
     /* HOLD must never interpret the released interlace/calibration workspace
@@ -1151,9 +1240,17 @@ void Process(void)
     }
   }
   if(ChartLogic() || _Mode==X_Y || _Tr_source==4 || CalibrateMode)NativeWindow_Reset();
+  if(ChartLogic() || CalibrateMode){native_clip_count=0;NativeClipPublish(0);}
   Waste=DataBuf[4095]&0x0000000F;
 
   if(UartLogic()||i2cLogic()||SpiLogic())SerialStatus=1;else SerialStatus=0;
+  {
+    unsigned demand=NativeTimeDemand(),fresh=demand&~native_time_demand;
+    for(jj=0;jj<4;++jj)if(fresh&(1u<<jj)) {
+        Sum[jj]=NAvg[jj]=PxS[jj]=TxS[jj]=TxN[jj]=0;
+    }
+    native_time_demand=(u8)demand;
+  }
   Ta = Tb = Tc = Td = 0;
   Pa = Pb = Pc = Pd = 0;
 
@@ -1172,8 +1269,10 @@ void Process(void)
   Posi_4F3 = _4_posi - FileBuff[ 1197];
   Posi_4F4 = _4_posi - FileBuff[1597];
 
-  A_Posi   = _1_posi-Ka1[_A_Range];    
-  B_Posi   = _2_posi-Kb1[_B_Range];    
+  native_delta_y[0]=_1_posi-Process_NativeYpos(0);
+  native_delta_y[1]=_2_posi-Process_NativeYpos(1);
+  A_Posi   = _1_posi-native_delta_y[0]-Ka1[_A_Range];
+  B_Posi   = _2_posi-native_delta_y[1]-Kb1[_B_Range];
   
   a_Max=-0x7FFF;a_Min=0x7FFF;          //in case max is negative or min is positive (as with DC voltages)	
   b_Max=-0x7FFF;b_Min=0x7FFF;          //originally would initiate @i=0 but with init @i=4 could transfer in slow mode before init
@@ -1351,11 +1450,11 @@ void Process(void)
       FastMode=0;
     }
 
-      V[A]=(DataBuf[i]&0xFF)-ADCoffset;
+      V[A]=(DataBuf[i]&0xFF)-native_offset_a;
       if(V[A]>=0)Ch[A]=V[A];else Ch[A]=0;
       if(V[A]<-15)V[A]=-15;
 
-      V[B]=((DataBuf[i]>>8)&0xFF)-ADCoffset;
+      V[B]=((DataBuf[i]>>8)&0xFF)-native_offset_b;
       if(V[B]>=0)Ch[B]=V[B];else Ch[B]=0;
       if(V[B]<-15)V[B]=-15;
 
@@ -1364,17 +1463,17 @@ void Process(void)
 
       if(OsBufferLogicFlag||OsChartFlag){
         if((OSAvg)&&(!OsChartFlag)){
-          V[A]=OsFFTData[0][i]-ADCoffset;
+          V[A]=OsFFTData[0][i]-native_offset_a;
           OsA=V[A];
-          V[B]=OsFFTData[1][i]-ADCoffset;
+          V[B]=OsFFTData[1][i]-native_offset_b;
           OsB=V[B];
         }else{         
-          OsA=(((DataBuf[i]>>16)&0xFF)-ADCoffset);   //accumulated minimum, maximum is already in V[x}
-          OsB=(((DataBuf[i]>>24)&0xFF)-ADCoffset);   
+          OsA=(((DataBuf[i]>>16)&0xFF)-native_offset_a);   //accumulated minimum, maximum is already in V[x}
+          OsB=(((DataBuf[i]>>24)&0xFF)-native_offset_b);   
         } 
 
-        if((RMSdata[0][i]-ADCoffset)>=0)Ch[A]=(RMSdata[0][i]-ADCoffset);else Ch[A]=0;  //2 lines take the place of commented above
-        if((RMSdata[1][i]-ADCoffset)>=0)Ch[B]=(RMSdata[1][i]-ADCoffset);else Ch[B]=0;
+        if((RMSdata[0][i]-native_offset_a)>=0)Ch[A]=(RMSdata[0][i]-native_offset_a);else Ch[A]=0;  //2 lines take the place of commented above
+        if((RMSdata[1][i]-native_offset_b)>=0)Ch[B]=(RMSdata[1][i]-native_offset_b);else Ch[B]=0;
 
         if(OsA<-15)OsA=-15;
         if(OsB<-15)OsB=-15;
@@ -1472,21 +1571,21 @@ void Process(void)
 
 		if (((_4_source==SPEC_A)&&(_2_source))||(_4_source==13)||(_4_source==12)){
                   if(OsBufferLogicFlag){
-                    Tmp=OsFFTData[1][i-WindowPosition]-ADCoffset;
+                    Tmp=OsFFTData[1][i-WindowPosition]-native_offset_b;
                     if(Tmp<-15)Tmp=-15;
-                    fr[i-WindowPosition]=(((Tmp-_2_posi)*Window[i-WindowPosition])/Normal)<<(2+FFTGain); 
+                    fr[i-WindowPosition]=(((Tmp-(B_Posi+Kb1[_B_Range]))*Window[i-WindowPosition])/Normal)<<(2+FFTGain); 
                   }else{
-                    fr[i-WindowPosition]=(((V[B]-_2_posi)*Window[i-WindowPosition])/Normal)<<(2+FFTGain);  			     
+                    fr[i-WindowPosition]=(((V[B]-(B_Posi+Kb1[_B_Range]))*Window[i-WindowPosition])/Normal)<<(2+FFTGain);  			     
                   }
                 }     
 
                 if (((_4_source==SPEC_A)&&(_1_source))||(_4_source>13) ){
                   if(OsBufferLogicFlag){
-                    Tmp=OsFFTData[0][i-WindowPosition]-ADCoffset;
+                    Tmp=OsFFTData[0][i-WindowPosition]-native_offset_a;
                     if(Tmp<-15)Tmp=-15;
-                    fr[i-WindowPosition]=(((Tmp-_1_posi)*Window[i-WindowPosition])/Normal)<<(2+FFTGain); 
+                    fr[i-WindowPosition]=(((Tmp-(A_Posi+Ka1[_A_Range]))*Window[i-WindowPosition])/Normal)<<(2+FFTGain); 
                   }else{
-                    fr[i-WindowPosition]=(((V[A]-_1_posi)*Window[i-WindowPosition])/Normal)<<(2+FFTGain);
+                    fr[i-WindowPosition]=(((V[A]-(A_Posi+Ka1[_A_Range]))*Window[i-WindowPosition])/Normal)<<(2+FFTGain);
                   }
                 }
 
@@ -1520,20 +1619,20 @@ void Process(void)
           }else{
 
             if(OSAvg){
-              Tmp=OsFFTData[0][i]-ADCoffset-A_Posi;
+              Tmp=OsFFTData[0][i]-native_offset_a-A_Posi;
               a_Ssq +=(Tmp * Tmp);                              
-              Tmp=OsFFTData[1][i]-ADCoffset-B_Posi;
+              Tmp=OsFFTData[1][i]-native_offset_b-B_Posi;
               b_Ssq +=(Tmp * Tmp);  
             }else{  
-              Tmp=RMSdata[0][i]-ADCoffset-A_Posi;
+              Tmp=RMSdata[0][i]-native_offset_a-A_Posi;
               a_Ssq +=(Tmp * Tmp);                              
-              Tmp=RMSdata[1][i]-ADCoffset-B_Posi;
+              Tmp=RMSdata[1][i]-native_offset_b-B_Posi;
               b_Ssq +=(Tmp * Tmp);  
             }
 
           }
 
-          Tmp=OsFFTData[0][i]-ADCoffset;
+          Tmp=OsFFTData[0][i]-native_offset_a;
           if(InvertA){
             Tmp-=A_Posi;
             Tmp=-Tmp;
@@ -1542,7 +1641,7 @@ void Process(void)
           if(Tmp<-15)Tmp=-15;
           a_Avg +=Tmp;
 
-          Tmp=OsFFTData[1][i]-ADCoffset;
+          Tmp=OsFFTData[1][i]-native_offset_b;
           if(InvertB){
             Tmp-=B_Posi;
             Tmp=-Tmp;
@@ -1585,6 +1684,7 @@ void Process(void)
 
        if((CurDefTime==0)||(i<finish)){
 
+        if(native_time_demand&1u){
         if(Ch[A] > a_Mid_H){
           if (Sa<2){					//don't initiate if value is above trigger point when starting out
             if(Sa == 0){
@@ -1614,6 +1714,8 @@ void Process(void)
           }
         }
 
+       }
+       if(native_time_demand&2u){
        if(Ch[B] > b_Mid_H){
           if (Sb<2){					
             if(Sb == 0){
@@ -1642,10 +1744,12 @@ void Process(void)
             }
           }
         }
+       }
        }  
 
     if((i>10)&&((CurDefTime==0)||(i>start))){                        //eliminate noise at start of wave causing errors in dig channels
 
+       if(native_time_demand&4u){
        if(C_D & 1){
           if (Sc<2){					
             if(Sc == 0){
@@ -1670,6 +1774,8 @@ void Process(void)
             }
 	  } 
 
+       }
+       if(native_time_demand&8u){
        if(C_D & 2){
           if (Sd<2){					
             if(Sd == 0){
@@ -1694,6 +1800,7 @@ void Process(void)
             }
         }
 
+       }
       }	//if i>8
     } //if i>3
   }  //if curdeftime
@@ -1706,18 +1813,18 @@ void Process(void)
         if((Title[7][1].Value==1)||(Title[7][1].Value==3)||(Title[7][1].Value==4)||(Title[7][1].Value==5)){	//positive transitions
           if ((Title[7][0].Value==0)||((Title[TRIGG][SOURCE].Value==4)&&(TrigSourceEnable==0))){										//select trigger channel
             b=CalNative_Correct(IValueA,A_Posi,Ka1[_A_Range],Ka2[_A_Range])-IVT1;
-            a=IVT1-CalNative_Correct((int)(DataBuf[TriggerPosition-1]&255)-ADCoffset,A_Posi,Ka1[_A_Range],Ka2[_A_Range]);        
+            a=IVT1-CalNative_Correct((int)(DataBuf[TriggerPosition-1]&255)-native_offset_a,A_Posi,Ka1[_A_Range],Ka2[_A_Range]);        
           }else if((Title[7][0].Value==1)||((Title[TRIGG][SOURCE].Value==4)&&(TrigSourceEnable==1))){
             b=CalNative_Correct(IValueB,B_Posi,Kb1[_B_Range],Kb2[_B_Range])-IVT2;
-	    a=IVT2-CalNative_Correct((int)((DataBuf[TriggerPosition-1]>>8)&255)-ADCoffset,B_Posi,Kb1[_B_Range],Kb2[_B_Range]);        
+	    a=IVT2-CalNative_Correct((int)((DataBuf[TriggerPosition-1]>>8)&255)-native_offset_b,B_Posi,Kb1[_B_Range],Kb2[_B_Range]);        
           }else goto bypasscalculate;
         }else{													//negative transitions
           if ((Title[7][0].Value==0)||((Title[TRIGG][SOURCE].Value==4)&&(TrigSourceEnable==0))){										
             b=IVT1-CalNative_Correct(IValueA,A_Posi,Ka1[_A_Range],Ka2[_A_Range]);
-	    a=CalNative_Correct((int)(DataBuf[TriggerPosition-1]&255)-ADCoffset,A_Posi,Ka1[_A_Range],Ka2[_A_Range])-IVT1;        
+	    a=CalNative_Correct((int)(DataBuf[TriggerPosition-1]&255)-native_offset_a,A_Posi,Ka1[_A_Range],Ka2[_A_Range])-IVT1;        
           }else if((Title[7][0].Value==1)||((Title[TRIGG][SOURCE].Value==4)&&(TrigSourceEnable==1))){
             b=IVT2-CalNative_Correct(IValueB,B_Posi,Kb1[_B_Range],Kb2[_B_Range]);
-	    a=CalNative_Correct((int)((DataBuf[TriggerPosition-1]>>8)&255)-ADCoffset,B_Posi,Kb1[_B_Range],Kb2[_B_Range])-IVT2;        
+	    a=CalNative_Correct((int)((DataBuf[TriggerPosition-1]>>8)&255)-native_offset_b,B_Posi,Kb1[_B_Range],Kb2[_B_Range])-IVT2;        
           }else goto bypasscalculate; 
         }
         Shift=-((((b*102400)/((a+b)*TempKp1))+50)/100);		//calculate jitter from analog channels
@@ -1776,9 +1883,9 @@ bypasscalculate:								   //digital channels
         if(i>=(Filter+28)){
           X=0;
           for(h=(i-Filter);h<i;h++){           
-            Tmp=(DataBuf[h] & 0xFF )-ADCoffset;                 //retrieve each of Filter number of samples           
+            Tmp=(DataBuf[h] & 0xFF )-native_offset_a;                 //retrieve each of Filter number of samples           
             if(Tmp<0)Tmp=0;                                  
-            Tmp=Tmp+Ka1[_A_Range]-_1_posi;
+            Tmp=Tmp+Ka1[_A_Range]-(A_Posi+Ka1[_A_Range]);
             Tmp=(Ka2[_A_Range]*Tmp)/1024;
             if(Tmp<0)Tmp=-Tmp;                                  //detect
             if(_Kind==4){
@@ -1799,9 +1906,9 @@ bypasscalculate:								   //digital channels
         if(i>=(Filter+28)){
           X=0;
           for(h=(i-Filter);h<i;h++){           
-            Tmp=((DataBuf[h] >> 8) & 0xFF)-ADCoffset;                            
+            Tmp=((DataBuf[h] >> 8) & 0xFF)-native_offset_b;                            
             if(Tmp<0)Tmp=0;                                  
-            Tmp=Tmp+Kb1[_B_Range]-_2_posi;
+            Tmp=Tmp+Kb1[_B_Range]-(B_Posi+Kb1[_B_Range]);
             Tmp=(Kb2[_B_Range]*Tmp)/1024;
             if(Tmp<0)Tmp=-Tmp;              
             if(_Kind==4){
@@ -1983,21 +2090,27 @@ bypasscalculate:								   //digital channels
 
 
     if((_1_source != HIDE)||(_4_source>13)||((Title[TRIGG][SOURCE].Value==0)&&(EnableMeterCalc))){
+           UTmp=0;
+           if((native_time_demand&1u) && TaS && TaN){
            UTmp= (1000000000/TaS)*TaN;			//Calculate frequency using data from last frame
            UTmp-=QError(0,QStart[0],QEnd[0],UTmp);	//Adjust for any possible quantization error compensation
+           }
 	   Average(0);					//Include all previous data transfers and average
     }
     if((_2_source != HIDE)||(_4_source==12)||(_4_source==13)||((Title[TRIGG][SOURCE].Value==1)&&(EnableMeterCalc))){          
+           UTmp=0;
+           if((native_time_demand&2u) && TbS && TbN){
            UTmp= (1000000000/TbS)*TbN;		
            UTmp-=QError(1,QStart[1],QEnd[1],UTmp);	
+           }
 	   Average(1);
     } 	
-    if(_3_source == CH_C){         
-           UTmp= (1000000000/TcS)*TcN;		
+    if(_3_source == CH_C && (native_time_demand&4u)){         
+           UTmp= TcS && TcN?(1000000000/TcS)*TcN:0;		
 	   Average(2);
     } 	
-    if((_4_source == CH_D)||(_4_source == C_and_D)||(_4_source == C_or_D)){
-           UTmp = (1000000000/TdS)*TdN;
+    if((native_time_demand&8u) && ((_4_source == CH_D)||(_4_source == C_and_D)||(_4_source == C_or_D))){
+           UTmp = TdS && TdN?(1000000000/TdS)*TdN:0;
 	   Average(3);
     } 	
 
@@ -2158,34 +2271,27 @@ if (_T_base > 16){					//jitter compensation for interpolated modes
         window.format=(u8)NativeViewFormat();window.unsupported=(u8)NativeViewUnsupported();
         window.digital_trigger=_Tr_source==2 || _Tr_source==3;
         NativeWindow_Publish(&window);
+        if(native_clip_count>=get_bag_max_buf())NativeClipPublish(native_clip_good);
       }
 }
 
 
-void Send_Data(s16 Va, s16 Vb, u8 C_D, u8 osB, u16 n)  // output display data
+void Send_Data(s16 Va, s16 Vb, s16 C_D, s16 osB, u16 n)  // output display data
 {
   s32 Tmp = 0, i;
   u8 Start;
   if((Title[TRIGG][SOURCE].Value>1)&&(Title[TRIGG][SOURCE].Value<4))Start=5;else Start=0;
 
   i = n*4;
+  Va+=native_delta_y[0];Vb+=native_delta_y[1];
 
-  if(Va >= Y_BASE+Y_SIZE)  TrackBuff[i + TRACK1] = Y_BASE+Y_SIZE-1;
-  else if(Va <= Y_BASE+1)  TrackBuff[i + TRACK1] = Y_BASE+1;
-  else                     TrackBuff[i + TRACK1] = Va;                
-  if(Vb >= Y_BASE+Y_SIZE)  TrackBuff[i + TRACK2] = Y_BASE+Y_SIZE-1;
-  else if(Vb <= Y_BASE+1)  TrackBuff[i + TRACK2] = Y_BASE+1;
-  else                     TrackBuff[i + TRACK2] = Vb;
-  
+  TrackBuff[i + TRACK1]=TraceY(Va);
+  TrackBuff[i + TRACK2]=TraceY(Vb);
 
  if(OsBufferLogicFlag||OsChartFlag){
 
-  if(C_D>= Y_BASE+Y_SIZE)  TrackBuff[i + TRACK3] = Y_BASE+Y_SIZE-1;
-  else if(C_D<= Y_BASE+1)  TrackBuff[i + TRACK3] = Y_BASE+1;
-  else                     TrackBuff[i + TRACK3] = C_D;
-  if(osB>= Y_BASE+Y_SIZE)  TrackBuff[i + TRACK4] = Y_BASE+Y_SIZE-1;
-  else if(osB<= Y_BASE+1)  TrackBuff[i + TRACK4] = Y_BASE+1;
-  else                     TrackBuff[i + TRACK4] = osB;
+  TrackBuff[i + TRACK3]=TraceY(C_D+native_delta_y[0]);
+  TrackBuff[i + TRACK4]=TraceY(osB+native_delta_y[1]);
 
  }else{
 
@@ -2229,9 +2335,7 @@ void Send_Data(s16 Va, s16 Vb, u8 C_D, u8 osB, u16 n)  // output display data
     if(C_D & 2)  Tmp = d_Max;
     else         Tmp = _4_posi;
   }
-  if(Tmp >= Y_BASE+Y_SIZE)  TrackBuff[i + TRACK4] = Y_BASE+Y_SIZE-1;
-  else if(Tmp <= Y_BASE+1)  TrackBuff[i + TRACK4] = Y_BASE+1;
-  else                      TrackBuff[i + TRACK4] = Tmp;
+  TrackBuff[i + TRACK4]=TraceY(Tmp);
 
  }
 
@@ -2601,6 +2705,7 @@ void cleardatabuf(u8 service)   //Clears/replaces n samples in DataBuf
  u16 i;
 
   NativeWindow_Reset();
+  native_y_valid=0;native_clip_count=0;NativeClipPublish(0);native_delta_y[0]=native_delta_y[1]=0;
   sample <<= 8;
 
   if(((OsBufferLogicFlag)&&(!OSAvg))||(OsChartFlag)){
@@ -2650,7 +2755,7 @@ void TransferFIFO(s16 i,u8 service){
 
 	    if((service)&&(!ChartLogic())){                                      
               DataBuf[i] &= ReverseBitMask;                                     //preserve previous data on alternate channel
-              DataBuf[i] |= (__Read_FIFO() & BitMask);                          //only load triggering channel if in alternate mode
+              Transfer=__Read_FIFO();DataBuf[i] |= (Transfer & BitMask);                          //only load triggering channel if in alternate mode
 	    } else {
 
               if((OsBufferLogicFlag)&&(CalibrateMode==0)){
@@ -2775,6 +2880,12 @@ void TransferFIFO(s16 i,u8 service){
               }//if  (OS buffer mode && calibratemode==0), else
 
             }//if (service && !chartlogic),else   (service= A&B mode)
+            if(!ChartLogic() && (service || !OsBufferLogicFlag || OsTransferCompleteFlag))
+              NativeRecordSample((unsigned)i,native_good && !(Transfer&0x00100000u));
+            if((i==0 || native_y_valid!=3) && (!OsBufferLogicFlag || OsTransferCompleteFlag)) {
+              if(!service || TrigSourceEnable==0)NativeRecordY(0);
+              if(!service || TrigSourceEnable==1)NativeRecordY(1);
+            }
             if(!service && !ChartLogic() && (!OsBufferLogicFlag || OsTransferCompleteFlag))
               NativeWindow_Written((unsigned)i,NativeViewFormat(),native_good && !(Transfer&0x00100000u));
 
@@ -2782,49 +2893,56 @@ void TransferFIFO(s16 i,u8 service){
 
 void SetOffset(u8 channel,u8 range, s16 Ypos) {
 s32 temp;
-
+      /* A HOLD YPOS edit moves pixels only. RUN's ordinary range update
+       * applies the requested command before acquiring the next record. */
+      if(_Status!=RUN && !CalibrateMode)return;
+      native_command_y[channel]=Ypos;
       if(channel==0)temp=Ka3[range];else temp=Kb3[range];
-      temp=(1024+temp)*(Ypos-ScalingOffset);			               //set Ka3 zero axis, allows scaling optimisation
-      if(temp>0)temp+=512; else temp-=512;
-      temp=(temp/1024)+ADCoffset+ScalingOffset;
-      if (temp<0)temp=0;						       //should not go anywhere close to 0 but just to make sure
-      if(channel==0)__Set(CH_A_OFFSET, temp); else __Set(CH_B_OFFSET, temp);
+      {
+          unsigned command;
+          if(!CalibrateMode) {
+              s16 effective=(s16)CalNative_Position(range,channel,ADCoffset,(int)temp,Ypos,__Get(V_BATTERY),&command);
+              if(effective!=Ypos) {
+                  Ypos=effective;
+                  if(channel==0){_1_posi=Ypos;Title[TRACK1][POSI].Flag|=UPDAT;}
+                  else {_2_posi=Ypos;Title[TRACK2][POSI].Flag|=UPDAT;}
+                  native_command_y[channel]=Ypos;
+              }
+          } else command=(unsigned)CalNative_Command(ADCoffset,(int)temp,Ypos);
+          temp=(s32)command;
+      }
+      if(channel==0)UiCommon_AnalogSet(CH_A_OFFSET, temp); else UiCommon_AnalogSet(CH_B_OFFSET, temp);
 }
 
 void BatLevelCompensation(void){
-u8 i;
- if(CalibrateMode)return;								//make sure both sets are available or don't use
+u8 i;unsigned profiles;
+ if(CalibrateMode || _Status!=RUN)return;								//make sure both sets are available or don't use
 
  if((HiBatLevel[0]>LoBatLevel[0])&&(VDiff[0]>0)&&(LoBatLevel[0]>2800)&&(LoBatLevel[0]<5200)&&(HiBatLevel[0]>2800)&&(HiBatLevel[0]<5200)){  	         		
   for(i=0;i<10;i++){
-    Ka1[i]=InterpolateS8(0,LKa1[i],HKa1[i]);
-    Ka2[i]=InterpolateU16(0,LKa2[i],HKa2[i]);
-    Ka3[i]=InterpolateS8(0,LKa3[i],HKa3[i]);
+    profiles=Scope144_NativeProfiles(i);
+    Ka1[i]=profiles==1?LKa1[i]:profiles==2?HKa1[i]:InterpolateS8(0,LKa1[i],HKa1[i]);
+    Ka2[i]=profiles==1?LKa2[i]:profiles==2?HKa2[i]:InterpolateU16(0,LKa2[i],HKa2[i]);
+    Ka3[i]=profiles==1?LKa3[i]:profiles==2?HKa3[i]:InterpolateS8(0,LKa3[i],HKa3[i]);
   }
  }
 
  if((HiBatLevel[1]>LoBatLevel[1])&&(VDiff[1]>0)&&(LoBatLevel[1]>2800)&&(LoBatLevel[1]<5200)&&(HiBatLevel[1]>2800)&&(HiBatLevel[1]<5200)){	         		
   for(i=0;i<10;i++){
-    Kb1[i]=InterpolateS8(1,LKb1[i],HKb1[i]);
-    Kb2[i]=InterpolateU16(1,LKb2[i],HKb2[i]);
-    Kb3[i]=InterpolateS8(1,LKb3[i],HKb3[i]);
+    profiles=Scope144_NativeProfiles(i);
+    Kb1[i]=profiles==1?LKb1[i]:profiles==2?HKb1[i]:InterpolateS8(1,LKb1[i],HKb1[i]);
+    Kb2[i]=profiles==1?LKb2[i]:profiles==2?HKb2[i]:InterpolateU16(1,LKb2[i],HKb2[i]);
+    Kb3[i]=profiles==1?LKb3[i]:profiles==2?HKb3[i]:InterpolateS8(1,LKb3[i],HKb3[i]);
   }
  } 
 }
 
 
 s8 InterpolateS8(u8 Ch, s8 L8,s8 H8){
-s32 Tmp;
-  Tmp=((__Get(V_BATTERY)-LoBatLevel[Ch])*(H8-L8));
-  if(Tmp>0)Tmp+=(VDiff[Ch]/2); else Tmp-=(VDiff[Ch]/2);
-  return (Tmp/VDiff[Ch])+L8;
+  return (s8)CalNative_Interpolate(L8,H8,LoBatLevel[Ch],HiBatLevel[Ch],__Get(V_BATTERY));
 }
-
 u16 InterpolateU16(u8 Ch, u16 L16,u16 H16){
-s32 Tmp;
-  Tmp=((__Get(V_BATTERY)-LoBatLevel[Ch])*(H16-L16));
-  if(Tmp>0)Tmp+=(VDiff[Ch]/2); else Tmp-=(VDiff[Ch]/2);
-  return (Tmp/VDiff[Ch])+L16;
+  return (u16)CalNative_Interpolate(L16,H16,LoBatLevel[Ch],HiBatLevel[Ch],__Get(V_BATTERY));
 }
 
 s32 QError(u8 Ch, u16 Start, u16 End, u32 Utmp){	
@@ -2841,18 +2959,18 @@ s32 b,ab,tmp=0;
 }
 
 s16 QParam(u8 Ch, u16 Position,u8 service){	
-u8 a[2],b[2];
+u8 a[2],b[2];int offset=Process_NativeOffset(Ch);
 
           if(OsBufferLogicFlag){
-            b[Ch]=RMSdata[Ch][Position]-ADCoffset;
-            a[Ch]=RMSdata[Ch][Position-1]-ADCoffset;
+            b[Ch]=RMSdata[Ch][Position]-offset;
+            a[Ch]=RMSdata[Ch][Position-1]-offset;
           }else{
             if(Ch==0){
-              b[0]=(DataBuf[Position]& 0xFF)-ADCoffset;
-              a[0]=(DataBuf[Position-1]& 0xFF)-ADCoffset;
+              b[0]=(DataBuf[Position]& 0xFF)-offset;
+              a[0]=(DataBuf[Position-1]& 0xFF)-offset;
             }else{
-              b[1]=((DataBuf[Position]>>8)&0xFF)-ADCoffset;
-              a[1]=((DataBuf[Position-1]>>8)&0xFF)-ADCoffset;
+              b[1]=((DataBuf[Position]>>8)&0xFF)-offset;
+              a[1]=((DataBuf[Position-1]>>8)&0xFF)-offset;
             } 
           }
           
@@ -2897,7 +3015,7 @@ void Average(u8 Ch){
               //sum averaging of all FIFO transfers; improves resolution/accuracy of all meters at faster timebases (>~5mS/div)
 
            if((_T_base > 10)||((JumpCnt==get_bag_max_buf())&&(_T_base>6)&&(FrameMode>0))){
-             RunAvg(Ch);				//time/freq parameters
+             if(native_time_demand&(1u<<Ch))RunAvg(Ch);				//time/freq parameters
              if(Ch==0){					//voltage values
                VxAvg[0]=VRunAvg(0,a_Avg,VxAvg[0]);
                VNAvg[0]--;				//reset VN counters to do SSQ
@@ -3299,9 +3417,7 @@ void Process144_DrawFrame(const Frame144 *frame,const ViewWindowGeometry *view,
         if(!Frame144_At(frame,view,x,&q))return;
         v=Scope144_Voltage(&frame->calibration,q);
         y=(int64_t)position+(invert?-(int64_t)v:v)/Y_Attr[frame->range].SCALE;
-        if(y<1)y=1;
-        if(y>199)y=199;
-        TrackBuff[x*4]=(u8)y;
+        TrackBuff[x*4]=y<1?0:y>199?200:(u8)y;
         TrackBuff[x*4+1]=TrackBuff[x*4+2]=TrackBuff[x*4+3]=0;
         if(ViewWindow_At(view,x,&point) && Frame144_DigitalAt(frame,point.position_q16,&bits)) {
             for(channel=0;channel<2;++channel) {
@@ -3323,24 +3439,6 @@ void Process144_ClearFrame(void)
     width=(unsigned)(MAX_X-MIN_X);if(width>=397)return;
     memset(TrackBuff,0,(width+1u)*4u);
     discard=Rdiscard=FrameEndFlag=0;GPIOC->BRR=0x30;Draw_Window();
-}
-void Process144_Draw(const Scope144Cal *cal,const int32_t *samples,unsigned start,
-    unsigned base,unsigned position,unsigned invert)
-{
-    unsigned x; int32_t q,v,y; uint32_t step=Scope144_Step(base);
-    if(!step || !Scope144_Valid(cal)) return;
-    for(x=0;x<397;++x) {
-        if(!Scope144_At(samples,1024,((uint32_t)start<<16)+step*x,&q)) q=cal->zero_q10;
-        v=Scope144_Voltage(cal,q); if(invert) v=-v;
-        y=(int32_t)position+v/(int32_t)Y_Attr[_A_Range].SCALE;
-        if(y<1)y=1;
-        if(y>199)y=199;
-        TrackBuff[x*4]=(u8)y;
-        TrackBuff[x*4+1]=0; TrackBuff[x*4+2]=0; TrackBuff[x*4+3]=0;
-    }
-    discard=0; Rdiscard=0; FrameEndFlag=1;
-    GPIOC->BRR=0x30;
-    Draw_Window();
 }
 
 /* Shared Normal/interlace transform, including original summed-bin rules.

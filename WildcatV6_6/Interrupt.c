@@ -160,7 +160,6 @@ void TIM2_IRQHandler(void)
   u32 Reset;
 
   Reset=LimitTransfer;
-  GEN_IRQ_BEGIN;
   if((_Kind==5)&&(_Frqn>15))DAC->DHR12R1=(u32)RandomGen();  // take over seeding from int4 above 100khz limit
 
 //==============================================SWEEP MODE===============================================          
@@ -349,7 +348,6 @@ if(_Kind<5){
 BypassFunction:
 
  TIM2->SR=0;
- GEN_IRQ_END(0);
 }
 
 
@@ -420,7 +418,6 @@ void TIM4_IRQHandler(void){                                                //noi
  static s32 tmp;
  static u8 index;
  static u8 SeedIndex=0;
- GEN_IRQ_BEGIN;
 
  if(_Kind==5){
   if(InitiateNoise){
@@ -458,7 +455,6 @@ void TIM4_IRQHandler(void){                                                //noi
   if(FilterOut<0)FilterOut=0;else if(FilterOut>0x0FFF)FilterOut=0x0FFF;    //provide proper clipping limits
  }
  TIM4->SR=0;
- GEN_IRQ_END(1);
 }
 
 void I2C1_EV_IRQHandler(void)

@@ -1,4 +1,5 @@
 #include "Frame144.h"
+#include "Capture144.h"
 #include <string.h>
 
 void Frame144_Reset(Frame144 *frame,uint32_t epoch)
@@ -37,7 +38,7 @@ static int Read(const void *user,unsigned sample,int32_t *q)
     relative=is_a?(int32_t)raw*1024:(int32_t)raw*cal->gain_q10+cal->bias_q10;
     value=(int64_t)relative*cal->a_gain_q10/1024+cal->a_bias_q10;
     if(value<INT32_MIN || value>INT32_MAX)return 0;
-    *q=(int32_t)value;return 1;
+    *q=(int32_t)value;return raw==0?6:raw==255?10:1;
 }
 int Frame144_Source(const Frame144 *frame,Scope144Source *source)
 {
@@ -48,13 +49,11 @@ int Frame144_Source(const Frame144 *frame,Scope144Source *source)
 }
 int Frame144_Read(const Frame144 *frame,unsigned sample,int32_t *q,unsigned *clip)
 {
-    unsigned word,raw;int is_a;
+    int status;
     if(!q || !Frame144_Valid(frame) || sample>=frame->capture.time_samples)return 0;
-    if(!Read(frame,sample,q))return 0;
-    word=Word(frame,frame->capture.valid_begin+sample/2u);
-    is_a=(sample & 1u)==(frame->capture.sample_phase==CAPTURE_PHASE_B_A);
-    raw=is_a?(word & 255u):((word>>8)&255u);
-    if(clip)*clip=raw==0 || raw==255;
+    status=Read(frame,sample,q);
+    if(!status)return 0;
+    if(clip)*clip=!!(status&2);
     return 1;
 }
 int Frame144_At(const Frame144 *frame,const ViewWindowGeometry *view,unsigned column,int32_t *q)
@@ -68,15 +67,15 @@ int Frame144_At(const Frame144 *frame,const ViewWindowGeometry *view,unsigned co
     }
     *q=a;return 1;
 }
+int Frame144_MeasureRequested(const Frame144 *frame,unsigned timing,Scope144Measurements *measure)
+{
+    Scope144Source source;
+    if(!measure || !Frame144_Source(frame,&source))return 0;
+    return Scope144_MeasureSourceRequested(&frame->calibration,&source,timing,measure);
+}
 int Frame144_Measure(const Frame144 *frame,Scope144Measurements *measure)
 {
-    Scope144Source source;unsigned i,clips=0,word,a,b;
-    if(!measure || !Frame144_Source(frame,&source))return 0;
-    for(i=0;i<frame->capture.valid_words;++i) {
-        word=Word(frame,frame->capture.valid_begin+i);a=word&255u;b=(word>>8)&255u;
-        clips+=!a || a==255;clips+=!b || b==255;
-    }
-    return Scope144_MeasureSource(&frame->calibration,&source,clips,measure);
+    return Frame144_MeasureRequested(frame,1,measure);
 }
 int Frame144_AdcThresholdKind(const Scope144Cal *cal,int32_t voltage,unsigned kind,unsigned *raw)
 {
@@ -92,19 +91,32 @@ int Frame144_AdcThresholdKind(const Scope144Cal *cal,int32_t voltage,unsigned ki
     if(value<guard || value>255u-guard)return 0;
     *raw=(unsigned)value;return 1;
 }
-int Frame144_AdcThreshold(const Scope144Cal *cal,int32_t voltage,unsigned *raw)
-{ return Frame144_AdcThresholdKind(cal,voltage,0,raw); }
+/* Mirrors the already verified capture pipeline as a presentation reference
+ * only. Capture144 remains the sole authority for actual trigger metadata. */
+uint32_t Frame144_HardwareReference(unsigned pretrigger,unsigned source,unsigned kind,int32_t digital_shift)
+{
+    return Capture144_TriggerPosition(pretrigger,source,kind,digital_shift);
+}
+int Frame144_WindowOrigin(const Frame144 *frame,unsigned width,unsigned base,int64_t *origin)
+{
+    uint32_t reference,step=Scope144_Step(base);
+    if(!origin || !Frame144_Valid(frame) || !width || !step)return 0;
+    reference=frame->presentation_q16;
+    if(!reference)reference=(frame->capture.flags&CAPTURE_WINDOW_HAS_TRIGGER)?
+        frame->capture.trigger_q16:Frame144_HardwareReference(CAPTURE144_DEFAULT_PRETRIGGER,frame->trigger_source,1,frame->digital_shift_q16);
+    *origin=(int64_t)reference-(int64_t)(width>150?150:width-1)*step;
+    return 1;
+}
 int Frame144_HardwareView(Frame144 *frame,unsigned width,unsigned base,ViewWindowGeometry *view)
 {
     if(!Frame144_Valid(frame) || frame->capture.trigger_kind<CAPTURE_TRIGGER_HARDWARE_A ||
-        !ViewWindow_Anchor(frame->capture.time_samples,width,Scope144_Step(base),
-            frame->capture.trigger_q16,30,0,view))return 0;
+        !Frame144_Window(frame,width,base,0,view))return 0;
     frame->capture.first_visible_q16=view->window_start_q16;return 1;
 }
 int Frame144_Trigger(Frame144 *frame,unsigned width,unsigned base,int32_t threshold,
     int falling,ViewWindowGeometry *view)
 {
-    uint32_t step=Scope144_Step(base);unsigned i;int32_t previous,current;
+    uint32_t step=Scope144_Step(base);unsigned i,fallback=0,selected=0;int32_t previous,current;
     ViewWindowGeometry candidate;
     if(!view || !Frame144_Valid(frame) || !step || !width ||
         !ViewWindow_Build(frame->capture.time_samples,width,step,0,view))return 0;
@@ -121,12 +133,23 @@ int Frame144_Trigger(Frame144 *frame,unsigned width,unsigned base,int32_t thresh
             if((uint64_t)i*65536>=pre &&
                 ViewWindow_Anchor(frame->capture.time_samples,width,step,i*65536u,30,0,&candidate) &&
                 !candidate.flags) {
-                frame->capture.trigger_kind=CAPTURE_TRIGGER_SOFTWARE;frame->capture.trigger_q16=i*65536u;
-                frame->capture.flags|=CAPTURE_WINDOW_HAS_TRIGGER|CAPTURE_WINDOW_PRETRIGGER;
-                frame->capture.first_visible_q16=candidate.window_start_q16;*view=candidate;return 1;
+                /* Keep the old 30-pixel eligibility as a last resort. Prefer
+                 * a real edge with Normal's full 150-pixel prehistory. */
+                unsigned column=width>150?150:width-1;
+                if(!fallback)fallback=i;
+                if((uint64_t)i*65536>=(uint64_t)column*step &&
+                    ViewWindow_Anchor(frame->capture.time_samples,width,step,i*65536u,column,0,&candidate) &&
+                    !candidate.flags){selected=i;break;}
             }
         }
         previous=current;
+    }
+    if(!selected)selected=fallback;
+    if(selected) {
+        frame->capture.trigger_kind=CAPTURE_TRIGGER_SOFTWARE;frame->capture.trigger_q16=selected*65536u;
+        frame->capture.flags|=CAPTURE_WINDOW_HAS_TRIGGER|CAPTURE_WINDOW_PRETRIGGER;
+        if(!Frame144_Window(frame,width,base,0,view))return 0;
+        frame->capture.first_visible_q16=view->window_start_q16;return 1;
     }
     frame->capture.first_visible_q16=0;return 0;
 }
@@ -148,16 +171,12 @@ unsigned Frame144_CsvRow(char out[80],const Frame144 *frame,unsigned sample,int 
 int Frame144_Window(const Frame144 *frame,unsigned width,unsigned base,int64_t displacement,
     ViewWindowGeometry *view)
 {
-    ViewWindowGeometry origin;uint32_t step=Scope144_Step(base);int64_t start;
-    if(!Frame144_Valid(frame) || !view)return 0;
-    if(frame->capture.flags&CAPTURE_WINDOW_HAS_TRIGGER) {
-        if(!ViewWindow_Anchor(frame->capture.time_samples,width,step,
-            frame->capture.trigger_q16,30,0,&origin))return 0;
-    } else if(!ViewWindow_Build(frame->capture.time_samples,width,step,0,&origin))return 0;
-    start=origin.window_start_q16;
-    if(displacement>INT64_MAX-start)start=INT64_MAX;
-    else start+=displacement;
-    return ViewWindow_Build(frame->capture.time_samples,width,step,start,view);
+    int64_t origin,start;
+    if(!view || !Frame144_WindowOrigin(frame,width,base,&origin))return 0;
+    if(displacement>0 && origin>INT64_MAX-displacement)start=INT64_MAX;
+    else if(displacement<0 && origin<INT64_MIN-displacement)start=INT64_MIN;
+    else start=origin+displacement;
+    return ViewWindow_Build(frame->capture.time_samples,width,Scope144_Step(base),start,view);
 }
 static int Time(const Frame144 *frame,int64_t delta,int32_t *ps)
 {

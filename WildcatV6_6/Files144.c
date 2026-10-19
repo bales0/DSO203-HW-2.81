@@ -8,6 +8,24 @@ extern u8 InitFileSystem(void);
 extern u8 WriteFileSec(u8 *,u16 *,u32 *);
 extern void storeParameter(void);
 extern u32 DataBuf[4096];
+extern s32 fr[512],fi[512];
+static unsigned config_io;
+int File144_ConfigSave(unsigned number)
+{
+    int status;
+    if(number>255)return VER_ERR;
+    if(Generator_SecBusy())return UI_FILE_BUSY;
+    if(!number) {
+        memcpy(fr,DataBuf+3072,2048);memcpy(fi,DataBuf+3584,2048);
+        config_io=1;
+    }
+    status=Save_Param((u8)number);
+    if(!number) {
+        memcpy(DataBuf+3072,fr,2048);memcpy(DataBuf+3584,fi,2048);
+        config_io=0;
+    }
+    return status;
+}
 /* File operations run with acquisition stopped. Use the final 4 KiB of its
  * existing RAM, disjoint from CalWorkspace at the beginning of DataBuf.
  * No multi-kilobyte image or bank copies on the small MCU stack. */
@@ -29,12 +47,12 @@ static int NativeValid(const u8 *bytes)
     unsigned i,sum=0;for(i=0;i<512;++i)sum+=bytes[i];
     return bytes[0]==6 && !(sum&255);
 }
-/* 1 valid v3, 0 missing/invalid, -1 IO error. No legacy imports. */
+/* 1 valid four-point format, 0 missing/invalid, -1 IO error. No legacy imports. */
 static int ReadWpt(unsigned slot,Scope144Bank *bank,u8 native[512])
 {
     FileCalScratch *w=SCRATCH;char name[12];u16 cluster[3];u32 directory[1];
     unsigned offset=0;int result=0,status;
-    u8 *io=(u8 *)(DataBuf+2048); /* Existing unused middle 4KiB; UART SecBuff stays intact. */
+    u8 *io=config_io?SecBuff:(u8 *)(DataBuf+2048); /* Existing unused middle 4KiB; UART SecBuff stays intact. */
     WptName(name,slot);status=__OpenFileRd(io,name,cluster,directory);
     if(status!=OK)return status==NEW?0:-1;
     memset(w->image,0,sizeof(w->image));
@@ -69,6 +87,16 @@ static int Latest(unsigned *slot,int strict)
     }
     return a==1?1:0;
 }
+/* CFG updates only the native prefix of the latest strictly read slot.
+ * A read fault must never turn an existing calibration into an empty bank. */
+int File144_SaveParams(void)
+{
+    Scope144Bank bank;unsigned slot;
+    if(InitFileSystem()!=OK)return DISK_ERR;
+    if(Latest(&slot,1)<0)return RD_ERR;
+    bank=SCRATCH->latest;
+    return File144_WptSave(&bank,1);
+}
 int File144_CalLoad(Scope144Bank *bank)
 {
     unsigned slot;memset(bank,0,sizeof(*bank));
@@ -80,6 +108,7 @@ int File144_NativeLoad(void)
     if(Generator_SecBusy())return 0;
     unsigned slot;
     if(InitFileSystem()!=OK || Latest(&slot,0)!=1)return 0;
+    Scope144_NativeBank(&SCRATCH->latest);
     memset(SecBuff,0,SectorSize);memcpy(SecBuff,SCRATCH->native,512);return 1;
 }
 static int WriteWpt(unsigned slot)
@@ -181,6 +210,9 @@ static int WriteCsv(const Scope144Cal *cal,const int32_t *q10,const uint16_t *pa
         error=File144_Text("# format=144CD-v2\r\n",19,cluster,directory,&used);total+=19;
         if(!error)error=CsvField("digital_shift_q16",frame->digital_shift_q16,line,cluster,directory,&used,&total);
         if(!error)error=CsvField("trigger_source",frame->trigger_source,line,cluster,directory,&used,&total);
+        if(!error)error=CsvField("capture_DAC_A",frame->capture_dac&65535u,line,cluster,directory,&used,&total);
+        if(!error)error=CsvField("capture_DAC_B",frame->capture_dac>>16,line,cluster,directory,&used,&total);
+        if(!error)error=CsvField("capture_YPOS",frame->capture_ypos,line,cluster,directory,&used,&total);
         if(!error)error=CsvField("capture_epoch",frame->capture.epoch,line,cluster,directory,&used,&total);
         if(!error)error=CsvField("valid_begin",frame->capture.valid_begin,line,cluster,directory,&used,&total);
         if(!error)error=CsvField("valid_words",frame->capture.valid_words,line,cluster,directory,&used,&total);

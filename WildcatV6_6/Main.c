@@ -201,7 +201,7 @@ int main(void)
 {
   u16 Tmp;
   s32 i;
-  u16  Second = 0;//,Offset, Result,Count_FPS = 0  
+  u16  Second = 0;
   u8 j=0;
   s16 TmpVT;
   s16 Vt1Old=0;
@@ -378,8 +378,8 @@ ScopeService:
         }  
 
     Synchro();                              // simultaneous display of waveform data of each track
-    if(Process_NativeOverviewChanged() && Current!=FILE && !NotificationTimer)
-      Update_View_Area();
+    if(Current!=FILE && !NotificationTimer && Process_NativeOverviewChanged())
+      Update_Buffer_Overview();
 
     if ((TrgAuto>0)&&(_Mode!=SCAN)&&(_Mode!=AUTO)&&(_Mode!=SGL)){  
       if(__Get(FIFO_START)== 0){			           //check to see if not triggered w/auto trig on
@@ -433,10 +433,8 @@ ScopeService:
 //============================================REGULAR METER TIMING====================================================
       if(Second != Sec_Cnt) {
         Second = Sec_Cnt;
-        Result_FPS = Count_FPS;
-        Count_FPS = 0;
 
-        if((__Get(V_BATTERY)>(PrevBatLevel+40))||(__Get(V_BATTERY)<(PrevBatLevel-40))){	//update with greater than 40Mv change (WAS +/-20Mv)
+        if(_Status==RUN && ((__Get(V_BATTERY)>(PrevBatLevel+40))||(__Get(V_BATTERY)<(PrevBatLevel-40)))){	//update with greater than 40Mv change (WAS +/-20Mv)
           BatLevelCompensation(); 
           PrevBatLevel=__Get(V_BATTERY);
           SetOffset(0,_A_Range,_1_posi);				//provides update for Ka3
@@ -568,7 +566,11 @@ ScopeService:
          Title[Current][_Det].Flag |= UPDAT;
         }
 											
-        if((Current != FILE)&&(NotificationTimer<43))   Update_View_Area();	//after 3/4 second, allow notification overwrite if button pushed														
+        if((Current != FILE)&&(NotificationTimer<43)) {
+          if(Current==T_BASE && _Det==XPOSI &&
+              (Key_Buffer==K_INDEX_INC || Key_Buffer==K_INDEX_DEC))Update_Buffer_Overview();
+          else Update_View_Area();
+        }	//after 3/4 second, allow notification overwrite if button pushed														
 		if (FlagMeter>0) {
 			_D_V_Source.Flag |= UPDAT;            // Updat delta V 
 			_Delta_V.Flag    |= UPDAT; 
@@ -623,7 +625,7 @@ ScopeService:
     }
 
     //--------------------------------------------------------------------------  TRIGGER AUTOMATICO 
-    if((TrgAuto>0)&&((_Mode!=SCAN)||(AutoSetFlag))){                                                                   
+    if((_Status==RUN)&&(TrgAuto>0)&&((_Mode!=SCAN)||(AutoSetFlag))){                                                                   
 
 
       if ((Title[TRIGG][SOURCE].Value == TRACK1)||((Title[TRIGG][SOURCE].Value==4)&&(TrigSourceEnable==0))){
@@ -675,6 +677,10 @@ ScopeService:
       }
 
       PD_Cnt = 600;                         // 600 seconds
+      if(OffsetSelect && !((Current==T_BASE)&&(_Det==1)&&(FPGAsubVer)&&(FPGAosFlag))) {
+        int action=UiCommon_ServiceKey(Key_Buffer);
+        if(action){if(action==2)Update_Range();goto bypassOSselect;}
+      }
       if(UiCommon_ValueKey(Key_Buffer,0)){SelectiveUpdate|=0x1e;Update=1;goto BypassUpdate;}
       if(Key_Buffer!=KEY4 && Key_Buffer!=K_INDEX_S && Generator_Key(Key_Buffer,0)) {
         SelectiveUpdate|=0x1e;Update=1;
@@ -729,6 +735,7 @@ ScopeService:
         }else{
           DigChLockout=0;
           _State.Value=0;
+          SetOffset(0,_A_Range,_1_posi);SetOffset(1,_B_Range,_2_posi);
           if(ChartLogic())InitChart();else{
             SelectiveUpdate |=0x60;								   			
             if(_Mode!=NORH)ClearTrackBuff(1);else ClearLeadingEdge=1;        //REMOVING NORH CONDITION WOULD CLEAR WAVE ALONG WITH METERS...
@@ -861,7 +868,7 @@ ScopeService:
      } 				//if key buffer
       //--------------------------------------------------------------------------------------------------------------
       if(Key_Buffer== KEY2){                                                    // ===--- TASTO 2 PREMUTO ---===   
-        Delay_Cnt = 3000;                                                       // Carica il temporizzatore del tasto permuto
+        Delay_Cnt = UI_K2_SERVICE_MS;                                                       // Carica il temporizzatore del tasto permuto
         while (Delay_Cnt > 2500){                                                  // Se il tempo non � arrivato a 0
           if((__Get(KEY_STATUS)& KEY2_STATUS)!=0){                              // CAMBIO MODO TRIGGER
            DisableCursorTimer=1;
@@ -924,7 +931,7 @@ ScopeService:
 
     DisableCursorTimer=1;
     if((Current!=FILE)||(_Curr[2].Value!=CFG)){
-       Delay_Cnt = 1500;                                                       // Carica il temporizzatore del tasto permuto
+       Delay_Cnt = UI_K3_CONFIG_MS;                                                       // Carica il temporizzatore del tasto permuto
        while (Delay_Cnt > 1000){                                                  //WAS >0           Se il tempo non � arrivato a 0
           if((__Get(KEY_STATUS)& KEY3_STATUS)!=0){ 
  
@@ -1094,7 +1101,7 @@ if(Key_Buffer== KEY4){
                 UiCommon_NextDetail(0);
             } else {                                                                   // change the measurement object
 
-                          if(Meter[Current-METER_0].Item>1){                     //don't change source for VBT AND FPS (items 0 and 1) 		
+                          if(Meter[Current-METER_0].Item>VBT){                   // battery has no channel source
 			  Meter[Current-METER_0].Flag |= UPDAT;
 
 			  if((Meter[Current-METER_0].Item>VPP)||(Meter[Current-METER_0].Item==FRQ)){
@@ -1197,17 +1204,6 @@ if(Key_Buffer== KEY4){
          if((Current==T_BASE)&&(_Det==MODE)&&(FPGAver>0)&&(AutoTrigSelect)){
            if(FreeRunEnable>0)FreeRunEnable--;
            goto BypassUpdate;
-         }
-
-         if((OffsetSelect==1)&&(Current>1)&&(!((Current==T_BASE)&&(_Det==1)&&(FPGAsubVer)&&(FPGAosFlag)))){
-           if(ADCoffset>0)ADCoffset--;
-           Update_Range();
-           goto bypasslongpress;
-         }
-
-         if((OffsetSelect==2)&&(Current>1)&&(!((Current==T_BASE)&&(_Det==1)&&(FPGAsubVer)&&(FPGAosFlag)))){
-           if(PPM_Comp>-999)PPM_Comp--;
-           goto bypasslongpress;
          }
 
          if(EditListActive(1)){                                                      //file directory read 
@@ -1371,17 +1367,12 @@ if(Key_Buffer== KEY4){
             ClearMeters();                                                                                         //clears meters if untriggered in NORH
 
               _X_View.Flag |= UPDAT;                              // refresh X_View
-              if (XposRef>150){
-                if(SetLowVolume){
-                  if(Key_Mid_Speed)_Curr[_Det].Value-=6;else _Curr[_Det].Value-=30;
-                }else _Curr[_Det].Value--;
-              }else if(_Curr[_Det].Value>0){
-                if(SetLowVolume){
-                  if(XposRef>30){
-                    XposRef-=4;
-                    goto bypasslongpress; 
-                  } else _Curr[_Det].Value--;
-                }else _Curr[_Det].Value--;
+              { unsigned reference_units;
+                int step=UiCommon_XposStep(XposRef,-1,SetLowVolume,Key_Mid_Speed,&reference_units);
+                if(reference_units){XposRef=(u16)(XposRef+step);goto bypasslongpress;}
+                if(_Curr[_Det].Value>0) {
+                  _Curr[_Det].Value=(s16)UiCommon_XposBound(_Curr[_Det].Value,step,0,_Curr[_Det].Limit);
+                }
               }
               XposRef=GetXposRef(_Curr[_Det].Value);								
 
@@ -1503,16 +1494,16 @@ if(Key_Buffer== KEY4){
           Meter[Current-METER_0].Flag |= UPDAT;
 
              if(Meter[Current-METER_0].Item >VBT)	    
-               Meter[Current-METER_0].Item -= 1;          
+               Meter[Current-METER_0].Item = (u8)UiCommon_MeterStep(Meter[Current-METER_0].Item,-1);
              else                     
                Meter[Current-METER_0].Item  = TL;
  
              if((Meter[Current-METER_0].Track>1)&&(Meter[Current-METER_0].Track<4)){
                if(Meter[Current-METER_0].Item ==VPP)Meter[Current-METER_0].Item =FRQ;
-               if(Meter[Current-METER_0].Item ==RMS)Meter[Current-METER_0].Item =FPS;
+               if(Meter[Current-METER_0].Item ==RMS)Meter[Current-METER_0].Item =VBT;
              }
  
-             if(Meter[Current-METER_0].Item == FPS){
+             if(Meter[Current-METER_0].Item == VBT){
                SaveCurrent[0]=Current;		      
                SaveCurrent[1]=Meter[Current-METER_0].Track; 
                Meter[Current-METER_0].Track = 4;
@@ -1679,7 +1670,7 @@ BypassShortcut:
       }          		      // if current
 
         if(Current == FILE){
-          Print_Str(230, 0, (SCRN<<8)+ TEXT1, PRN, " >   ");
+          UiFile_Begin();
         if(_Curr[0].Value == SAVE){
 
           if(_Det==DIR){
@@ -1881,17 +1872,6 @@ reload:
          goto BypassUpdate;
      }
 
-     if((OffsetSelect==1)&&(Current>1)&&(!((Current==T_BASE)&&(_Det==1)&&(FPGAsubVer)&&(FPGAosFlag)))){
-       if(ADCoffset<54)ADCoffset++;
-       Update_Range();
-       goto bypasslongpress;
-     }
-
-     if((OffsetSelect==2)&&(Current>1)&&(!((Current==T_BASE)&&(_Det==1)&&(FPGAsubVer)&&(FPGAosFlag)))){
-       if(PPM_Comp<999)PPM_Comp++;
-       goto bypasslongpress;
-     }
-
      if(EditListActive(1)){                                                              //file directory read 
        if(Title[9][3].Value<14)Title[9][3].Value++;else DirRange++;   
        goto bypasslongpress;
@@ -2059,24 +2039,14 @@ reload:
                 ClearMeters();                                                                                   //clears meters if untriggered in NORH
 
                 _X_View.Flag |= UPDAT;
-                if (XposRef<151) {
-	          if(SetLowVolume){
-                    if (XposRef<30)_Curr[_Det].Value++;
-                    else{
-                      XposRef+=4;
-                      goto bypasslongpress;
-                    }
-                  }else if (_Curr[_Det].Value < (_Curr[_Det].Limit))_Curr[_Det].Value++;
-                }else{
-                  if(SetLowVolume){ 
-                    if(_Curr[_Det].Value <(_Curr[_Det].Limit-30)){
-                      if(Key_Mid_Speed)_Curr[_Det].Value += 6;
-                      else _Curr[_Det].Value += 30;                                            
-                    }
-                    else if (_Curr[_Det].Value <(_Curr[_Det].Limit-6)) _Curr[_Det].Value +=6;
-                    else if (_Curr[_Det].Value < (_Curr[_Det].Limit)) _Curr[_Det].Value ++;
-                  }else if (_Curr[_Det].Value < (_Curr[_Det].Limit))_Curr[_Det].Value ++;
-                }                
+                { unsigned reference_units;
+                  int step=UiCommon_XposStep(XposRef,1,SetLowVolume,Key_Mid_Speed,&reference_units);
+                  if(reference_units){XposRef=(u16)(XposRef+step);goto bypasslongpress;}
+                  if(_Curr[_Det].Value<_Curr[_Det].Limit) {
+                    step=UiCommon_XposApproach(step,_Curr[_Det].Limit-_Curr[_Det].Value,1);
+                    _Curr[_Det].Value=(s16)UiCommon_XposBound(_Curr[_Det].Value,step,0,_Curr[_Det].Limit);
+                  }
+                }
                 XposRef=GetXposRef(_Curr[_Det].Value);						
 
             } else if ((Current == T_VERNIE) && ((_Det==T1) || (_Det==T2))){
@@ -2202,7 +2172,7 @@ reload:
           Meter[Current-METER_0].Flag |= UPDAT;
 
             if(Meter[Current-METER_0].Item < TL)	    
-              Meter[Current-METER_0].Item += 1;          
+              Meter[Current-METER_0].Item = (u8)UiCommon_MeterStep(Meter[Current-METER_0].Item,1);
             else{                     
               Meter[Current-METER_0].Item  = VBT;
               SaveCurrent[0]=Current;		      
@@ -2723,6 +2693,7 @@ BypassExclusions:
 	if((Current<4)&&(_Det==3)&&((Key_Buffer==K_INDEX_DEC)||(Key_Buffer==K_INDEX_INC))){
           SetOffset(0,_A_Range,_1_posi);
           SetOffset(1,_B_Range,_2_posi);
+          if(_Status!=RUN)SelectiveUpdate|=0x10; /* No trigger rewrite for a graphic HOLD edit. */
           if((_Mode!=X_Y)&&(_4_source!=SPEC_A)&&(_4_source!=SPEC_B)&&(ListOverride)){ 
              ConfNameTimer=110;
              ToggleName=1;
@@ -2800,54 +2771,6 @@ BypassUpdate:
  
 }
 
-void MeterDefaults(void){
-
-              if ((UpdateMeter==4)&&(FlagMeter>0)){
-
-                Meter[0].Flag |= UPDAT;
-                Meter[0].Item  =  VBT;
-                Meter[0].Track = 4;  
-                if(FlagMeter==1){
-                  MeterUpdate(1,9);
-                }else if(FlagMeter==2){
-                  MeterUpdate(1,4);
-                }
-
-                if ((_Mode==X_Y) || ( (Title[TRACK3][SOURCE].Value == HIDE) && (Title[TRACK4][SOURCE].Value == HIDE)))
-                {
-                  if(FlagMeter==1){              
-                    Meter[1].Item  =  RMS; Meter[1].Track = 0;
-                    Meter[2].Item  =  VDC; Meter[2].Track = 0;
-                    Meter[3].Item  =  VPP; Meter[3].Track = 0;
-                    Meter[4].Item  =  FRQ; Meter[4].Track = 0;
-                    Meter[5].Item  =  RMS; Meter[5].Track = 1;
-                    Meter[6].Item  =  VDC; Meter[6].Track = 1;
-                    Meter[7].Item  =  VPP; Meter[7].Track = 1;
-                    Meter[8].Item  =  FRQ; Meter[8].Track = 1;
-                  }else{
-                    Meter[2].Item  =  VDC; Meter[2].Track = 0;
-                    Meter[3].Item  =  VDC; Meter[3].Track = 1;
-                  }
-                }  
-                else  
-                {
-                  if(FlagMeter==1){              
-                    Meter[1].Item  =  FRQ; Meter[1].Track = 0;
-                    Meter[2].Item  =  VDC; Meter[2].Track = 0;
-                    Meter[3].Item  =  FRQ; Meter[3].Track = 1;
-                    Meter[4].Item  =  VDC; Meter[4].Track = 1;
-                    Meter[5].Item  =  FRQ; Meter[5].Track = 2;
-                    Meter[6].Item  =  CIR; Meter[6].Track = 2;
-                    Meter[7].Item  =  FRQ; Meter[7].Track = 3;
-                    Meter[8].Item  =  CIR; Meter[8].Track = 3;
-                  }else{ 
-                    Meter[2].Item  =  VDC; Meter[2].Track = 0;
-                    Meter[3].Item  =  VDC; Meter[3].Track = 1;
-                  }
-                }
-               }
-}
-
 
 void DisableMeter(void)
 {
@@ -2904,25 +2827,17 @@ void EnableTitleMeters(u8 Service){
 
 void UpdateBigMeters(void){
 u8 i;
-     if (FlagMeter==2){
-        if(UpdateMeter==4){
-          for (i=2;i<4;i++){
-            if(i==(Current-METER_0)){
-              BTwinkState=!BTwinkState;
-              BTwink=BTwinkState;
-            }else BTwink=1;
-            Display_Value(i);
-         }
-        }else{
-          for (i=1;i<4;i++){
-            if(i==(Current-METER_0)){
-              BTwinkState=!BTwinkState;
-              BTwink=BTwinkState;
-            }else BTwink=1;
-            Display_Value(i);
-          }
-        }
-      }
+unsigned mask;
+     if(FlagMeter==2){
+       /* The battery field is refreshed separately at its native cadence. */
+       for(i=1,mask=UiCommon_MeterMask()>>1;mask;++i,mask>>=1)if(mask&1u){
+         if(i==(Current-METER_0)){
+           BTwinkState=!BTwinkState;
+           BTwink=BTwinkState;
+         }else BTwink=1;
+         Display_Value(i);
+       }
+     }
 }
 
 void UpdateMeterPage(void){

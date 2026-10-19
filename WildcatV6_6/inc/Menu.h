@@ -137,7 +137,6 @@
 //------------- METER in Item number defined -------------
 
 #define VBT        0
-#define FPS        1
 #define VDC        2
 #define RMS        3
 #define FRQ        4
@@ -192,7 +191,6 @@ extern meter Meter[9];
 extern u8 Current, Update,BTwink;
 extern u8 Detail[14];
 extern char NumStr[12];
-extern u16 Result_FPS;
 extern const char F_UNITSUB[12], F_UNIT[12], T_UNIT[12], S_UNIT[12], P_UNIT[12], V_UNIT[12];	
 extern const char H_UNIT[15], DD_UNIT[15], MM_UNIT[15], VV_UNIT[12];
 extern char N_UNIT[12];
@@ -266,6 +264,7 @@ extern u8 DownConvertMode;
 void EnableMeter(void);
 void DisableMeter(void);
 void Display_Value(u8 i);
+char *Menu_ChannelSource(unsigned channel);
 void Display_Title(void);
 void Display_Meter(void);
 void Load_Attr(void);

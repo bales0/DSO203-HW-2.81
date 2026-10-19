@@ -67,7 +67,7 @@ int main(void)
     /* Blink changes the selected label without repainting the overview. */
     FlagMeter=1;UpdateMeter=4;Twink=PRN;Draw(V_VERNIE,V1,1);
     {unsigned graphs=graph_calls;
-     Twink=INV;draws=formatted=0;Menu144_View(&m,0,0,1,50,0);
+     Twink=INV;draws=formatted=0;Menu144_View(&m,0,0,1,0);
      n=Find(35,0,"!V1!");CHECK(painted[n].mode==INV && graph_calls==graphs);
     }
     Draw(TRACK2,SOURCE,1);CHECK(painted[Find(86,228,"CH(A)")].color==0x0905);

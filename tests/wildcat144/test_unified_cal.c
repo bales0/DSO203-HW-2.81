@@ -5,10 +5,10 @@
 static unsigned checks,captures,writes,generators,fail_capture,clip_capture,save_fail,charger;
 static UnifiedCal state;
 static int response_percent,missing_b,curve,initial_bias,unstable;
-static unsigned cancel_capture;
+static unsigned cancel_capture,bad_upper,upper_visits;
 static int capture_status,flat_b;
 static const uint32_t scale[8]={2000,4000,8000,20000,40000,80000,200000,400000};
-#define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);exit(1);}}while(0)
+#define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"FAIL %d: %s stage=%u error=%u range=%u cmds=%u/%u raw=%ld/%ld\n",__LINE__,#x,state.stage,state.error,state.range,state.capture_commands[0],state.capture_commands[1],(long)state.capture_mean.a,(long)state.capture_mean.b);exit(1);}}while(0)
 static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,CalMean *m)
 {
     UnifiedCal *s=user;int32_t signal=s->stage==CAL_REFERENCE?s->reference/(int32_t)scale[r]:0;
@@ -24,11 +24,16 @@ static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,C
         m->a+=curve*ca*ca*1024/500;m->b-=curve*cb*cb*1024/500;
     }
     if(!mode && captures<=2){m->a+=initial_bias*1024;m->b+=initial_bias*1024;}
-    if(!mode && unstable && captures>2) {
-        int shift=((captures-3)/2)%2?-1536:1536;m->a+=shift;m->b+=shift;
+    if(!mode && unstable && captures>4) {
+        int shift=((captures-5)/4)%2?-1536:1536;m->a+=shift;m->b+=shift;
     }
     if(flat_b && !mode)m->b=((int32_t)bo*820+7*1024)+signal*1024;
     if(missing_b)m->b=((int32_t)bo+(mode?13:7))*1024;
+    if(bad_upper && mode && !r && s->working_y[0][3] &&
+       ao==(unsigned)CalNative_Command(s->adc_offset,s->native[0].offset[0],s->working_y[0][3])) {
+        ++upper_visits;
+        if(upper_visits==2 && ((bad_upper==1 && s->stage==CAL_GROUND) || (bad_upper==2 && s->stage==CAL_REFERENCE)))m->b-=8*1024;
+    }
     m->clips=captures==clip_capture;return 1;
 }
 static int Gen(void *user,int on){(void)user;CHECK(on==0);++generators;return 1;}
@@ -41,7 +46,7 @@ static int Save(void *user,UnifiedCal *s,int high)
 static CalOps ops={&state,Capture,Gen,Battery,Save};
 static void Init(int interlace)
 {
-    captures=writes=generators=fail_capture=clip_capture=save_fail=0;response_percent=100;missing_b=curve=initial_bias=unstable=0;cancel_capture=0;capture_status=flat_b=0;
+    bad_upper=upper_visits=0;captures=writes=generators=fail_capture=clip_capture=save_fail=0;response_percent=100;missing_b=curve=initial_bias=unstable=0;cancel_capture=0;capture_status=flat_b=0;
     UnifiedCal_Init(&state,54,0,scale,interlace,0);
 }
 static void Ground(void)
@@ -60,10 +65,10 @@ static void References(void)
 }
 int main(void)
 {
-    unsigned r,ch,i;int8_t z,k;uint16_t gain;CalKeyGate gate={0};UnifiedCal before;
+    unsigned r,ch,i;uint16_t gain;CalKeyGate gate={0};UnifiedCal before;
     for(i=0;i<2;++i) {
-        Init(i);Ground();CHECK(captures==(i?120:48));
-        References();CHECK(captures==(i?208:56));
+        Init(i);Ground();CHECK(captures==(i?168:96));
+        References();CHECK(captures==(i?288:136));
         for(r=0;r<8;++r)for(ch=0;ch<2;++ch) {
             CHECK(state.native[ch].zero[r]==(ch?-7:-5));CHECK(state.native[ch].offset[r]==0);
             CHECK(state.native[ch].gain[r]==1024);CHECK(state.voltage_used[r][ch]==(int32_t)scale[r]*75);
@@ -86,12 +91,12 @@ int main(void)
     UnifiedCal_Step(&state,CAL_BIG_UP,&ops);CHECK(state.reference==before.reference+1500);
     UnifiedCal_Step(&state,CAL_BIG_DOWN,&ops);CHECK(state.reference==before.reference);
     UnifiedCal_Step(&state,CAL_CANCEL,&ops);CHECK(state.stage==CAL_CANCELLED && !writes);
-    for(i=1;i<=120;++i) {
+    for(i=1;i<=168;++i) {
         Init(1);fail_capture=i;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
         CHECK(state.stage==CAL_ERROR && state.retry==CAL_GROUND && writes==0);
         UnifiedCal_Step(&state,CAL_CANCEL,&ops);CHECK(writes==0);
     }
-    for(i=121;i<=208;++i) {
+    for(i=169;i<=288;++i) {
         Init(1);Ground();fail_capture=i;
         while(state.stage==CAL_REFERENCE)UnifiedCal_Step(&state,CAL_OK,&ops);
         CHECK(state.stage==CAL_ERROR && state.retry==CAL_REFERENCE && !writes);
@@ -127,21 +132,16 @@ int main(void)
     CHECK(state.complete==2 && state.range==2 && state.reference_used[1]==300000);
     for(r=0;r<7;++r)UnifiedCal_Step(&state,CAL_OK,&ops);
     CHECK(state.stage==CAL_SAVE && state.complete==255 && !writes);
-    /* Curvature which the old extrapolation rejected is inside this fit. */
-    Init(1);curve=1;Ground();References();CHECK(!writes);
-    for(r=0;r<8;++r) {
-        CHECK(state.native[0].offset[r]!=0 && state.native[1].offset[r]!=0);
-        CHECK(Scope144_Valid(&state.pending144[r]));
-    }
-    /* A biased initial pair must be corrected using fresh working-point data. */
-    Init(1);initial_bias=4;Ground();CHECK(captures>120);
-    CHECK(state.native[0].zero[0]==-5 && state.native[1].zero[0]==-7);
-    References();CHECK(!writes);
+    /* A wide-range nonlinear or biased first curve must never be committed. */
+    Init(1);curve=1;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && state.error==13 && !writes);
+    Init(1);initial_bias=4;Ground();
+    CHECK(state.native[0].zero[0]==-5 && state.native[1].zero[0]==-7 && !writes);
     /* Within-tolerance, alternating means must NOT pass as stable calibration. */
     Init(1);unstable=1;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
     CHECK(state.stage==CAL_ERROR && state.error==11 && state.range==0);
     CHECK(state.offset_reason==2 && state.offset_attempt==CAL_OFFSET_ATTEMPTS);
-    CHECK(captures==2+2*CAL_OFFSET_ATTEMPTS && !writes);
+    CHECK(captures==4+4*CAL_OFFSET_ATTEMPTS && !writes);
     CHECK(abs(state.offset_residual[state.failed_channel])<=CAL_OFFSET_TOLERANCE);
     unstable=0;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
     CHECK(state.stage==CAL_REFERENCE && state.error==0 && !writes);
@@ -152,7 +152,7 @@ int main(void)
     /* New adapter failure codes cannot accidentally be treated as user cancel. */
     Init(1);capture_status=CAL_CAPTURE_UNSTABLE;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
     CHECK(state.stage==CAL_ERROR && state.error==12 && !writes);
-    CHECK(state.capture_mean.b==101*1024 && state.capture_commands[0]==79);
+    CHECK(state.capture_mean.b==101*1024 && state.capture_commands[0]==64);
     Init(1);capture_status=CAL_CAPTURE_CLIPPED;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
     CHECK(state.stage==CAL_ERROR && state.error==3 && !writes);
     Init(1);Ground();capture_status=CAL_CAPTURE_UNSTABLE;
@@ -162,8 +162,6 @@ int main(void)
     CHECK(state.stage==CAL_ERROR && state.error==5 && state.failed_channel==1 && !writes);
     CHECK(state.requested_offset[1]>127 && state.offset_low_command[1]==79 && state.offset_high_command[1]==154);
     CHECK(state.zero_low[0][1]>0 && state.zero_high[0][1]>state.zero_low[0][1]);
-    CHECK(CalNative_Solve(54,99*1024,205*1024,200,&z,&k));CHECK(z==-5 && k==0);
-    CHECK(!CalNative_Solve(160,99*1024,200*1024,200,&z,&k));
     CHECK(!CalNative_Gain(100*1024,100*1024,1000000,40000,&gain));
     CHECK(CalNative_Gain(100*1024,150*1024,3000000,40000,&gain));CHECK(gain==1536);
     for(i=512;i<=2048;++i) {
@@ -184,6 +182,34 @@ int main(void)
     CHECK(CalNative_Threshold(1000,100,0,1024,54,0)==255);
     CHECK(CalNative_Command(54,0,25)==79);CHECK(CalNative_Command(54,0,40)==94);
     CHECK(CalNative_Command(54,0,160)==200);CHECK(CalNative_Command(0,0,-40)==0);
+    {
+        const int offsets[]={0,20,40,54};unsigned oi;uint16_t points[4];
+        for(oi=0;oi<4;++oi)for(r=0;r<8;++r)for(ch=0;ch<3;++ch) {
+            int8_t zs[2]={-5,-7},ks[2];unsigned k;
+            ks[0]=ch==0?0:ch==1?-64:64;ks[1]=-ks[0];
+            CHECK(CalNative_Points(offsets[oi],zs,ks,75,points));
+            CHECK(points[1]==25 && points[2]==100 && points[0]<25 && points[3]>100);
+            for(k=1;k<4;++k) {
+                CHECK(CalNative_Command(offsets[oi],ks[0],points[k])>=CalNative_Command(offsets[oi],ks[0],points[k-1])+2);
+                CHECK(CalNative_Command(offsets[oi],ks[1],points[k])>=CalNative_Command(offsets[oi],ks[1],points[k-1])+2);
+            }
+            if(ch==0)printf("MAP synthetic R%u ADCoffset=%d Y=%u,25,100,%u DAC_A=%d,%d,%d,%d DAC_B=%d,%d,%d,%d\n",
+                r+1,offsets[oi],points[0],points[3],CalNative_Command(offsets[oi],0,points[0]),CalNative_Command(offsets[oi],0,25),
+                CalNative_Command(offsets[oi],0,100),CalNative_Command(offsets[oi],0,points[3]),CalNative_Command(offsets[oi],0,points[0]),
+                CalNative_Command(offsets[oi],0,25),CalNative_Command(offsets[oi],0,100),CalNative_Command(offsets[oi],0,points[3]));
+        }
+        {int8_t zs[2]={-100,-100},ks[2]={0,0};CHECK(!CalNative_Points(54,zs,ks,200,points));}
+        for(oi=0;oi<4;++oi) {
+            Init(1);state.adc_offset=offsets[oi];Ground();References();
+            for(r=0;r<8;++r)CHECK(state.pending144[r].dac_window && Scope144_Valid(&state.pending144[r]));
+        }
+    }
+    Init(1);bad_upper=1;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && state.error==13 && state.failed_channel==1 && !writes);
+    CHECK(state.capture_commands[0]==(unsigned)CalNative_Command(state.adc_offset,state.native[0].offset[0],state.working_y[0][3]));
+    Init(1);Ground();bad_upper=2;upper_visits=0;UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && state.error==13 && state.failed_channel==1 && !writes);
+    CHECK(state.capture_mean.b==state.ref144_verify[3].b);
     printf("PASS unified calibration: %u checks; 8 ranges A+B+144, keys/release, no blink mutation, failures, signed gain/offset\n",checks);
     return 0;
 }

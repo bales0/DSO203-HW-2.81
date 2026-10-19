@@ -68,7 +68,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Native buffer handoff compilation failed.' }
     & $handoffExecutable | Tee-Object (Join-Path $output 'native-buffer-results.log')
     if ($LASTEXITCODE -ne 0) { throw 'Native buffer handoff tests failed.' }
-    $frameBody = [regex]::Match($processSource, '(?s)void Process144_DrawFrame\(.*?(?=void Process144_Draw\()').Value
+    $frameBody = [regex]::Match($processSource, '(?s)void Process144_DrawFrame\(.*?(?=static u32 FftMagnitude\()').Value
     if (-not $frameBody) { throw 'Full frame renderer source not found.' }
     $frameSource = Join-Path $output 'frame_renderer.c'
     $frameHeaders = '#include "BIOS.h"', '#include "Menu.h"', '#include "Process.h"', '#include "Draw.h"', '#include "Frame144.h"', '#include <string.h>'
@@ -114,6 +114,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Scope144 test compilation failed.' }
     & $scopeExecutable | Tee-Object (Join-Path $output 'scope-results.log')
     if ($LASTEXITCODE -ne 0) { throw 'Scope144 tests failed.' }
+    & python '-B' 'tests/wildcat144/prepare_ui_transition.py' $output
+    if($LASTEXITCODE -ne 0){throw 'CFG source extraction failed'}
     $fileExecutable = Join-Path $output 'test_scope_files.exe'
     $fileCompiler = $compiler
     if (-not (Test-Path $fileCompiler)) { throw '32-bit MinGW GCC required for STM32 header-compatible file IO tests.' }
@@ -121,7 +123,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $machine -notmatch '^(mingw32|i686-.*mingw32)$') { throw '32-bit MinGW host compiler required.' }
     $scopeFilePath = $env:PATH
     $env:PATH = (Split-Path $fileCompiler -Parent) + ';' + $scopeFilePath
-    & $fileCompiler '-std=c99' '-O2' '-Wall' '-Wextra' '-Werror' '-IWildcatV6_6' '-IWildcatV6_6/inc' '-IWildcatV6_6/FWLib/inc' 'tests/wildcat144/test_scope_files.c' 'WildcatV6_6/Files144.c' 'WildcatV6_6/Frame144.c' 'WildcatV6_6/Digital144.c' 'WildcatV6_6/CaptureWindow.c' 'WildcatV6_6/ViewWindowGeometry.c' 'WildcatV6_6/Scope144.c' 'WildcatV6_6/Interlace144.c' 'WildcatV6_6/FpgaProfile.c' '-o' $fileExecutable
+    & $fileCompiler '-std=c99' '-O2' '-Wall' '-Wextra' '-Werror' '-IWildcatV6_6' '-IWildcatV6_6/inc' '-IWildcatV6_6/FWLib/inc' 'tests/wildcat144/test_scope_files.c' (Join-Path $output 'cfg_save.c') 'WildcatV6_6/Files144.c' 'WildcatV6_6/Frame144.c' 'WildcatV6_6/Digital144.c' 'WildcatV6_6/CaptureWindow.c' 'WildcatV6_6/ViewWindowGeometry.c' 'WildcatV6_6/Scope144.c' 'WildcatV6_6/Interlace144.c' 'WildcatV6_6/FpgaProfile.c' '-o' $fileExecutable
     if ($LASTEXITCODE -ne 0) { throw 'Scope144 file test compilation failed.' }
     & $fileExecutable | Tee-Object (Join-Path $output 'scope-files-results.log')
     if ($LASTEXITCODE -ne 0) { throw 'Scope144 file IO tests failed.' }
@@ -187,7 +189,7 @@ try {
     & $dualExecutable | Tee-Object (Join-Path $output 'dual-response-results.log')
     if ($LASTEXITCODE -ne 0) { throw 'Dual offset response tests failed.' }
     $calUi = Join-Path $output 'test_cal_ui.exe'
-    & $fileCompiler '-std=c99' '-O2' '-Wall' '-Wextra' '-Werror' '-DSCOPE144_HOST_TEST' '-IWildcatV6_6' '-IWildcatV6_6/inc' '-IWildcatV6_6/FWLib/inc' 'tests/wildcat144/test_cal_ui.c' 'WildcatV6_6/Calibrat.c' 'WildcatV6_6/NativeWindow.c' 'WildcatV6_6/ViewWindowGeometry.c' 'WildcatV6_6/CaptureWindow.c' 'WildcatV6_6/UnifiedCal.c' 'WildcatV6_6/Interlace144.c' 'WildcatV6_6/FpgaProfile.c' $nativeObject '-o' $calUi
+    & $fileCompiler '-std=c99' '-O2' '-Wall' '-Wextra' '-Werror' '-DSCOPE144_HOST_TEST' '-IWildcatV6_6' '-IWildcatV6_6/inc' '-IWildcatV6_6/FWLib/inc' 'tests/wildcat144/test_cal_ui.c' (Join-Path $output 'normal_vertical.c') 'WildcatV6_6/Calibrat.c' 'WildcatV6_6/NativeWindow.c' 'WildcatV6_6/ViewWindowGeometry.c' 'WildcatV6_6/CaptureWindow.c' 'WildcatV6_6/UnifiedCal.c' 'WildcatV6_6/Interlace144.c' 'WildcatV6_6/FpgaProfile.c' $nativeObject '-o' $calUi
     if ($LASTEXITCODE -ne 0) { throw 'Calibration UI compilation failed.' }
     & $calUi | Tee-Object (Join-Path $output 'cal-ui-results.log')
     if ($LASTEXITCODE -ne 0) { throw 'Calibration UI tests failed.' }

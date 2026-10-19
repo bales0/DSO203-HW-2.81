@@ -14,7 +14,6 @@
 #include "Scope144.h"
 #include "UiCommon.h"
 
-u16 Result_FPS;
 u8 Cnt_InCharge;
 u8 Cnt_Charged;
 u8 Cnt_Batt;
@@ -205,8 +204,6 @@ uc16 F_INV[1]       = {(SCRN<<8)+TEXT1};                          //  File Color
 const char  DELTA_V[2][10] = {"[V:", "[V:"};
 const char  DELTA_T[2][4]  = {"[T:", "Frq"};
 
-const char  METER[12][5]   = {"Vbt", "FPS", "Vdc", "RMS", "Frq",  "Max", 
-                       "Min", "Vpp", "Per", "Dut", "!TH!", "!TL!"};
 s8  OS_Range=0;
 u8  OS_RateSelect=0;
 
@@ -312,15 +309,15 @@ menu Title[13][4]=
 
       //.str
 meter Meter[9]= //.track   .item                         .flag
-{ {(char*)METER,      4,    VBT,     314,    342,   137,  UPDAT}, //  Meter #0
-  {(char*)METER,      4,    FPS,     314,    342,   122,  UPDAT}, //  Meter #1
-  {(char*)METER, TRACK4,    FRQ,     314,    342,   107,  UPDAT}, //  Meter #2
-  {(char*)METER, TRACK3,    CIR,     314,    342,    92,  UPDAT}, //  Meter #3
-  {(char*)METER, TRACK3,    DUT,     314,    342,    77,  UPDAT}, //  Meter #4
-  {(char*)METER, TRACK2,    TH,      314,    342,    62,  UPDAT}, //  Meter #5
-  {(char*)METER, TRACK2,    TL,      314,    342,    47,  UPDAT}, //  Meter #6
-  {(char*)METER, TRACK1,    VPP,     314,    342,    32,  UPDAT}, //  Meter #7
-  {(char*)METER, TRACK1,    VDC,     314,    342,    17,  UPDAT}, //  Meter #8
+{ {0,                  4,    VBT,     314,    342,   137,  UPDAT}, //  Meter #0
+  {0,             TRACK1,    VDC,     314,    342,   122,  UPDAT}, //  Meter #1
+  {0,             TRACK4,    FRQ,     314,    342,   107,  UPDAT}, //  Meter #2
+  {0,             TRACK3,    CIR,     314,    342,    92,  UPDAT}, //  Meter #3
+  {0,             TRACK3,    DUT,     314,    342,    77,  UPDAT}, //  Meter #4
+  {0,             TRACK2,    TH,      314,    342,    62,  UPDAT}, //  Meter #5
+  {0,             TRACK2,    TL,      314,    342,    47,  UPDAT}, //  Meter #6
+  {0,             TRACK1,    VPP,     314,    342,    32,  UPDAT}, //  Meter #7
+  {0,             TRACK1,    VDC,     314,    342,    17,  UPDAT}, //  Meter #8
 };
 
 void Display_Meter(void)                  // refresh measurements display
@@ -328,14 +325,10 @@ void Display_Meter(void)                  // refresh measurements display
   if(Wildcat144_Active()){Menu144_Meters(0);return;}
   u16 color;
   u8  i;
-  u8  MeterLimit=9;
+  unsigned mask=UiCommon_MeterMask();
+  if(FlagMeter==2)mask&=1u; // Large labels are drawn with their values.
 
-  if(FlagMeter==2){
-    MeterLimit=1;
-    if(UpdateMeter!=4)MeterLimit=0;
-  }
-
-  for(i=0; i<MeterLimit;i++){        
+  for(i=0; i<9;i++)if(mask&(1u<<i)){        
     if(Meter[i].Flag & UPDAT){            //-----the name of the measurements show the need to refresh
 
       Meter[i].Flag &= (!UPDAT & !BLINK);       // Clr Update & Blink flag
@@ -347,11 +340,11 @@ void Display_Meter(void)                  // refresh measurements display
           (Meter[i].XPOS1, Meter[i].YPOS,        // coordinates to be displayed
            color,                // need to display color (belongs channel)
            PRN,                                  // print (no flash)
-           Meter[i].Str +(Meter[i].Item * 5));   // need to display the project name
+           (char *)UiCommon_MeterLabel(Meter[i].Item));   // need to display the project name
 
     } 
   }
-  if((Current >= METER_0)&&(Current <(MeterLimit+METER_0))){  
+  if((Current >= METER_0)&&(Current <METER_0+9)&&(mask&(1u<<(Current-METER_0)))){  
     if(Blink){                            //----- the name of the display required flashing measurements
       i = Current - METER_0;
       Blink = 0;                               // Clr Blink Ctrl flag
@@ -363,7 +356,7 @@ void Display_Meter(void)                  // refresh measurements display
           Meter[i].XPOS1, Meter[i].YPOS,         // flashing coordinates
           color,                 // flashing colors (belongs channel)
           Twink,                                 // flashing
-          Meter[i].Str +(Meter[i].Item *5));     // flashing the project name
+          (char *)UiCommon_MeterLabel(Meter[i].Item));     // flashing the project name
 
     }
   }
@@ -379,7 +372,9 @@ void Display_Value(u8 i)
   u32 k, n, m;
   u8  j;
  
-  if(Process144_NativePending() && Meter[i].Item!=VBT && Meter[i].Item!=FPS) {
+  if((Process144_NativePending() && Meter[i].Item!=VBT) ||
+     (UiCommon_TimeItem(Meter[i].Item) && !Process_TimeAvailable(Meter[i].Track) &&
+      !DETflag && !FFTflag && !DownConvertMode && !DownConvertInitiate)) {
     if(DETflag || FFTflag)return;
     for(j=0;j<11;++j)NumStr[j]=' ';
     NumStr[1]=NumStr[2]='-';NumStr[11]=0;
@@ -397,21 +392,18 @@ if(DETflag)goto CalculateDETvalues;
 if(FFTflag)goto CalculateFFTvalues;
 if((DownConvertInitiate)||(DownConvertMode))goto CalculateDownConvertValues;
 
+  s16 reference_a=Process_NativeYpos(0),reference_b=Process_NativeYpos(1);
   switch (Meter[i].Item){  
   case VBT://--------------- calculation and display of battery voltage ---------------
     Int2Str(NumStr, __Get(V_BATTERY)*1000, V_UNIT, 3, SIGN,0);
     break;
-  case FPS://--------------- calculates and displays the frame count ---------------
-    Int2Str(NumStr, Result_FPS, S_UNIT, 3, STD,0);
-    for(j=0;j<11;j++)NumStr[j]=NumStr[j+1]; 
-    break;  
   case VPP:
     if(Meter[i].Track == TRACK1){
 		if(MeterChannelLogic(i,TRACK1)){
-			Tmp=Ga_Max+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-_1_posi;				
+			Tmp=Ga_Max+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-reference_a;				
 	                Tmp=Ka2[_A_Range]*Tmp;
                         if (Tmp>0)Tmp+=512; else Tmp-=512;	// Flip bias down when calculating negative values	
-			Tmp2=Ga_Min+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-_1_posi;	// otherwise neg values end up 1 LSB short after adding +1/2 LSB (+512/1024)
+			Tmp2=Ga_Min+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-reference_a;	// otherwise neg values end up 1 LSB short after adding +1/2 LSB (+512/1024)
 		        Tmp2=Ka2[_A_Range]*Tmp2; 
                         if (Tmp2>0)Tmp2+=512; else Tmp2-=512;	 	        
 			Tmp=(Tmp/1024)-(Tmp2/1024);
@@ -422,10 +414,10 @@ if((DownConvertInitiate)||(DownConvertMode))goto CalculateDownConvertValues;
     }
     if(Meter[i].Track == TRACK2){
 		if(MeterChannelLogic(i,TRACK2)){
-			Tmp=Gb_Max+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-_2_posi;
+			Tmp=Gb_Max+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-reference_b;
 	                Tmp=Kb2[_B_Range]*Tmp; 
                         if (Tmp>0)Tmp+=512; else Tmp-=512;	 	    	
-			Tmp2=Gb_Min+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-_2_posi;
+			Tmp2=Gb_Min+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-reference_b;
 	                Tmp2=Kb2[_B_Range]*Tmp2; 
                         if (Tmp2>0)Tmp2+=512; else Tmp2-=512;	 	        
 			Tmp=(Tmp/1024)-(Tmp2/1024);
@@ -439,7 +431,7 @@ if((DownConvertInitiate)||(DownConvertMode))goto CalculateDownConvertValues;
   case VDC:
     if(Meter[i].Track == TRACK1){
 		if(MeterChannelLogic(i,TRACK1)){
-			Tmp=((VxAvg[0]/NSamples)+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-_1_posi);
+			Tmp=((VxAvg[0]/NSamples)+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-reference_a);
 	                Tmp=Ka2[_A_Range]*Tmp;   // Add signal level correction factor based on signal zero level rather than bottom of screen, prevents offsets from corrupting value 
                         if (Tmp>0)Tmp+=512; else Tmp-=512;	 	        	
                         Tmp/=1024;
@@ -450,7 +442,7 @@ if((DownConvertInitiate)||(DownConvertMode))goto CalculateDownConvertValues;
     }
     if(Meter[i].Track == TRACK2){
 		if(MeterChannelLogic(i,TRACK2)){
-			Tmp=((VxAvg[1]/NSamples)+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-_2_posi);
+			Tmp=((VxAvg[1]/NSamples)+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-reference_b);
 	                Tmp=Kb2[_B_Range]*Tmp; 
                         if (Tmp>0)Tmp+=512; else Tmp-=512;	 	        	
                         Tmp/=1024;
@@ -483,7 +475,7 @@ if((DownConvertInitiate)||(DownConvertMode))goto CalculateDownConvertValues;
  case MAX:
     if(Meter[i].Track == TRACK1){
 		if(MeterChannelLogic(i,TRACK1)){
-			Tmp=GHa_Max+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-_1_posi;
+			Tmp=GHa_Max+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-reference_a;
 	                Tmp=Ka2[_A_Range]*Tmp; 
                         if (Tmp>0)Tmp+=512; else Tmp-=512;	 	        	
                         Tmp/=1024;
@@ -494,7 +486,7 @@ if((DownConvertInitiate)||(DownConvertMode))goto CalculateDownConvertValues;
 	}
     if(Meter[i].Track == TRACK2){
 		if(MeterChannelLogic(i,TRACK2)){
-			Tmp=GHb_Max+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-_2_posi;
+			Tmp=GHb_Max+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-reference_b;
          	        Tmp=Kb2[_B_Range]*Tmp; 
                         if (Tmp>0)Tmp+=512; else Tmp-=512;	 	        	
                         Tmp/=1024;
@@ -509,7 +501,7 @@ if((DownConvertInitiate)||(DownConvertMode))goto CalculateDownConvertValues;
   case MIN:
     if(Meter[i].Track == TRACK1){
 		if(MeterChannelLogic(i,TRACK1)){
-			Tmp=GHa_Min+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-_1_posi;
+			Tmp=GHa_Min+(InvertA?-Ka1[_A_Range]:Ka1[_A_Range])-reference_a;
 	            	Tmp=Ka2[_A_Range]*Tmp; 
                         if (Tmp>0)Tmp+=512; else Tmp-=512;	 	        	
                         Tmp/=1024;
@@ -520,7 +512,7 @@ if((DownConvertInitiate)||(DownConvertMode))goto CalculateDownConvertValues;
     }
     if(Meter[i].Track == TRACK2){
 		if(MeterChannelLogic(i,TRACK2)){
-			Tmp=GHb_Min+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-_2_posi;
+			Tmp=GHb_Min+(InvertB?-Kb1[_B_Range]:Kb1[_B_Range])-reference_b;
 	            	Tmp=Kb2[_B_Range]*Tmp; 
                         if (Tmp>0)Tmp+=512; else Tmp-=512;	 	        	
                         Tmp/=1024;
@@ -790,6 +782,9 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
   for(i = TRACK1; i <= VOLUME; ++i){
 
     for(j = 0; j < 4; ++j){
+      char *variable_text=Title[i][j].Str;
+      if(!(Title[i][j].MARK&(FIX|NUM2|NUM3|NOT)) && i!=T_VERNIE)
+        variable_text=i<2 && j==SOURCE?Menu_ChannelSource(i):variable_text+Title[i][j].Value*10;
 
       /* Empty fixed labels are storage/FFT placeholders, not text cursors.
        * Print_Str with INV and an empty string draws one white column. */
@@ -839,7 +834,7 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
                 Title[i][j].XPOS, Title[i][j].YPOS,
                 TmpColor,    // Color variable 
                 PRN, 
-                Title[i][j].Str +(Title[i][j].Value * 10)// String variable
+                variable_text// String variable
               ); 
 
 
@@ -849,7 +844,7 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
                 Title[i][j].XPOS, Title[i][j].YPOS,
                 Title[i][j].Color[Title[i][0].Value],    // Color variable 
                 PRN, 
-                Title[i][j].Str +(Title[i][j].Value * 10)// String variable
+                variable_text// String variable
               ); 
           }
 
@@ -907,7 +902,7 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
                 Title[i][j].XPOS, Title[i][j].YPOS,
                 Title[i][j].Color[_Meas_V_Track],         // Color variable 
                 PRN, 
-                Title[i][j].Str +(Title[i][j].Value * 10) // String variable
+                variable_text // String variable
 				//Delta V meter title
               ); 
             } else if(i == T_VERNIE){
@@ -949,7 +944,7 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
 					Title[i][j].XPOS, Title[i][j].YPOS,
 					Title[i][j].Color[0],                      // Color fixed 
 					PRN, 
-					Title[i][j].Str +(Title[i][j].Value *10)   // String variable
+					variable_text   // String variable
 				  );
 				}
 
@@ -995,7 +990,7 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
                 Title[i][j].XPOS, Title[i][j].YPOS,
                 TmpColor,    // Color variable 
                 Twink, 
-                Title[i][j].Str +(Title[i][j].Value * 10)// String variable
+                variable_text// String variable
               ); 
 
           } else {                                // ---- Under other mode
@@ -1003,7 +998,7 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
               Title[i][j].XPOS, Title[i][j].YPOS,
               Title[i][j].Color[Title[i][0].Value],    // Color variable 
               Twink, 
-              Title[i][j].Str +(Title[i][j].Value * 10)// String variable
+              variable_text// String variable
             ); 
           }
 
@@ -1046,7 +1041,7 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
                 Title[i][j].XPOS, Title[i][j].YPOS,
                 Title[i][j].Color[_Meas_V_Track],        // Color variable
                 Twink, 
-                Title[i][j].Str +(Title[i][j].Value * 10)// String variable
+                variable_text// String variable
 				// Delta V meter title - flashing
             );else if(i == T_VERNIE){
               Print_Str(
@@ -1089,7 +1084,7 @@ if(((Sweep)||(_Kind==5))&&(_Kind<6)){
 					Title[i][j].XPOS, Title[i][j].YPOS,
 					Title[i][j].Color[0],                    // Color fixed 
 					Twink, 
-					Title[i][j].Str +(Title[i][j].Value * 10)// String variable
+					variable_text// String variable
 					//Upper menu titles and values - flashing
 				); 
 			}
@@ -1231,8 +1226,6 @@ void DisplayBigMeter(u8 MeterNum){
         for (j=1;j<5;j++)BigMeterStr1[j]=NumStr[j+1];           //ie:   +.124  rather than 0.124 for some ranges so all of number fits
       }
       break;
-    case FPS:
-      BigMeterStr1[5]=0; 
     case FRQ:
     case CIR...TL:
       for (j=0;j<5;j++)BigMeterStr1[j]=NumStr[j];
@@ -1274,16 +1267,14 @@ void DisplayBigMeter(u8 MeterNum){
         BigMeterStr2[2]=RefStr[7];
         BigMeterStr2[3]=0;
       break;
-   case FPS:
-      for(j=0;j<2;j++)BigMeterStr2[j]=RefStr[0];
  }
 
  switch (Meter[MeterNum].Item){       //format string3, items
     case VBT...DUT:
-      for (j=0;j<3;j++)BigMeterStr3[j]=METER[Meter[MeterNum].Item][j];
+      for (j=0;j<3;j++)BigMeterStr3[j]=UiCommon_MeterLabel(Meter[MeterNum].Item)[j];
       break; 
     case TH...TL:
-      for (j=0;j<4;j++)BigMeterStr3[j]=METER[Meter[MeterNum].Item][j];	//"!TH!,!TL!"
+      for (j=0;j<4;j++)BigMeterStr3[j]=UiCommon_MeterLabel(Meter[MeterNum].Item)[j];	//"!TH!,!TL!"
       BigMeterStr3[4]=0;						//termination null moved to 5th place to allow for the 2 half spaces
   }
 
@@ -1550,7 +1541,6 @@ char TempStr[10];
 u32 UTmp=0;
 u8 scale,i=0,j;
 u16 offset;
-char PPM_Str[5];
 
   if(AutoSetFlag){
     if(AutoSetFlag==2){
@@ -1565,19 +1555,8 @@ char PPM_Str[5];
     Print_Str(98+(12*8),0,0x0405,Twink,"");
   }
 
-  if((OffsetSelect==1)&&(Current>1)&&(!((Current==T_BASE)&&(_Det==1)&&(FPGAsubVer)&&(FPGAosFlag)))){ 
-    u8ToDec2(TempStr,ADCoffset);                                                                  
-    Print_Str(132+(8*2),0,0x0405,PRN,"ADCoffset= ");
-    Print_Str(131+(8*13),0,0x0405,Twink,"");
-    Print_Str(132+(8*13),0,0x0405,PRN,TempStr);
-  }
-
-  if((OffsetSelect==2)&&(Current>1)&&(!((Current==T_BASE)&&(_Det==1)&&(FPGAsubVer)&&(FPGAosFlag)))){ 
-    s16ToDec3(PPM_Str, PPM_Comp);
-    Print_Str(127,0,0x0405,PRN,"Clock PPM Adj=");
-    Print_Str(127+(8*14),0,0x0405,Twink,"");
-    Print_Str(127+(8*14),0,0x0405,PRN,PPM_Str);
-  }
+  if(!((Current==T_BASE)&&(_Det==1)&&(FPGAsubVer)&&(FPGAosFlag)))
+    UiCommon_ServiceTitle();
 
   if((Current==T_BASE)&&(_Det==MODE)&&(_Mode==AUTO)){
     if((AutoTrigSelect)&&(FPGAver>0)){

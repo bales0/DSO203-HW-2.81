@@ -62,7 +62,7 @@ int main(void)
     }
     /* Native meters are not consumed here; interlace analog B is never enabled. */
     for(interlace=0;interlace<2;++interlace)for(g=0;g<22;++g) {
-        if((!interlace && g<METER_0) || (interlace && (g==TRACK1 || g==V_VERNIE || g==T_VERNIE)))continue;
+        if((!interlace && g<METER_0) || (interlace && (g==TRACK1 || g==V_VERNIE || g==T_VERNIE || g==T_BASE)))continue;
         Current=(u8)g;ShowFFT=0;_Mode=AUTO;
         memcpy(before,Title,sizeof before);memcpy(details,Detail,sizeof details);
         CHECK(!UiCommon_NextDetail(interlace));
