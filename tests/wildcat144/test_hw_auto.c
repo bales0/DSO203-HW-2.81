@@ -70,7 +70,7 @@ static void Positions(void)
   for(i=0;i<4096;++i)CHECK(DataBuf[i]==i+1);
  }
  for(p=0;p<3;++p)for(i=300;i<=386;i+=86){
-  unsigned pre=Capture144_Pretrigger(p,i);Frame144 f;ViewWindowGeometry view;Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,1024,0,1024,1024,54,1024,1024,0,0};
+  unsigned pre=Capture144_Pretrigger(p,i);Frame144 f;ViewWindowGeometry view;Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};
   CHECK(pre==(p==2?256u:150u));Frame144_Reset(&f,1);f.words=(uint32_t *)DataBuf;f.calibration=cal;
   f.capture=m.window;f.capture.trigger_kind=CAPTURE_TRIGGER_HARDWARE_A;
   for(source=0;source<4;++source)if(source!=1)for(kind=0;kind<8;++kind)for(sh=0;sh<5;++sh){

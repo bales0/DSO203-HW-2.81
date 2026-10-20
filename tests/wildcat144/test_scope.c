@@ -33,12 +33,28 @@ int main(void)
     CHECK(!Scope144_Decode(encoded,124,&decoded));
     for(i=0;i<SCOPE144_CAL_BYTES;++i){memcpy(copy,encoded,SCOPE144_CAL_BYTES);copy[i]^=1;CHECK(!Scope144_Decode(copy,123,&decoded));}
     memcpy(copy,encoded,SCOPE144_CAL_BYTES);copy[4]=1; /* Unsupported format with a valid CRC is rejected. */
+    /* General wide command model: values derive from physical slope bounds. */
+    {
+        int diff,y,offset;
+        for(diff=-512;diff<=1024;++diff)for(offset=0;offset<=54;offset+=27)for(y=10;y<=190;++y) {
+            int64_t n=(int64_t)(1024+diff)*(y-40);
+            int expected=offset+40+(int)(n>=0?(n+512)/1024:-((-n+512)/1024));
+            if(expected<0)expected=0;
+            if(expected>200)expected=200;
+            CHECK(CalDac_Command(offset,diff,y)==expected);
+            if(diff>=-128 && diff<=127)CHECK(CalNative_Command(offset,diff,y)==expected);
+        }
+        CHECK(CalDac_Command(40,150,100)==149);
+        CHECK(CalDac_Command(40,151,100)==149);
+        CHECK(CalDac_Command(40,-513,100)==-1 && CalDac_Command(40,1025,100)==-1);
+        CHECK(CalDac_Command(-1,150,100)==-1 && CalDac_Command(55,150,100)==-1);
+    }
     {uint32_t crc=Scope144_Crc(copy,1020);for(i=0;i<4;++i)copy[1020+i]=(unsigned char)(crc>>(i*8));}
     CHECK(!Scope144_Decode(copy,123,&decoded));
     memcpy(copy,encoded,SCOPE144_CAL_BYTES);copy[4]=2; /* v2 is not imported. */
     {uint32_t crc=Scope144_Crc(copy,1020);for(i=0;i<4;++i)copy[1020+i]=(unsigned char)(crc>>(i*8));}
     CHECK(!Scope144_Decode(copy,123,&decoded));
-    CHECK(encoded[4]==4 && SCOPE144_RECORD_BYTES==60 && sizeof(Scope144Cal)==60);
+    CHECK(!memcmp(encoded,SCOPE144_CAL_TAG,8) && SCOPE144_RECORD_BYTES==61 && sizeof(Scope144Cal)==60);
     {
         Scope144Cal invalid=bank.range[0];Scope144Bank bad=bank;
         invalid.ref_dac_a_q10=511;CHECK(!Scope144_Valid(&invalid));
@@ -53,6 +69,35 @@ int main(void)
         memcpy(copy,encoded,SCOPE144_CAL_BYTES);copy[12]^=1;
         {uint32_t crc=Scope144_Crc(copy,1020);for(i=0;i<4;++i)copy[1020+i]=(unsigned char)(crc>>(i*8));}
         CHECK(!Scope144_Decode(copy,123,&decoded));
+    }
+    /* Every representable physical DIFF survives all 16 profiles exactly. */
+    {
+        Scope144Bank wide={0},saved;int diff;unsigned slot;
+        wide.battery[0]=3200;wide.battery[1]=4300;
+        for(slot=0;slot<16;++slot){Scope144Cal *c=slot<8?&wide.range[slot]:&wide.high[slot-8];
+            *c=bank.range[slot%8];c->dac_anchor=65u|(65u<<8);c->dac_window=20u|(190u<<8)|(20u<<16)|(190u<<24);}
+        for(diff=-512;diff<=1024;++diff) {
+            for(slot=0;slot<16;++slot)(slot<8?wide.range:wide.high)[slot%8].dac_b_correction=(int16_t)diff;
+            CHECK(Scope144_Encode(&wide,123,copy));CHECK(Scope144_Decode(copy,123,&saved));CHECK(!memcmp(&wide,&saved,sizeof wide));
+            CHECK(copy[95]==(uint8_t)diff && copy[100]==(uint8_t)((uint16_t)diff>>8));
+        }
+        /* Identity and fixed record layout protect against accidental old imports. */
+        memcpy(copy,encoded,sizeof copy);memcpy(copy,"I144",4);copy[4]=4;copy[5]=copy[6]=copy[7]=0;
+        {uint32_t crc=Scope144_Crc(copy,1020);for(slot=0;slot<4;++slot)copy[1020+slot]=(uint8_t)(crc>>(slot*8));}
+        saved=wide;CHECK(!Scope144_Decode(copy,123,&saved));CHECK(!memcmp(&saved,&wide,sizeof wide));
+        /* Forged high bits in serialized valid cannot be truncated to valid=1. */
+        memcpy(copy,encoded,sizeof copy);copy[62]=1;
+        {uint32_t crc=Scope144_Crc(copy,1020);for(slot=0;slot<4;++slot)copy[1020+slot]=(uint8_t)(crc>>(slot*8));}
+        CHECK(!Scope144_Decode(copy,123,&saved));
+        wide.range[0].dac_b_correction=1025;CHECK(!Scope144_Encode(&wide,123,copy));
+        wide.range[0].dac_b_correction=-513;CHECK(!Scope144_Encode(&wide,123,copy));
+        /* Selected metadata and actual command use identical rounding. */
+        wide.range[0].dac_b_correction=150;wide.high[0].dac_b_correction=151;
+        for(slot=3200;slot<=4300;++slot) {
+            Scope144Cal selected;unsigned commands[2];int k=CalNative_Interpolate(150,151,3200,4300,slot);
+            CHECK(Scope144_SelectAt(&wide,0,40,slot,80,&selected,commands));
+            CHECK(selected.dac_b_correction==k && commands[1]==(unsigned)CalDac_Command(40,k,80));
+        }
     }
     CHECK(Scope144_Newer(1,0));CHECK(Scope144_Newer(0,UINT_MAX));CHECK(!Scope144_Newer(0,0));CHECK(!Scope144_Newer(0,1));
     cal=bank.range[4];
@@ -204,7 +249,7 @@ int main(void)
         CHECK(Scope144_CalibrateMeans(80*1024,88*1024,155*1024,160*1024,1000000,&a));
         a.adc_offset=50;a.dac_a_q10=970;a.dac_b_q10=1120;
         a.ref_dac_a_q10=1010;a.ref_dac_b_q10=1180;
-        a.dac_anchor=75u|(74u<<8)|(64u<<24);
+        a.dac_anchor=75u|(74u<<8);a.dac_b_correction=64;
         a.dac_window=50u|(175u<<8)|(49u<<16)|(180u<<24);
         CHECK(Scope144_Valid(&a));b.range[0]=a;b.battery[0]=3200;
         b.high[0]=a;b.high[0].dac_anchor=75u|(75u<<8);b.battery[1]=4300;
@@ -237,9 +282,11 @@ int main(void)
         for(supply=0;supply<3;++supply)for(y=10;y<=190;++y) {
             unsigned cmd,bat=supply==0?3200:supply==1?3750:4300;
             int effective=CalNative_Position(0,0,50,0,(int)y,bat,&cmd);
-            CHECK(cmd>=50 && cmd<=175 && effective>=10 && effective<=190);
+            CHECK(cmd<=200 && effective>=10 && effective<=190);
+            CHECK(cmd==(unsigned)CalNative_Command(50,0,effective));
+            /* Normal does not inherit 144-only limits; 144 still enforces them. */
+            effective=Scope144_Position(0,50,(int)y,bat,commands);
             CHECK(Scope144_SelectAt(&b,0,50,bat,effective,&c,commands));
-            CHECK(commands[0]==cmd);
         }
         Scope144_NativeBank(0);
         {unsigned cmd;CHECK(CalNative_Position(0,0,54,0,190,3700,&cmd)==146 && cmd==200);}

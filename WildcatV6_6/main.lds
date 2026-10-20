@@ -44,6 +44,7 @@ SECTIONS
           *Function.o(.text)
           *UI144.o(.text)
           *Calibrat.o(.text)
+          *(.text.calibration)             /* Calibration helpers; same ROM limits */
           *Interrupt.o(.text)
         /*  Draw.o(.text) */
        /* Process.o(.text)*/

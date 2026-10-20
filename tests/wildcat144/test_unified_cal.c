@@ -2,11 +2,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include "UnifiedCal.h"
+#include "CalStable.h"
 static unsigned checks,captures,writes,generators,fail_capture,clip_capture,save_fail,charger;
 static UnifiedCal state;
 static int response_percent,missing_b,curve,initial_bias,unstable;
 static unsigned cancel_capture,bad_upper,upper_visits;
-static int capture_status,flat_b;
+static int capture_status,flat_b,route_slope,route_percent,route_offset,route_error,route_drift,a_route_error;
+static unsigned path_calls,normal_calls;
+static CalNative normal_snapshot[2];
+static uint16_t normal_y[8][4];
+static int protect_normal;static unsigned last_path;
+static CalNative ground_snapshot[2];static uint16_t ground_y[8][4];
+static uint32_t battery_value=3700;
 static const uint32_t scale[8]={2000,4000,8000,20000,40000,80000,200000,400000};
 #define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"FAIL %d: %s stage=%u error=%u range=%u cmds=%u/%u raw=%ld/%ld\n",__LINE__,#x,state.stage,state.error,state.range,state.capture_commands[0],state.capture_commands[1],(long)state.capture_mean.a,(long)state.capture_mean.b);exit(1);}}while(0)
 static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,CalMean *m)
@@ -14,10 +21,17 @@ static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,C
     UnifiedCal *s=user;int32_t signal=s->stage==CAL_REFERENCE?s->reference/(int32_t)scale[r]:0;
     signal=signal*response_percent/100;
     CHECK(r<8);CHECK(mode<=1);CHECK(ao<=200 && bo<=200);++captures;
+    if(mode) {
+        if(!last_path){memcpy(ground_snapshot,s->native,sizeof ground_snapshot);memcpy(ground_y,s->working_y,sizeof ground_y);}
+        CHECK(!memcmp(ground_snapshot,s->native,sizeof ground_snapshot));CHECK(!memcmp(ground_y,s->working_y,sizeof ground_y));
+        ++path_calls;
+        if(protect_normal){CHECK(!memcmp(normal_snapshot,s->native,sizeof normal_snapshot));CHECK(!memcmp(normal_y,s->working_y,sizeof normal_y));}
+    } else ++normal_calls;
+    last_path=mode;
     if(captures==fail_capture)return 0;
     if(captures==cancel_capture)return -1;
     if(capture_status){m->a=99*1024;m->b=101*1024;m->clips=0;return capture_status;}
-    m->a=((int32_t)ao+(mode?10:5)+signal)*1024;
+    m->a=((int32_t)ao+5+signal)*1024;
     m->b=((int32_t)bo+(mode?13:7)+signal)*1024;
     if(!mode && curve) {
         int ca=(int)ao-94,cb=(int)bo-94;
@@ -28,16 +42,22 @@ static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,C
         int shift=((captures-5)/4)%2?-1536:1536;m->a+=shift;m->b+=shift;
     }
     if(flat_b && !mode)m->b=((int32_t)bo*820+7*1024)+signal*1024;
+    if(mode) {
+        m->a+=a_route_error;
+        if(route_slope)m->b=(int32_t)bo*route_slope+route_offset*1024+signal*1024*route_percent/100;
+        if(r==4 && bo==64)m->b-=route_error;
+        if(route_drift && path_calls>4)m->b+=((path_calls-5)/4)%2?-1536:1536;
+    }
     if(missing_b)m->b=((int32_t)bo+(mode?13:7))*1024;
-    if(bad_upper && mode && !r && s->working_y[0][3] &&
-       ao==(unsigned)CalNative_Command(s->adc_offset,s->native[0].offset[0],s->working_y[0][3])) {
+    if(bad_upper && mode && !r && s->working144_y[0][3] &&
+       ao==(unsigned)CalNative_Command(s->adc_offset,s->native[0].offset[0],s->working144_y[0][3])) {
         ++upper_visits;
-        if(upper_visits==2 && ((bad_upper==1 && s->stage==CAL_GROUND) || (bad_upper==2 && s->stage==CAL_REFERENCE)))m->b-=8*1024;
+        if((bad_upper==1 && s->stage==CAL_GROUND) || (upper_visits==2 && bad_upper==2 && s->stage==CAL_REFERENCE))m->b-=8*1024;
     }
     m->clips=captures==clip_capture;return 1;
 }
 static int Gen(void *user,int on){(void)user;CHECK(on==0);++generators;return 1;}
-static uint32_t Battery(void *user){(void)user;return 3700;}
+static uint32_t Battery(void *user){(void)user;return battery_value;}
 static int Save(void *user,UnifiedCal *s,int high)
 {
     (void)user;CHECK(s->complete==255);CHECK(s->range==8);++writes;charger=high;
@@ -46,7 +66,7 @@ static int Save(void *user,UnifiedCal *s,int high)
 static CalOps ops={&state,Capture,Gen,Battery,Save};
 static void Init(int interlace)
 {
-    bad_upper=upper_visits=0;captures=writes=generators=fail_capture=clip_capture=save_fail=0;response_percent=100;missing_b=curve=initial_bias=unstable=0;cancel_capture=0;capture_status=flat_b=0;
+    bad_upper=upper_visits=0;captures=writes=generators=fail_capture=clip_capture=save_fail=0;response_percent=100;missing_b=curve=initial_bias=unstable=0;cancel_capture=0;capture_status=flat_b=0;route_slope=route_error=route_drift=a_route_error=0;route_percent=100;route_offset=13;path_calls=normal_calls=last_path=0;protect_normal=0;battery_value=3700;
     UnifiedCal_Init(&state,54,0,scale,interlace,0);
 }
 static void Ground(void)
@@ -63,16 +83,139 @@ static void References(void)
     }
     CHECK(state.stage==CAL_SAVE && state.range==8);
 }
+/* Full-route tests: B144 has different DAC and voltage responses from Normal B. */
+static void RoutedCalibration(void)
+{
+    unsigned r,y,ch,level,pass;Scope144Cal c;unsigned commands[2];Scope144Bank b;
+    uint8_t bytes[SCOPE144_CAL_BYTES];Scope144Bank decoded;
+    for(pass=0;pass<2;++pass) {
+        Init(1);route_slope=960;route_percent=92;route_offset=9;battery_value=pass?4300:3200;
+        Ground();memcpy(normal_snapshot,state.native,sizeof normal_snapshot);memcpy(normal_y,state.working_y,sizeof normal_y);
+        protect_normal=1;References();
+        CHECK(!memcmp(normal_snapshot[1].zero,state.native[1].zero,8));
+        CHECK(!memcmp(normal_snapshot[1].offset,state.native[1].offset,8));
+        for(r=0;r<8;++r) {
+            CHECK(state.native[1].zero[r]==-7 && state.native[1].offset[r]==0);
+            CHECK(state.native144_b.zero[r]!=state.native[1].zero[r]);
+            CHECK(state.native144_b.offset[r]!=state.native[1].offset[r]);
+            CHECK(state.pending144[r].a_gain_q10==state.native[0].gain[r]);
+            CHECK(state.pending144[r].dac_b_correction==state.native144_b.offset[r]);
+        }
+        UnifiedCal_Step(&state,pass?CAL_CHARGER:CAL_OK,&ops);CHECK(state.stage==CAL_DONE);
+        b=state.bank;CHECK(Scope144_Encode(&b,0x931c989b,bytes));CHECK(Scope144_Decode(bytes,0x931c989b,&decoded));
+        for(r=0;r<8;++r)for(y=10;y<=190;++y) {
+            if(!Scope144_SelectAt(&decoded,r,54,battery_value,(int)y,&c,commands))continue;
+            for(ch=0;ch<2;++ch)for(level=0;level<=2;++level) {
+                int32_t raw=ch?(int32_t)commands[1]*route_slope+route_offset*1024:(int32_t)(commands[0]+5)*1024;
+                int32_t q,uv,target=(int32_t)scale[r]*75*(int)level/2;
+                raw+=75*1024*(int)level*(ch?route_percent:100)/200;
+                q=ch?(int32_t)((int64_t)raw*c.gain_q10/1024)+c.bias_q10:raw;
+                q=(int32_t)((int64_t)q*c.a_gain_q10/1024)+c.a_bias_q10;
+                uv=Scope144_Voltage(&c,q);CHECK(abs(uv-target)<(int)scale[r]/3);
+            }
+        }
+        /* Installing a 144 bank must not change a Normal DAC command. */
+        Scope144_NativeBank(&decoded);
+        for(ch=0;ch<2;++ch)for(y=10;y<=190;++y) {
+            unsigned cmd;int p=CalNative_Position(4,ch,54,0,(int)y,battery_value,&cmd);
+            CHECK(cmd==(unsigned)CalNative_Command(54,0,p));
+        }
+        Scope144_NativeBank(0);
+    }
+    /* Real R5 reports: stable 1.068 / 1.125-code point deviations are not time drift. */
+    for(pass=0;pass<2;++pass) {
+        Init(1);route_error=pass?1152:1094;Ground();References();CHECK(state.complete==255 && !writes);
+    }
+    Init(1);route_error=6*1024;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && !writes && state.range==4);
+    Init(1);route_drift=1;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && state.error==11 && state.capture_path==1 && !writes);
+    Init(1);a_route_error=3*1024;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && state.failed_channel==0 && !writes);
+    /* The complete wizard, not just command math, supports wide DIFF signs. */
+    {
+        static const int slopes[]={512,600,700,820,850,893,960,1024,1200,1400,1700,2048};
+        unsigned n,accepted=0;int found150=0;
+        for(n=0;n<sizeof slopes/sizeof slopes[0];++n) {
+            Init(1);state.adc_offset=0;route_slope=slopes[n];route_percent=100;
+            route_offset=(40*(1024-route_slope)+512)/1024;
+            if(20*route_slope+route_offset*1024<10*1024)route_offset=(10*1024-20*route_slope+1023)/1024;
+            Ground();References();
+            for(r=0;r<8;++r) {
+                CHECK(state.native[1].zero[r]==-7 && state.native[1].offset[r]==0);
+                CHECK(state.pending144[r].dac_b_correction==state.native144_b.offset[r]);
+                CHECK(state.pending144[r].dac_b_correction>=-512 && state.pending144[r].dac_b_correction<=1024);
+                if(state.pending144[r].dac_b_correction==150)found150=1;
+            }
+            b=state.bank;memcpy(b.range,state.pending144,sizeof state.pending144);b.battery[0]=3700;
+            CHECK(Scope144_Encode(&b,123,bytes));CHECK(Scope144_Decode(bytes,123,&decoded));
+            CHECK(!memcmp(&b,&decoded,sizeof b));Scope144_NativeBank(&decoded);
+            for(r=0;r<8;++r)for(y=10;y<=190;++y) {
+                int p=(int)y;unsigned measured=0;
+                CHECK(Scope144_Runtime(&decoded,r,0,3700,scale[r],&p,&c,commands,&measured));
+                CHECK(measured && c.valid==1);CHECK(commands[0]<=200 && commands[1]<=200);
+                for(ch=0;ch<2;++ch)for(level=0;level<=2;++level) {
+                    int32_t raw=ch?(int32_t)commands[1]*route_slope:(int32_t)(commands[0]+5)*1024;
+                    int32_t q,target=(int32_t)scale[r]*75*(int)level/2;
+                    if(ch)raw+=route_offset*1024;
+                    raw+=75*1024*(int)level/2;
+                    q=ch?(int32_t)((int64_t)raw*c.gain_q10/1024)+c.bias_q10:raw;
+                    q=(int32_t)((int64_t)q*c.a_gain_q10/1024)+c.a_bias_q10;
+                    CHECK(abs(Scope144_Voltage(&c,q)-target)<(int)scale[r]/2);
+                }
+            }
+            ++accepted;Scope144_NativeBank(0);
+        }
+        CHECK(found150 && accepted==sizeof slopes/sizeof slopes[0]);
+    }
+    /* Reported hardware limit: ZERO -14 and DIFF +150 at ADCoffset 40. */
+    Init(1);state.adc_offset=40;route_slope=893;route_percent=100;route_offset=24;
+    Ground();CHECK(state.native144_b.zero[0]==-14 && state.native144_b.offset[0]==150);
+    References();CHECK(state.complete==255 && state.pending144[0].dac_b_correction==150 && !writes);
+    /* A cannot silently acquire a second absolute scale in the switched path. */
+    Init(1);Ground();memcpy(normal_snapshot,state.native,sizeof normal_snapshot);a_route_error=3*1024;
+    UnifiedCal_Step(&state,CAL_OK,&ops);CHECK(state.stage==CAL_ERROR && state.error==13 && !state.pending144[0].valid);
+    CHECK(!memcmp(normal_snapshot,state.native,sizeof normal_snapshot) && !writes);
+    a_route_error=0;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.complete==1 && state.pending144[0].valid==1);
+    /* Failed retry invalidates only its pending candidate, never an installed bank. */
+    state.range=0;state.reference=state.reference_input[0];a_route_error=3*1024;
+    b=state.bank;UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && !(state.complete&1) && !state.pending144[0].valid && !memcmp(&b,&state.bank,sizeof b));
+    for(pass=13;pass<=24;pass+=4) {
+        Init(1);cancel_capture=pass;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+        CHECK(state.stage==CAL_CANCELLED && state.capture_path==1 && !writes);
+        CHECK(!memcmp(ground_snapshot,state.native,sizeof ground_snapshot));CHECK(!memcmp(ground_y,state.working_y,sizeof ground_y));
+        Init(1);clip_capture=pass;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+        CHECK(state.stage==CAL_ERROR && state.error==3 && !writes && !memcmp(ground_snapshot,state.native,sizeof ground_snapshot));
+    }
+    {
+        UnifiedCal independent,before;CalOps other=ops;
+        Init(1);UnifiedCal_Init(&independent,40,17,scale,1,0);before=independent;
+        Ground();CHECK(!memcmp(&before,&independent,sizeof before));
+        before=state;other.user=&independent;
+        UnifiedCal_Step(&independent,CAL_OK,&other);UnifiedCal_Step(&independent,CAL_OK,&other);
+        CHECK(independent.stage==CAL_REFERENCE && !memcmp(&before,&state,sizeof before));
+    }
+    /* Stable residual and alternating blocks use independent criteria. */
+    {
+        CalStable stable={0};CalMean in={80*1024,80*1024-1152,0},out;unsigned k;
+        CHECK(!CalStable_Push(&stable,&in,&out));CHECK(!CalStable_Push(&stable,&in,&out));CHECK(CalStable_Push(&stable,&in,&out));
+        memset(&stable,0,sizeof stable);
+        for(k=0;k<20;++k){in.b=80*1024+(k%2?1152:-1152);CHECK(!CalStable_Push(&stable,&in,&out));}
+        CHECK(CAL_OFFSET_STABILITY==1024 && CAL_OFFSET_TOLERANCE==2048);
+    }
+}
 int main(void)
 {
-    unsigned r,ch,i;uint16_t gain;CalKeyGate gate={0};UnifiedCal before;
+    unsigned r,ch,i,ground_count=0,total_count=0;uint16_t gain;CalKeyGate gate={0};UnifiedCal before;
     for(i=0;i<2;++i) {
-        Init(i);Ground();CHECK(captures==(i?168:96));
-        References();CHECK(captures==(i?288:136));
+        Init(i);Ground();CHECK(captures==8u*(i?24u:12u));if(i)ground_count=captures;
+        References();CHECK(captures==8u*(i?39u:17u));if(i)total_count=captures;
         for(r=0;r<8;++r)for(ch=0;ch<2;++ch) {
             CHECK(state.native[ch].zero[r]==(ch?-7:-5));CHECK(state.native[ch].offset[r]==0);
             CHECK(state.native[ch].gain[r]==1024);CHECK(state.voltage_used[r][ch]==(int32_t)scale[r]*75);
-            if(i){CHECK(Scope144_Valid(&state.pending144[r]));CHECK(state.pending144[r].bias_q10==-3072);}
+            if(i){CHECK(Scope144_Valid(&state.pending144[r]));CHECK(state.pending144[r].bias_q10==-8192);}
         }
         UnifiedCal_Step(&state,i?CAL_CHARGER:CAL_OK,&ops);CHECK(state.stage==CAL_DONE && writes==1 && charger==i);
         UnifiedCal_Step(&state,CAL_OK,&ops);CHECK(writes==1);
@@ -91,12 +234,12 @@ int main(void)
     UnifiedCal_Step(&state,CAL_BIG_UP,&ops);CHECK(state.reference==before.reference+1500);
     UnifiedCal_Step(&state,CAL_BIG_DOWN,&ops);CHECK(state.reference==before.reference);
     UnifiedCal_Step(&state,CAL_CANCEL,&ops);CHECK(state.stage==CAL_CANCELLED && !writes);
-    for(i=1;i<=168;++i) {
+    for(i=1;i<=ground_count;++i) {
         Init(1);fail_capture=i;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
         CHECK(state.stage==CAL_ERROR && state.retry==CAL_GROUND && writes==0);
         UnifiedCal_Step(&state,CAL_CANCEL,&ops);CHECK(writes==0);
     }
-    for(i=169;i<=288;++i) {
+    for(i=ground_count+1;i<=total_count;++i) {
         Init(1);Ground();fail_capture=i;
         while(state.stage==CAL_REFERENCE)UnifiedCal_Step(&state,CAL_OK,&ops);
         CHECK(state.stage==CAL_ERROR && state.retry==CAL_REFERENCE && !writes);
@@ -205,11 +348,27 @@ int main(void)
         }
     }
     Init(1);bad_upper=1;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
-    CHECK(state.stage==CAL_ERROR && state.error==13 && state.failed_channel==1 && !writes);
-    CHECK(state.capture_commands[0]==(unsigned)CalNative_Command(state.adc_offset,state.native[0].offset[0],state.working_y[0][3]));
+    CHECK(state.stage==CAL_ERROR && (state.error==11 || state.error==13) && state.failed_channel==1 && !writes);
+    CHECK(upper_visits==1 && abs(state.dac_diagnostic.residual[1])>CAL_144_POINT_TOLERANCE);
+    CHECK(state.capture_commands[0]>=64 && state.capture_commands[0]<=156);
     Init(1);Ground();bad_upper=2;upper_visits=0;UnifiedCal_Step(&state,CAL_OK,&ops);
     CHECK(state.stage==CAL_ERROR && state.error==13 && state.failed_channel==1 && !writes);
     CHECK(state.capture_mean.b==state.ref144_verify[3].b);
+    {
+        static const int32_t differences[]={-512,-256,-129,-128,0,127,128,150,151,300,512,1024};
+        unsigned n,k;uint16_t y[4];int32_t z[2]={-5,0},c[2]={0,0};
+        for(n=0;n<sizeof differences/sizeof differences[0];++n) {
+            c[1]=differences[n];CHECK(CalDac_Points(0,z,c,75,y));
+            for(k=0;k<4;++k){int a=CalDac_Command(0,c[0],y[k]),b=CalDac_Command(0,c[1],y[k]);
+                CHECK(a>=0 && a<=200 && b>=0 && b<=200);
+                if(k)CHECK(b>=CalDac_Command(0,c[1],y[k-1])+2);}
+        }
+        z[1]=-14;c[1]=150;CHECK(CalDac_Points(40,z,c,69,y));
+        c[1]=151;CHECK(CalDac_Points(40,z,c,69,y));
+        c[1]=1024;CHECK(!CalDac_Points(54,z,c,69,y)); /* Actual DAC headroom, not an 8-bit limit. */
+        c[1]=1025;CHECK(!CalDac_Points(0,z,c,0,y));
+    }
+    RoutedCalibration();
     printf("PASS unified calibration: %u checks; 8 ranges A+B+144, keys/release, no blink mutation, failures, signed gain/offset\n",checks);
     return 0;
 }

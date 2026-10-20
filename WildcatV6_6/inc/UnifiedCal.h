@@ -8,6 +8,9 @@
 #define CAL_OFFSET_ATTEMPTS 4u
 #define CAL_OFFSET_TOLERANCE (2*1024)
 #define CAL_OFFSET_STABILITY 1024
+/* Model residual, NOT the three-block temporal stability limit. */
+#define CAL_144_POINT_TOLERANCE (2*1024)
+#define CAL_144_A_TOLERANCE (2*1024)
 /* ADC means in Q10. Nonzero clips rejects a block; tolerated calibration
  * exclusions are counted separately in CalCaptureStats, never hidden there. */
 typedef struct { int32_t a,b; unsigned clips; } CalMean;
@@ -28,6 +31,7 @@ typedef struct {
 } CalPreview;
 
 typedef struct { int8_t zero[8],offset[8];uint16_t gain[8]; } CalNative;
+typedef struct { int32_t zero[8],offset[8]; } CalNative144;
 typedef enum { CAL_CLOCK,CAL_GROUND,CAL_REFERENCE,CAL_SAVE,CAL_DONE,CAL_CANCELLED,CAL_ERROR } CalStage;
 typedef enum { CAL_NONE,CAL_OK,CAL_CHARGER,CAL_CANCEL,CAL_DOWN,CAL_UP,CAL_BIG_DOWN,CAL_BIG_UP,CAL_RANGE_DOWN,CAL_RANGE_UP } CalKey;
 typedef struct { unsigned waiting; } CalKeyGate;
@@ -35,6 +39,7 @@ typedef enum { CAL_DAC_NONE,CAL_DAC_LOW,CAL_DAC_HIGH,CAL_DAC_POINT,CAL_DAC_RETUR
 typedef enum { CAL_DAC_OK,CAL_DAC_SLOPE,CAL_DAC_RESIDUAL } CalDacReason;
 typedef struct {
     CalDacStep step;CalDacReason reason;
+    int32_t tolerance;unsigned point;
     int32_t expected[2],residual[2]; /* Q10 raw ADC, never display-rounded */
 } CalDacDiagnostic;
 typedef struct {
@@ -44,13 +49,13 @@ typedef struct {
     int32_t reference,zero_ref[8][2],zero_low[8][2],zero_high[8][2],zero144[8][2];
     int32_t dac144[8][2];
     CalMean dac144_low[8],dac144_high[8];
-    uint16_t working_y[8][4];
+    uint16_t working_y[8][4],working144_y[8][4];
     /* Current reference curve/verification, kept in the wizard DataBuf. */
-    int32_t ref_dac144[2];CalMean ref144_low,ref144_high,ref144_verify[4];
+    int32_t ref_dac144[2];CalMean ref144_verify[4];
     CalCaptureStats ref144_stats[4];
     CalDacDiagnostic dac_diagnostic;
     Scope144Cal pending144[8],rollback144[8];
-    CalNative native[2];Scope144Bank bank;
+    CalNative native[2];CalNative144 native144_b;Scope144Bank bank;
     CalMean measured;int32_t delta[2],gain_result[2];
     unsigned measured_valid,failed_channel,diagnostic_path;
     int32_t offset_residual[2],offset_high_residual[2];
@@ -72,6 +77,7 @@ int CalNative_Uncorrect(int display,int ypos,int zero,unsigned gain);
 int CalNative_Threshold(int display,int ypos,int zero,unsigned gain,int adc_offset,int inverted);
 int CalNative_Correct(int raw_minus_offset,int ypos,int zero,unsigned gain);
 int CalNative_Command(int adc_offset,int correction,int ypos);
+int CalDac_Points(int,const int32_t[2],const int32_t[2],unsigned,uint16_t[4]);
 int CalNative_Points(int adc_offset,const int8_t zero[2],const int8_t correction[2],unsigned reference_steps,uint16_t ypos[4]);
 int CalNative_Gain(int32_t zero,int32_t high,int32_t reference,uint32_t scale,uint16_t *gain);
 int CalMean_Valid(const CalMean *);

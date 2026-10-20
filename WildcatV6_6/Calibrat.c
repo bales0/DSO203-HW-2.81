@@ -152,6 +152,15 @@ static void OffsetPanel(const UnifiedCal *s)
 {
     unsigned c=s->failed_channel,r=s->range;
     if(r>=8 || c>1)return;
+    if(s->capture_path) {
+        DiagnosticFrame("144 B ZERO/OFFSET");
+        PairValue(156,"Raw/CMD B: ",s->capture_mean.b*1000/1024,s->capture_commands[1]);
+        PairValue(136,"Expected/error (mADC): ",s->dac_diagnostic.expected[1]*1000/1024,s->dac_diagnostic.residual[1]*1000/1024);
+        PairValue(116,"Attempt/limit (mADC): ",s->offset_attempt,s->dac_diagnostic.tolerance*1000/1024);
+        Value(96,"Spread B (mADC): ",s->capture_stats.spread_b*1000/1024);
+        Value(76,"Wanted ZERO (-255..255): ",s->requested_zero[c]);
+        Value(56,"Wanted DIFF (-512..1024): ",s->requested_offset[c]);return;
+    }
     DiagnosticFrame("RAW OFFSET DIAGNOSTICS");
     Value(156,"Raw low (mADC): ",s->zero_low[r][c]*1000/1024);
     Value(136,"Raw high (mADC): ",s->zero_high[r][c]*1000/1024);
@@ -190,23 +199,21 @@ static void DacPanel(const UnifiedCal *s)
     n+=Decimal(row+n,r+1);strcpy(row+n,ch?"/8 ADC B: ":"/8 ADC A: ");
     strcat(row,d->reason==CAL_DAC_SLOPE?"DAC SLOPE":d->step==CAL_DAC_DRIFT?"DRIFT ERROR":d->step==CAL_DAC_RETURN?"RETURN ERROR":"POINT ERROR");Line(222,row);
     Line(208,s->capture_path?"Both ADCs sample input A; values in mADC":"Separate inputs A/B; values in mADC");
-    DiagnosticFrame("144 OFFSET CHECK");
+    DiagnosticFrame(s->retry==CAL_GROUND?"144 B ZERO/OFFSET":"144 B -> NORMAL A");
     PairValue(164,"Zero LOW A/B: ",s->dac144_low[r].a*1000/1024,s->dac144_low[r].b*1000/1024);
     PairValue(150,"Zero HIGH A/B: ",s->dac144_high[r].a*1000/1024,s->dac144_high[r].b*1000/1024);
-    PairValue(136,"Slope A/B (mADC/CMD): ",s->dac144[r][0]*1000/1024,s->dac144[r][1]*1000/1024);
+    PairValue(136,"Slope A/B (mADC/CMD): ",(d->reason==CAL_DAC_SLOPE?s->gain_result[0]:s->dac144[r][0])*1000/1024,(d->reason==CAL_DAC_SLOPE?s->gain_result[1]:s->dac144[r][1])*1000/1024);
     if(s->retry==CAL_REFERENCE)PairValue(122,"Ref slope A/B: ",s->ref_dac144[0]*1000/1024,s->ref_dac144[1]*1000/1024);
     PairValue(108,"Point CMD A/B: ",s->capture_commands[0],s->capture_commands[1]);
     if(d->reason==CAL_DAC_SLOPE) {
-        Value(94,"Failed ADC slope (mADC/CMD): ",(s->retry==CAL_REFERENCE?s->ref_dac144[ch]:s->dac144[r][ch])*1000/1024);
+        Value(94,"Failed ADC slope (mADC/CMD): ",s->gain_result[ch]*1000/1024);
         Line(80,"Allowed slope: 500..2000 mADC/CMD");
     } else {
         PairValue(94,"Raw/expected (mADC): ",(ch?s->capture_mean.b:s->capture_mean.a)*1000/1024,d->expected[ch]*1000/1024);
-        PairValue(80,"Error/limit (mADC): ",d->residual[ch]*1000/1024,CAL_OFFSET_STABILITY*1000/1024);
+        PairValue(80,"Error/limit (mADC): ",d->residual[ch]*1000/1024,d->tolerance*1000/1024);
     }
-    if(s->retry==CAL_REFERENCE) {
-        PairValue(66,"Ref LOW A/B: ",s->ref144_low.a*1000/1024,s->ref144_low.b*1000/1024);
-        PairValue(52,"Ref HIGH A/B: ",s->ref144_high.a*1000/1024,s->ref144_high.b*1000/1024);
-    }
+    PairValue(66,"Attempt/clips: ",s->offset_attempt,s->capture_mean.clips);
+    PairValue(52,"Spread A/B (mADC): ",s->capture_stats.spread_a*1000/1024,s->capture_stats.spread_b*1000/1024);
 }
 static void Render(const UnifiedCal *s,int full)
 {
@@ -250,7 +257,7 @@ static void Render(const UnifiedCal *s,int full)
             DacPanel(s);
         } else if(s->error==11) {
             char row[49];unsigned n=0,c=s->failed_channel;
-            const char *prefix=c?"Offset B R":"Offset A R";
+            const char *prefix=s->capture_path?"144 B Offset R":c?"Offset B R":"Offset A R";
             while(*prefix)row[n++]=*prefix++;
             n+=Decimal(row+n,s->range+1);memcpy(row+n," err(mADC)=",11);n+=11;
             n+=Decimal(row+n,s->offset_residual[c]*1000/1024);row[n]=0;Line(222,row);

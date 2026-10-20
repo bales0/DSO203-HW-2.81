@@ -85,12 +85,13 @@ static int32_t q[1024];static uint16_t pairs[664];
 int main(void)
 {
     unsigned sector,i,r,fail;Scope144Bank bank,loaded;
-    Scope144Cal c={1024,0,55*1024,125*1024,5000000,1,1024,0,1024,1024,54,1024,1024,0,0};
+    Scope144Cal c={1024,0,55*1024,125*1024,5000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};
     c.ref_dac_a_q10=1100;c.ref_dac_b_q10=990;
     for(sector=512;sector<=4096;sector*=8) {
         SectorSize=(u16)sector;memset(files,0,sizeof(files));memset(&bank,0,sizeof(bank));
         bank.battery[0]=3200;bank.battery[1]=4200;
-        for(r=0;r<8;++r){bank.range[r]=c;bank.high[r]=c;bank.high[r].bias_q10=100+(int32_t)r;}
+        for(r=0;r<8;++r){bank.range[r]=c;bank.high[r]=c;bank.high[r].bias_q10=100+(int32_t)r;
+            bank.range[r].dac_b_correction=(int16_t)(150+(int)r);bank.high[r].dac_b_correction=(int16_t)(-129-(int)r);}
         Native(35);CHECK(!File144_CalLoad(&loaded));
         CHECK(File144_WptSave(&bank,1)==OK && bank.generation==1);
         CHECK(File144_CalLoad(&loaded));CHECK(!memcmp(&bank,&loaded,sizeof(bank)));
@@ -298,7 +299,7 @@ int main(void)
             CHECK(files[j].size==512 && Scope144_Crc(files[j].bytes,512)==h);
         }
     }
-    printf("PASS Scope144 v4 file IO: %u checks; two profiles, matching native prefix, alternating slots, 512/4096B faults, legacy/full CSV\n",checks);return 0;
+    printf("PASS Scope144 wide file IO: %u checks; two profiles, matching native prefix, alternating slots, 512/4096B faults, legacy/full CSV\n",checks);return 0;
 }
 
 int Generator_SecBusy(void){return (int)uart_owner;}
