@@ -93,7 +93,7 @@ int File144_SaveParams(void)
 {
     Scope144Bank bank;unsigned slot;
     if(InitFileSystem()!=OK)return DISK_ERR;
-    if(Latest(&slot,1)<0)return RD_ERR;
+    if(Latest(&slot,1)!=1)return RD_ERR;
     bank=SCRATCH->latest;
     return File144_WptSave(&bank,1);
 }

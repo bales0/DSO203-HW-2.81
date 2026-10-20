@@ -195,6 +195,31 @@ static void Invalid(void)
  }
  CHECK(!Fft144_Update(0,0,0,14,2,clock_cycles+8000000));
 }
+
+static void NominalFrames(void)
+{
+ static const unsigned scales[]={2000,4000,8000,20000,40000,80000,200000,400000};
+ Scope144Bank bank={0};unsigned range,j,cmd[2],measured,clip,raw;int y;int32_t q;
+ Scope144Measurements m;char row[80];
+ Scope144_NativeBank(0);
+ for(range=0;range<8;++range) {
+  Fixture(16,20,CAPTURE_PHASE_B_A,0,0);y=100;frame.range=range;
+  CHECK(Scope144_Runtime(&bank,range,40,3700,scales[range],&y,&frame.calibration,cmd,&measured));
+  CHECK(!measured && Frame144_Valid(&frame));
+  for(j=0;j<4094;++j)words[j+2]=140u|(160u<<8);
+  CHECK(Frame144_Read(&frame,1,&q,&clip) && q==40*1024 && !clip);
+  CHECK(Frame144_Read(&frame,0,&q,&clip) && q==60*1024 && !clip);
+  CHECK(Scope144_Voltage(&frame.calibration,q)==(int32_t)(20*scales[range]));
+  CHECK(Frame144_Measure(&frame,&m) && !m.clips && !m.clip_rails);
+  CHECK(m.minimum_uv==0 && m.maximum_uv==(int32_t)(20*scales[range]));
+  CHECK(Frame144_AdcThresholdKind(&frame.calibration,0,0,&raw) && raw==140);
+  CHECK(Frame144_CsvRow(row,&frame,0,1));
+  Fft144_Reset();CHECK(Fft144_Update(&frame,500,0,14,2,clock_cycles+8000000));
+  words[2]=255u;
+  CHECK(Frame144_Read(&frame,0,&q,&clip) && clip);
+  CHECK(Frame144_Measure(&frame,&m) && m.clips==2 && m.clip_rails==3);
+ }
+}
 int main(void)
 {
  unsigned source,setting,k,i;static s32 input[512],saved[512];uint32_t random=9;
@@ -207,7 +232,7 @@ int main(void)
   memcpy(fr,input,sizeof input);Legacy_Process_Fft();memcpy(saved,fi,sizeof saved);
   memcpy(fr,input,sizeof input);Process_Fft(source,0);CHECK(!memcmp(saved,fi,sizeof saved));
  }
- Vectors();CacheAndAxis();Invalid();
+ Vectors();CacheAndAxis();Invalid();NominalFrames();
  printf("PASS FFT144: %u checks; full-convolution oracle, 2:1/4:1 antialias response, all bases/phases/calibration, Normal FFT unchanged, peaks/axis/clipping, XPOS edges, HOLD/cache/10Hz/wrap, invalid frames; host only\n",checks);
  return 0;
 }

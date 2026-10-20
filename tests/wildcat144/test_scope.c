@@ -242,9 +242,118 @@ int main(void)
             CHECK(commands[0]==cmd);
         }
         Scope144_NativeBank(0);
-        {unsigned cmd;CHECK(CalNative_Position(0,0,54,0,190,3700,&cmd)==100 && cmd==154);}
+        {unsigned cmd;CHECK(CalNative_Position(0,0,54,0,190,3700,&cmd)==146 && cmd==200);}
         CHECK(!Scope144_SelectAt(&b,0,50,3750,190,&c,commands));
         CHECK(!Scope144_SelectAt(&b,0,50,3750,-100,&c,commands));
+    }
+
+    /* Hardware bounds, not calibration reference points; exercise the
+     * unsaturated oracle so plateaus cannot accumulate invisible key steps. */
+    {
+        static const int offsets[]={0,40,54},corrections[]={-128,-27,0,63,127};
+        unsigned o,k,ch,y,cmd;int lower,upper,expected,effective;
+        Scope144_NativeBank(0);
+        for(o=0;o<3;++o)for(k=0;k<5;++k)for(ch=0;ch<2;++ch) {
+            lower=10;upper=190;
+            for(y=10;y<=190;++y) {
+                int d=(1024+corrections[k])*((int)y-40);
+                int raw=offsets[o]+40+(d>=0?(d+512)/1024:-((-d+512)/1024));
+                if(raw<0)lower=(int)y+1;
+                if(raw>200 && upper==190)upper=(int)y-1;
+            }
+            for(y=0;y<=200;++y) {
+                expected=(int)y<lower?lower:(int)y>upper?upper:(int)y;
+                effective=CalNative_Position(0,ch,offsets[o],corrections[k],(int)y,3700,&cmd);
+                CHECK(effective==expected && cmd<=200);
+                CHECK(cmd==(unsigned)CalNative_Command(offsets[o],corrections[k],effective));
+            }
+        }
+        CHECK(CalNative_Command(54,127,INT_MAX)==200);
+        CHECK(CalNative_Command(54,-128,INT_MIN)==0);
+    }
+    /* A nominal frame is numerically valid but cannot become a saved profile. */
+    {
+        Scope144Bank empty={0},legacy={0},saved;Scope144Cal c;unsigned range,o,cmd[2],measured;
+        static const unsigned scales[]={2000,4000,8000,20000,40000,80000,200000,400000};
+        static const int offsets[]={0,40,54};
+        int y;uint32_t crc;
+        Scope144_NativeBank(0);
+        for(range=0;range<8;++range)for(o=0;o<3;++o) {
+            y=100;crc=Scope144_Crc(&empty,sizeof empty);measured=99;
+            CHECK(Scope144_Runtime(&empty,range,offsets[o],3700,scales[range],&y,&c,cmd,&measured));
+            CHECK(!measured && c.valid==SCOPE144_NOMINAL && Scope144_Valid(&c));
+            CHECK(c.gain_q10==1024 && !c.bias_q10 && c.a_gain_q10==1024);
+            CHECK(cmd[0]==(unsigned)(offsets[o]+y) && cmd[0]==cmd[1]);
+            CHECK(Scope144_Voltage(&c,(int32_t)(cmd[0]+1)*1024+c.a_bias_q10)==(int32_t)scales[range]);
+            CHECK(Scope144_Voltage(&c,(int32_t)cmd[0]*1024+c.a_bias_q10)==0);
+            CHECK(Scope144_Crc(&empty,sizeof empty)==crc);
+            saved=empty;saved.battery[0]=3700;saved.range[range]=c;
+            CHECK(!Scope144_Encode(&saved,123,copy));
+            legacy=bank;Scope144_NativeBank(&legacy);y=100;
+            CHECK(Scope144_Runtime(&legacy,range,offsets[o],3700,scales[range],&y,&c,cmd,&measured));
+            CHECK(!measured && c.valid==SCOPE144_NOMINAL);
+        }
+        y=100;CHECK(!Scope144_Runtime(&empty,8,40,3700,2000,&y,&c,cmd,&measured));
+        CHECK(!Scope144_Runtime(&empty,0,-1,3700,2000,&y,&c,cmd,&measured));
+        CHECK(!Scope144_Runtime(&empty,0,55,3700,2000,&y,&c,cmd,&measured));
+        CHECK(!Scope144_Runtime(&empty,0,40,2799,2000,&y,&c,cmd,&measured));
+        CHECK(!Scope144_Runtime(&empty,0,40,5201,2000,&y,&c,cmd,&measured));
+        CHECK(!Scope144_Runtime(&empty,0,40,3700,0,&y,&c,cmd,&measured));
+        CHECK(!Scope144_Runtime(&empty,0,40,3700,800001,&y,&c,cmd,&measured));
+    }
+
+    {
+        Scope144Bank b={0};Scope144Cal c,out;unsigned cmd[2],measured,y;
+        CHECK(Scope144_CalibrateMeans(80*1024,88*1024,155*1024,160*1024,1000000,&c));
+        c.adc_offset=40;c.dac_anchor=80u|(80u<<8);
+        c.dac_window=50u|(180u<<8)|(60u<<16)|(140u<<24);
+        b.range[0]=c;b.battery[0]=3700;Scope144_NativeBank(&b);
+        for(y=10;y<=190;++y) {
+            int p=(int)y;CHECK(Scope144_Runtime(&b,0,40,3700,20000,&p,&out,cmd,&measured));
+            CHECK(measured && out.valid==1 && p>=20 && p<=100);
+            CHECK(cmd[0]>=50 && cmd[0]<=180 && cmd[1]>=60 && cmd[1]<=140);
+            CHECK(p==((int)y<20?20:(int)y>100?100:(int)y));
+        }
+        /* A high-only measured profile is still selected, not replaced. */
+        b.high[0]=b.range[0];memset(&b.range[0],0,sizeof c);b.battery[1]=4300;
+        Scope144_NativeBank(&b);{int p=90;CHECK(Scope144_Runtime(&b,0,40,3700,20000,&p,&out,cmd,&measured));CHECK(measured==1 && out.valid==1);}
+
+        /* A legacy supply slot must not dilute a valid measured other slot. */
+        b.range[0]=c;b.range[0].dac_anchor=b.range[0].dac_window=0;b.battery[0]=3200;
+        Scope144_NativeBank(&b);{int p=80;CHECK(Scope144_Runtime(&b,0,40,3700,20000,&p,&out,cmd,&measured));CHECK(measured==1 && out.valid==1);}
+        b.battery[0]=b.battery[1]=0;Scope144_NativeBank(&b);
+        {int p=180;CHECK(Scope144_Runtime(&b,0,40,3700,20000,&p,&out,cmd,&measured));CHECK(!measured && out.valid==SCOPE144_NOMINAL && p==160 && cmd[0]==200);}
+        b.battery[1]=4300;memset(&b.range[0],0,sizeof c);
+        /* Inconsistent channel windows and wrong-range/invalid profiles fall
+         * back without publishing invented coefficients to the bank. */
+        b.high[0].dac_window=150u|(190u<<8)|(10u<<16)|(30u<<24);
+        b.high[0].dac_anchor=160u|(20u<<8);Scope144_NativeBank(&b);
+        {int p=100;CHECK(Scope144_Runtime(&b,0,40,3700,20000,&p,&out,cmd,&measured));CHECK(!measured && out.valid==SCOPE144_NOMINAL && cmd[0]<=200 && cmd[1]<=200);}
+        Scope144_NativeBank(0);
+        {int p=100;CHECK(Scope144_Runtime(&b,1,40,3700,20000,&p,&out,cmd,&measured));CHECK(!measured && out.valid==SCOPE144_NOMINAL);}
+        b.high[0].valid=2;{int p=100;CHECK(Scope144_Runtime(&b,0,40,3700,20000,&p,&out,cmd,&measured));CHECK(!measured);}
+    }
+    /* A nominal path cannot know a physical ADC ground error. A measured
+     * ground/reference profile removes that error without shifting pixels.
+     * This synthetic -6-code device is not a measurement of the real DS203. */
+    {
+        Scope144Bank bank={0},empty={0};Scope144Cal c,out;unsigned r,y,cmd[2],measured;
+        CHECK(Scope144_CalibrateMeans(74*1024,80*1024,149*1024,155*1024,1500000,&c));
+        c.adc_offset=40;c.dac_anchor=80u|(80u<<8);
+        c.dac_window=10u|(200u<<8)|(10u<<16)|(200u<<24);bank.battery[0]=3700;
+        for(r=0;r<8;++r)bank.range[r]=c;
+        Scope144_NativeBank(&bank);
+        for(r=0;r<8;++r)for(y=10;y<=160;y+=5){int p=(int)y;int32_t q;
+            CHECK(Scope144_Runtime(&bank,r,40,3700,20000,&p,&out,cmd,&measured));
+            CHECK(measured && out.valid==1);q=((int)cmd[0]-6)*1024;
+            CHECK(Scope144_Normalize(&out,&q,1));CHECK(!Scope144_Voltage(&out,q));
+            CHECK(p+Scope144_Voltage(&out,q)/20000==p);
+        }
+        Scope144_NativeBank(0);
+        {int p=100;int32_t q;
+         CHECK(Scope144_Runtime(&empty,0,40,3700,20000,&p,&out,cmd,&measured));
+         CHECK(!measured && out.valid==SCOPE144_NOMINAL);q=((int)cmd[0]-6)*1024;
+         CHECK(Scope144_Normalize(&out,&q,1));CHECK(Scope144_Voltage(&out,q)==-120000);}
     }
     printf("PASS Scope144: %u checks; calibration banks, eight ranges, timebase, meters, nine A/C/D trigger kinds, 72 MHz width, CSV\n",checks);
     return 0;

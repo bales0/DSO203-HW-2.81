@@ -22,7 +22,7 @@ u8 FlagMeter,UpdateMeter=4,Current,InitXY,Update,SelectiveUpdate,ClearMeterAreaF
 u8 discard,Rdiscard,FrameEndFlag;
 vu16 PD_Cnt;
 u16 MAX_X=311;
-u8 TrackBuff[397*4];menu Title[13][4];meter Meter[9];
+u8 TrackBuff[397*4],RMSdata[2][700];menu Title[13][4];meter Meter[9];
 void __Set(u8 object,u32 value){CHECK(sets<8);objects[sets]=object;values[sets++]=(unsigned)value;}
 void Delayms(u16 n){ms+=n;}
 void __Clear_Screen(u16 color){CHECK(color==BLACK);++clears;}

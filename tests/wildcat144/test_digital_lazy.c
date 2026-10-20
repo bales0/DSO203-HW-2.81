@@ -40,9 +40,9 @@ static void AnalogDemandCases(void)
  Begin(1,4);_Mode=NORH;hw_test=hw_ready=1;CHECK(ServiceUntilFrame());
  for(i=0;i<8 && !shown_valid;++i)KeyEvent(0);
  CHECK(shown_valid && !analog_timing_available);hw_ready=0;KeyEvent(0);
- CHECK(hw_waiting && !shown_valid);records=record_count;reads=fifo_index;
- Meter[3].Item=FRQ;Meter[3].Track=TRACK1;
- for(i=0;i<8;++i){KeyEvent(0);CHECK(!analog_timing_available && record_count==records && fifo_index==reads);}
+ CHECK(hw_waiting && shown_valid);hw_ready=1;KeyEvent(0);CHECK(!shown_valid);
+ records=record_count;reads=fifo_index;Meter[3].Item=FRQ;Meter[3].Track=TRACK1;
+ for(i=0;i<3;++i){KeyEvent(0);CHECK(!analog_timing_available && record_count==records && fifo_index==reads+512*(i+1));}
  Stop();hw_test=0;
 }
 int main(void)
@@ -89,7 +89,7 @@ int main(void)
     CHECK(ServiceUntilFrame());KeyEvent(KEY1);scans=digital_scans;CHECK(scans==1);
     for(i=0;i<50;++i){CHECK(!Wildcat144_DigitalMeasurement(0,&a));CHECK(!Wildcat144_DigitalMeasurement(1,&b));}
     CHECK(digital_scans==scans);Stop();digital_constant=0;
-    /* Completed C survives re-arming; D cannot read an incomplete new epoch. */
+    /* Both channels may use untouched completed RAM during stage 1. */
     Begin(1,4);MeterAt(2,0);_Mode=NORH;_T_base=21;
     capture_case=history=0;hw_test=1;hw_ready=0;
     CHECK(ServiceUntilFrame() && hw_waiting);hw_ready=1;
@@ -98,9 +98,9 @@ int main(void)
     CHECK(Wildcat144_DigitalMeasurement(0,&a));scans=digital_scans;
     hw_ready=0;KeyEvent(0);CHECK(hw_waiting);
     CHECK(Wildcat144_DigitalMeasurement(0,&b) && !memcmp(&a,&b,sizeof a));
-    CHECK(!Wildcat144_DigitalMeasurement(1,&b));CHECK(digital_scans==scans);
-    KeyEvent(KEY1);CHECK(!Wildcat144_DigitalMeasurement(0,&b));
-    CHECK(!Wildcat144_DigitalMeasurement(1,&b));Stop();
+    CHECK(Wildcat144_DigitalMeasurement(1,&b));CHECK(digital_scans==scans+1);
+    KeyEvent(KEY1);CHECK(Wildcat144_DigitalMeasurement(0,&b));
+    CHECK(Wildcat144_DigitalMeasurement(1,&b));Stop();
     printf("PASS digital demand/cache: %u checks; visible masks, lazy HOLD, epochs, no-period cache, incomplete FIFO guard\n",checks);
     return 0;
 }

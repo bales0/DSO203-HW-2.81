@@ -321,6 +321,29 @@ int main(void)
         old=normal_writes;_State.Value=HOLD;Test_NormalSetOffset(0,0,10);CHECK(normal_writes==old);
         Scope144_NativeBank(0);
     }
+
+    /* Actual Normal SetOffset adapter, without calibration files. The same
+     * helper is independent of AC/DC or inversion; HOLD never writes DACs. */
+    {
+        static const unsigned offsets[]={0,40,54};unsigned o,r,ch,coupling,invert,old;
+        Init(0);CalibrateMode=0;Scope144_NativeBank(0);
+        for(o=0;o<3;++o)for(r=0;r<8;++r)for(ch=0;ch<2;++ch)
+        for(coupling=0;coupling<2;++coupling)for(invert=0;invert<2;++invert) {
+            unsigned cmd;int effective;
+            ADCoffset=(u8)offsets[o];Ka3[r]=-27;Kb3[r]=63;
+            Title[ch][COUPLE].Value=(s16)coupling;Title[ch][SOURCE].Value=(s16)(invert?2:1);
+            _State.Value=RUN;Title[ch][POSI].Value=100;
+            Test_NormalSetOffset((u8)ch,(u8)r,101);
+            CHECK(normal_commands[ch]==(unsigned)CalNative_Command(ADCoffset,ch?63:-27,101));
+            effective=CalNative_Position(r,ch,ADCoffset,ch?63:-27,190,3700,&cmd);
+            Title[ch][POSI].Value=190;Test_NormalSetOffset((u8)ch,(u8)r,190);
+            CHECK(normal_commands[ch]==cmd && Title[ch][POSI].Value==effective);
+            Test_NormalSetOffset((u8)ch,(u8)r,(s16)(effective-1));
+            CHECK(normal_commands[ch]==(unsigned)CalNative_Command(ADCoffset,ch?63:-27,effective-1));
+            old=normal_writes;_State.Value=HOLD;Test_NormalSetOffset((u8)ch,(u8)r,10);
+            CHECK(normal_writes==old);
+        }
+    }
     printf("PASS calibration UI: %u checks; actual Calibrat, held keys, all references, battery/charger, rollback, cancel, blinking\n",checks);
     return 0;
 }

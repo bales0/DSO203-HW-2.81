@@ -124,7 +124,7 @@ static void RuntimeEpochs(void)
   CHECK(Wildcat144_XposTime(&requested) && requested<0);
   if(base==2 && !panel)CHECK(Wildcat144_TriggerColumn()>=MIN_X+193);
   start=last_view.window_start_q16;CHECK(Wildcat144_Overview(&a,&b));
-  hw_ready=0;KeyEvent(KEY1);CHECK(hw_waiting && !shown_valid);
+  hw_ready=0;KeyEvent(KEY1);CHECK(hw_waiting && shown_valid);
   {int32_t value;CHECK(Wildcat144_XposTime(&value) && value==requested);}
   CHECK(Wildcat144_Overview(&c,&d) && a==c && b==d);
   fake_cycles+=101u*72000u;KeyEvent(0);
@@ -170,7 +170,8 @@ static void RearmAndFaults(void)
  {int32_t value;CHECK(Wildcat144_XposTime(&value) && value==requested);}
  CHECK(shown_valid && last_frame->capture.trigger_kind==CAPTURE_TRIGGER_NONE);
  /* K1 inside an AUTO transfer consumes exactly one press; no fallback. */
- hold_on_read=1;hw_ready=1;KeyEvent(0);CHECK(_State.Value==HOLD && !hw_waiting && !shown_valid);
+ hold_on_read=1;hw_ready=1;KeyEvent(0);CHECK(_State.Value==RUN && hw_waiting==2 && !shown_valid);
+ for(i=0;i<7;++i)KeyEvent(0);CHECK(_State.Value==HOLD && shown_valid && !hw_waiting);
  records=record_count;KeyEvent(0);CHECK(_State.Value==HOLD && record_count==records);
  key_status|=KEY1_STATUS;KeyEvent(KEY1);CHECK(_State.Value==RUN && hw_waiting);
  records=record_count;fake_cycles+=1000u*72000u;KeyEvent(0);
@@ -266,7 +267,7 @@ static void PanelRedraw(void)
   if(path==0){if(_State.Value!=HOLD)KeyEvent(KEY1);CHECK(_State.Value==HOLD);}
   else {
    hw_ready=0;if(_State.Value==HOLD)KeyEvent(KEY1);else KeyEvent(0);
-   CHECK(hw_waiting==1 && !shown_valid);
+   CHECK(hw_waiting==1 && shown_valid);
    if(path==2){hw_ready=1;KeyEvent(0);CHECK(hw_waiting==2 && fifo_index==513);}
    if(path==3){hw_ready=1;hold_on_read=1;}
   }
@@ -275,7 +276,8 @@ static void PanelRedraw(void)
   CHECK(FlagMeter==(panel+1)%3 && panel_clears==clears+1);
   CHECK(last_refresh==2);
   CHECK(Title[BK_LIGHT][1].Value==light && Title[VOLUME][1].Value==volume);
-  if(path==3)CHECK(!hold_on_read && _State.Value==HOLD && !hw_waiting);
+  if(path==3){CHECK(!hold_on_read && _State.Value==RUN && hw_waiting==2);
+   for(i=0;i<7;++i)KeyEvent(0);CHECK(_State.Value==HOLD && shown_valid && !hw_waiting);}
   key_status=0xffff;hold_on_read=0;Current=TRACK1;KeyEvent(K_ITEM_S);
  }
 }

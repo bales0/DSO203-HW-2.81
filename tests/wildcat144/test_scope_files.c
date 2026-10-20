@@ -269,6 +269,35 @@ int main(void)
      }
      native_real=cfg_active=0;
     }
+
+    /* No readable calibration must not be turned into a synthetic saved
+     * calibration by SAVE CFG. Preserve corrupt files byte for byte. */
+    {
+        unsigned j,h;Scope144Bank empty={0};Scope144Cal nominal;int y=100;unsigned commands[2],measured;
+        for(sector=512;sector<=4096;sector*=8) {
+            SectorSize=(u16)sector;memset(files,0,sizeof files);Native(31);
+            CHECK(File144_ConfigSave(0)==RD_ERR);
+            CHECK(Find("12345678WPT")==10 && Find("12345678WPB")==10);
+            CHECK(File144_ConfigSave(7)==OK && Find("CONF007 CFG")<10);
+            CHECK(Find("12345678WPT")==10 && Find("12345678WPB")==10);
+            memset(files,0,sizeof files);memset(&empty,0,sizeof empty);
+            Scope144_NativeBank(0);y=100;
+            CHECK(Scope144_Runtime(&empty,0,40,3700,2000,&y,&nominal,commands,&measured));
+            CHECK(!measured && nominal.valid==SCOPE144_NOMINAL);
+            empty.range[0]=nominal;empty.battery[0]=3700;
+            CHECK(File144_WptSave(&empty,1)==VER_ERR);
+            CHECK(Find("12345678WPT")==10 && Find("12345678WPB")==10);
+            Add("12345678WPT",native_current,512);j=Find("12345678WPT");
+            h=Scope144_Crc(files[j].bytes,files[j].size);
+            CHECK(File144_ConfigSave(0)==RD_ERR);
+            CHECK(files[j].size==512 && Scope144_Crc(files[j].bytes,512)==h);
+            CHECK(Find("12345678WPB")==10);
+            files[j].bytes[1]^=1;h=Scope144_Crc(files[j].bytes,files[j].size);
+            CHECK(File144_ConfigSave(0)==RD_ERR && Scope144_Crc(files[j].bytes,512)==h);
+            fs_error=1;CHECK(File144_ConfigSave(0)!=OK);fs_error=0;
+            CHECK(files[j].size==512 && Scope144_Crc(files[j].bytes,512)==h);
+        }
+    }
     printf("PASS Scope144 v4 file IO: %u checks; two profiles, matching native prefix, alternating slots, 512/4096B faults, legacy/full CSV\n",checks);return 0;
 }
 

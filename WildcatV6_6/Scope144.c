@@ -8,23 +8,27 @@
 static int clock_ppm;
 static int32_t RoundRatio(int64_t n,int64_t d)
 { return (int32_t)(n>=0?(n+d/2)/d:-((-n+d/2)/d)); }
+static int NativeCorrection(int correction)
+{ return correction>=-128 && correction<=127?correction:0; }
+static int NativeRaw(int offset,int correction,int ypos)
+{ return offset+40+RoundRatio((int64_t)(1024+correction)*(ypos-40),1024); }
 int CalNative_Command(int adc_offset,int correction,int ypos)
 {
-    int command=(int)Scope144_Command(adc_offset)+RoundRatio((int64_t)(1024+correction)*(ypos-40),1024);
-    if(command<0)command=0;
-    if(command>200)command=200;
-    return command;
+    int64_t d=(int64_t)(1024+NativeCorrection(correction))*((int64_t)ypos-40);
+    int64_t command=(int64_t)(adc_offset>=0 && adc_offset<=54?adc_offset:0)+40+
+        (d>=0?(d+512)/1024:-((-d+512)/1024));
+    return command<0?0:command>200?200:(int)command;
 }
 static uint32_t native_windows[2][8],native_battery[2];
 static int8_t native_correction[2][8][2];
-void Scope144_NativeBank(const Scope144Bank *bank)
+void __attribute__((section(".text.runtime"))) Scope144_NativeBank(const Scope144Bank *bank)
 {
     unsigned i;
     memset(native_windows,0,sizeof(native_windows));memset(native_battery,0,sizeof(native_battery));
     if(!bank)return;
     for(i=0;i<16;++i) {
         const Scope144Cal *c=i<8?&bank->range[i]:&bank->high[i-8];
-        if(Scope144_Valid(c)) {
+        if(c->valid==1 && Scope144_Valid(c) && bank->battery[i/8]>=2800 && bank->battery[i/8]<=5200) {
             native_windows[i/8][i%8]=c->dac_window;
             native_correction[i/8][i%8][0]=(int8_t)(c->dac_anchor>>16);
             native_correction[i/8][i%8][1]=(int8_t)(c->dac_anchor>>24);
@@ -42,7 +46,7 @@ int CalNative_Interpolate(int low,int high,unsigned lo,unsigned hi,unsigned batt
 }
 int CalNative_Position(unsigned range,unsigned ch,int offset,int correction,int ypos,unsigned battery,unsigned *command)
 {
-    int lo=CalNative_Command(offset,correction,25),hi=CalNative_Command(offset,correction,100);
+    int lo=0,hi=200;
     unsigned a=0,b=1;int target,effective;
     if(range<8 && ch<2) {
         uint32_t w;
@@ -61,20 +65,45 @@ int CalNative_Position(unsigned range,unsigned ch,int offset,int correction,int 
             if(h2<hi)hi=h2;
         }
     }
-    target=CalNative_Command(offset,correction,ypos);
-    if(target<lo)target=lo;
-    if(target>hi)target=hi;
-    effective=ypos;
-    if(CalNative_Command(offset,correction,ypos)!=target || !target || target==200 || ypos<10 || ypos>190) {
+    /* Reference points 25/100 are not hardware stops. Use unsaturated
+     * arithmetic to avoid a hidden plateau at DAC 0/200. */
+    if(offset<0 || offset>54)offset=0;
+    correction=NativeCorrection(correction);
+    if(lo>hi){lo=0;hi=200;}
+    effective=ypos<10?10:ypos>190?190:ypos;
+    target=NativeRaw(offset,correction,effective);
+    if(target<lo || target>hi) {
+        target=target<lo?lo:hi;
         effective=40+RoundRatio((int64_t)(target-offset-40)*1024,1024+correction);
         if(effective<10)effective=10;
         if(effective>190)effective=190;
-        while(effective<190 && CalNative_Command(offset,correction,effective)<lo)++effective;
-        while(effective>10 && CalNative_Command(offset,correction,effective)>hi)--effective;
+        while(effective<190 && NativeRaw(offset,correction,effective)<lo)++effective;
+        while(effective>10 && NativeRaw(offset,correction,effective)>hi)--effective;
     }
     if(command)*command=(unsigned)CalNative_Command(offset,correction,effective);
     return effective;
 }
+/* Both ADCs sample A. Intersect their attainable logical positions before
+ * applying either command, including on the first key after a stop. */
+int Scope144_Position(unsigned range,int offset,int ypos,unsigned battery,unsigned commands[2])
+{
+    int low=10,high=190,p;unsigned ch;
+    if(range>=8 || offset<0 || offset>54)return -1;
+    for(ch=0;ch<2;++ch) {
+        p=CalNative_Position(range,ch,offset,0,10,battery,0);if(p>low)low=p;
+        p=CalNative_Position(range,ch,offset,0,190,battery,0);if(p<high)high=p;
+    }
+    if(low>high) {
+        p=ypos<10?10:ypos>190?190:ypos;
+        if(p>200-offset)p=200-offset;
+        if(commands)commands[0]=commands[1]=(unsigned)(offset+p);
+        return p;
+    }
+    p=ypos<low?low:ypos>high?high:ypos;
+    for(ch=0;ch<2;++ch)CalNative_Position(range,ch,offset,0,p,battery,commands?commands+ch:0);
+    return p;
+}
+
 int Scope144_SetClock(int ppm) { clock_ppm=(ppm>=-999 && ppm<=999)?ppm:0; return clock_ppm; }
 uint32_t Scope144_Crc(const void *data, uint32_t count)
 {
@@ -85,7 +114,7 @@ uint32_t Scope144_Crc(const void *data, uint32_t count)
 uint32_t Scope144_Key(unsigned range) { return 0x14412800u | range; }
 int Scope144_Valid(const Scope144Cal *c)
 {
-    return c && c->valid==1 && c->gain_q10>=512 && c->gain_q10<=2048 &&
+    return c && (c->valid==1 || c->valid==SCOPE144_NOMINAL) && c->gain_q10>=512 && c->gain_q10<=2048 &&
         c->bias_q10>=-800000 && c->bias_q10<=800000 &&
         c->zero_q10>=10*1024 && c->zero_q10<=245*1024 &&
         c->span_q10>=8*1024 && c->span_q10<=235*1024 &&
@@ -256,8 +285,10 @@ static int Select(const Scope144Bank *bank,unsigned range,int offset,uint32_t ba
 {
     Scope144Cal a,b;uint32_t weight;int va,vb;unsigned ca[2],cb[2],fixed[2],ch;
     if(!bank || !out || range>=8 || !Scope144_Command(offset) || battery<2800 || battery>5200)return 0;
-    va=Scope144_Valid(&bank->range[range]) && bank->battery[0]>=2800 && bank->battery[0]<=5200;
-    vb=Scope144_Valid(&bank->high[range]) && bank->battery[1]>=2800 && bank->battery[1]<=5200;
+    /* Physical positioned selection requires measured windows. Pivot-only
+     * legacy Select remains available, but cannot dilute a measured profile. */
+    va=bank->range[range].valid==1 && (!commands || bank->range[range].dac_window) && Scope144_Valid(&bank->range[range]) && bank->battery[0]>=2800 && bank->battery[0]<=5200;
+    vb=bank->high[range].valid==1 && (!commands || bank->high[range].dac_window) && Scope144_Valid(&bank->high[range]) && bank->battery[1]>=2800 && bank->battery[1]<=5200;
     if(!va && !vb)return 0;
     if(commands) {
         uint32_t lo=bank->battery[0],hi=bank->battery[1];
@@ -323,6 +354,33 @@ int Scope144_Select(const Scope144Bank *bank,unsigned range,int offset,uint32_t 
 { return Select(bank,range,offset,battery,40,out,0); }
 int Scope144_SelectAt(const Scope144Bank *bank,unsigned range,int offset,uint32_t battery,int ypos,Scope144Cal *out,unsigned commands[2])
 { return Select(bank,range,offset,battery,ypos,out,commands); }
+/* The temporary runtime profile never enters the saved bank. Its validity
+ * tag is accepted by arithmetic but explicitly rejected by Encode/Decode.
+ * SCALE is microvolts per normalized ADC code, exactly as in Normal. */
+int __attribute__((section(".text.runtime"))) Scope144_Runtime(const Scope144Bank *bank,unsigned range,int offset,unsigned battery,
+    unsigned scale,int *ypos,Scope144Cal *out,unsigned commands[2],unsigned *measured)
+{
+    int p,status;
+    if(measured)*measured=0;
+    if(!ypos || !out || !commands || range>=8 || offset<0 || offset>54 ||
+       battery<2800 || battery>5200 || !scale || scale>800000)return 0;
+    p=Scope144_Position(range,offset,*ypos,battery,commands);
+    if(p<0)return 0;
+    *ypos=p;
+    status=Scope144_SelectAt(bank,range,offset,battery,p,out,commands);
+    if(status && out->dac_window) {if(measured)*measured=(unsigned)status;return 1;}
+    /* A legacy record has no measured wide DAC interval. Keep it on disk,
+     * without extrapolating its two-point response into unmeasured YPOS. */
+    Scope144_Position(range,offset,p,battery,commands);
+    memset(out,0,sizeof(*out));
+    out->gain_q10=out->a_gain_q10=out->dac_a_q10=out->dac_b_q10=
+        out->ref_dac_a_q10=out->ref_dac_b_q10=1024;
+    out->bias_q10=((int)commands[0]-(int)commands[1])*1024;
+    out->a_bias_q10=(40-(int)commands[0])*1024;
+    out->zero_q10=40*1024;out->span_q10=75*1024;out->reference_uv=(int32_t)scale*75;
+    out->adc_offset=offset;out->valid=SCOPE144_NOMINAL;
+    return Scope144_Valid(out);
+}
 int Scope144_Normalize(const Scope144Cal *cal,int32_t *q,unsigned count)
 {
     unsigned i;if(!Scope144_Valid(cal) || !q || count>1024)return 0;

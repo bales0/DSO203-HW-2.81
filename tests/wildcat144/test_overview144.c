@@ -39,7 +39,7 @@ int main(void)
   hw_ready=0;KeyEvent(KEY1);CHECK(_State.Value==RUN && hw_waiting);
   {unsigned a,b;int32_t ps;
    CHECK(Wildcat144_Overview(&a,&b) && a==first && b==last);
-   CHECK(!Wildcat144_CursorTime(0,&ps));
+   CHECK(Wildcat144_CursorTime(0,&ps));
    for(i=0;i<3;++i){KeyEvent(0);CHECK(Wildcat144_Overview(&a,&b) && a==first && b==last);}
    hw_ready=1;for(i=0;i<8;++i){KeyEvent(0);if(i<7)CHECK(Wildcat144_Overview(&a,&b) && a==first && b==last);}}
 

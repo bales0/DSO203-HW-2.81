@@ -3359,16 +3359,6 @@ u8 i;
                   return 0; 
 }
 
-u8 CursorSpeedLogic(u8 enable){                                         
-u8 i=0;                                                             
-    if((SetLowVolume)&&((enable)||((((Current==T_VERNIE)||(Current==V_VERNIE))    //SetLowVolume is fast repeat key flag 
-    &&(_Det<2))||((Current<4)&&(_Det==3))))){
-      i=1;
-      if(FlagFrameMode==0)i++;
-    }
-    return i;
-}
-
 void (UpdateFrameMode)(void){
 u16 Tmp;
 

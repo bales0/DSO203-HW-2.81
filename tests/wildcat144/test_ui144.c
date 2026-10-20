@@ -60,6 +60,7 @@ meter Meter[9]={
 };
 trigg V_Trigg[4];
 u8 ShowFFT,OffsetSelect,ADCoffset=40;
+u8 SetLowVolume,FlagFrameMode;
 s16 PPM_Comp;
 u8 Current,Detail[14],TrgAuto,FlagMeter=1,Update=0,SelectiveUpdate=0,ClearMeterAreaFlag,UpdateMeter=4,BTwink,EnablePaS;vu8 Twink,Cnt_20mS;vu16 Sec_Cnt;
 u8 EnableCursorDisplay,DisableCursorDisplay,CursorDisplaySelect,MinBypass;
@@ -141,7 +142,15 @@ void Int2Str(char *out,s32 value,const char *unit,u8 precision,u8 mode,s8 shift)
 void Display_Title(void){++title_calls;Menu144_NativeTitle();}
 void Display_Meter(void){++meter_calls;Menu144_Meters(0);}
 void Update_Battery(void){++battery_calls;}
-void Update_Mark(void){}
+static unsigned marker_calls;static s16 marker_y;
+#ifdef REAL_NORMAL_MARKS
+void Test_NormalMarks(void);
+#endif
+void Update_Mark(void){++marker_calls;marker_y=_1_posi;
+#ifdef REAL_NORMAL_MARKS
+Test_NormalMarks();
+#endif
+}
 static unsigned box_seen,box_first,box_last,box_visible;
 void Update_View_Area(void){unsigned x,y;++graph_calls;for(x=91;x<307;++x)for(y=0;y<12;++y)screen[x][y]=0xf81f;
 box_seen=1;box_first=overview_first;box_last=overview_last;box_visible=overview_visible;}
@@ -213,7 +222,8 @@ int main(void)
     _State.Value=RUN;Draw(TRACK1,SOURCE,1);
 
     Menu144_Calibration(1);Draw(TRACK1,0,1);Find(333,216,"LEV!");
-    Menu144_Calibration(0);Draw(TRACK1,0,1);Find(0,228,"CAL?");
+    Menu144_Calibration(0);Draw(TRACK1,0,1);Find(0,228,"RUN");
+    _State.Value=HOLD;Draw(TRACK1,0,1);Find(0,228,"HOLD");_State.Value=RUN;
     Menu144_Calibration(2);Find(35,228,"CH(A)");
     Find(0,0,"YPOS");Find(35,0,"!V1!");Find(62,0,"!V2!");
     Find(312,0,"!T1!");Find(339,0,"!T2!");Find(366,0,"XPOS");

@@ -1170,6 +1170,7 @@ static void NativeRecordY(unsigned channel)
 void Process144_ReleaseBuffer(void)
 {
     NativeWindow_Reset();
+    RMSdata[0][698]=RMSdata[1][698]=0;
     native_y_valid=0;native_clip_count=0;NativeClipPublish(0);native_delta_y[0]=native_delta_y[1]=0;
     native_buffer_pending=1;JumpCnt=CountUnread=0;BufferRestore=0;
 }
@@ -3398,6 +3399,27 @@ void DownConvertRestore(void){
 
 
 
+/* RMSdata belongs to Normal acquisition only. In 144 its first two planes
+ * retain signed, unclipped display offsets from the last complete frame.
+ * The tail stores width, inversion and last painted YPOS. No raw sample or
+ * measurement can be read from this presentation-only cache. */
+int Process144_Preview(unsigned position,unsigned invert)
+{
+    unsigned x,width=(unsigned)(MAX_X-MIN_X);
+    if(MAX_X<MIN_X || width<2 || width>=397 || position>200 ||
+       (RMSdata[0][698]|((unsigned)RMSdata[1][698]<<8))!=width ||
+       RMSdata[0][699]!=(0xa0u|invert) || RMSdata[1][699]==position)return 0;
+    for(x=0;x<width;++x) {
+        int y=RMSdata[0][x]|((unsigned)RMSdata[1][x]<<8);
+        if(y&32768)y-=65536;
+        y+=(int)position;
+        TrackBuff[x*4]=y<1?0:y>199?200:(u8)y;
+    }
+    TrackBuff[width*4]=TrackBuff[(width-1u)*4];
+    RMSdata[1][699]=(u8)position;
+    discard=Rdiscard=0;FrameEndFlag=1;GPIOC->BRR=0x30;Draw_Window();
+    return 1;
+}
 /* Render the corrected single-input stream in the ordinary scope window.
  * Voltage calibration is applied before interpolation/clipping to LCD pixels. */
 void Process144_DrawFrame(const Frame144 *frame,const ViewWindowGeometry *view,
@@ -3409,6 +3431,7 @@ void Process144_DrawFrame(const Frame144 *frame,const ViewWindowGeometry *view,
     width=(unsigned)(MAX_X-MIN_X);
     if(!Frame144_Valid(frame) || !view || width<2 || width>=397 || view->visible_columns<width ||
         view->render_width!=width || !Y_Attr[frame->range].SCALE)return;
+    RMSdata[0][698]=RMSdata[1][698]=0;
     /* Interior rows MIN_X+1..MAX_X-1 use endpoint pairs 0..width-1.
      * At MAX_X Draw_Row also preprocesses width, but does not draw its
      * segment. Duplicate the last endpoint for that guard: it must neither
@@ -3416,7 +3439,11 @@ void Process144_DrawFrame(const Frame144 *frame,const ViewWindowGeometry *view,
     for(x=0;x<width;++x) {
         if(!Frame144_At(frame,view,x,&q))return;
         v=Scope144_Voltage(&frame->calibration,q);
-        y=(int64_t)position+(invert?-(int64_t)v:v)/Y_Attr[frame->range].SCALE;
+        y=(invert?-(int64_t)v:v)/Y_Attr[frame->range].SCALE;
+        /* Saturation here remains outside every reachable screen position. */
+        {int rel=y<-32768?-32768:y>32767?32767:(int)y;
+         RMSdata[0][x]=(u8)rel;RMSdata[1][x]=(u8)((unsigned)rel>>8);}
+        y+=(int64_t)position;
         TrackBuff[x*4]=y<1?0:y>199?200:(u8)y;
         TrackBuff[x*4+1]=TrackBuff[x*4+2]=TrackBuff[x*4+3]=0;
         if(ViewWindow_At(view,x,&point) && Frame144_DigitalAt(frame,point.position_q16,&bits)) {
@@ -3430,11 +3457,14 @@ void Process144_DrawFrame(const Frame144 *frame,const ViewWindowGeometry *view,
         }
     }
     for(x=0;x<4;++x)TrackBuff[width*4+x]=TrackBuff[(width-1u)*4+x];
+    RMSdata[0][698]=(u8)width;RMSdata[1][698]=(u8)(width>>8);
+    RMSdata[0][699]=(u8)(0xa0u|invert);RMSdata[1][699]=(u8)position;
     discard=0;Rdiscard=0;FrameEndFlag=1;GPIOC->BRR=0x30;Draw_Window();
 }
 void Process144_ClearFrame(void)
 {
     unsigned width;
+    RMSdata[0][698]=RMSdata[1][698]=0;
     if(MAX_X<MIN_X)return;
     width=(unsigned)(MAX_X-MIN_X);if(width>=397)return;
     memset(TrackBuff,0,(width+1u)*4u);

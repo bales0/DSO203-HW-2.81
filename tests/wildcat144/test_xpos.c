@@ -208,6 +208,7 @@ static void Runtime(void)
         CHECK(Scope144_RealCrc(DataBuf,sizeof DataBuf)==hash && record_count==records && fifo_index==reads);
         /* Real K1 still toggles acquisition, independent of XPOS repeat flags. */
         KeyEvent(KEY1);CHECK(_State.Value==RUN && hw_waiting);KeyEvent(KEY1);
+        for(i=0;i<8 && hw_waiting;++i)KeyEvent(0);
         CHECK(_State.Value==HOLD && !hw_waiting);
         Current=TRACK1;KeyEvent(K_ITEM_S);CHECK(!Wildcat144_Active());
     }
@@ -289,7 +290,7 @@ static void PendingStops(void)
   FlagMeter=(u8)panel;Current=TRACK1;Title[TRACK1][COUPLE].Value=SCOPE144_DC;
   CHECK(Wildcat144_Service());for(i=0;i<8 && hw_waiting;++i)KeyEvent(0);
   CHECK(shown_valid && _State.Value==RUN);hash=Scope144_RealCrc(DataBuf,sizeof DataBuf);
-  hw_ready=0;KeyEvent(0);CHECK(hw_waiting && !shown_valid);
+  hw_ready=0;KeyEvent(0);CHECK(hw_waiting && shown_valid);
   Current=T_BASE;Detail[T_BASE]=XPOSI;
   for(i=0;i<500;++i)KeyEvent(K_INDEX_INC);
   CHECK(Wildcat144_XposTime(&before));for(i=0;i<100;++i)KeyEvent(K_INDEX_INC);

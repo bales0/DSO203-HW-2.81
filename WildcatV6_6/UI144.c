@@ -13,7 +13,7 @@ extern u8 TrgAuto;
 extern char x10[8][6];
 static Scope144Measurements shown;
 static int32_t cursor_dt,cursor_dv;
-static unsigned ready,calibration_status=2;
+static unsigned ready;
 static unsigned timing_unavailable;
 static unsigned trigger_waiting,wait_visible,presentation_available,frozen_frame,last_run_state;
 static u16 wait_started;
@@ -31,10 +31,10 @@ void Menu144_MeasurementTime(unsigned available)
     timing_unavailable=!available;
     for(i=0;i<9;++i)if(Meter[i].Track==TRACK1 && UiCommon_TimeItem(Meter[i].Item))Meter[i].Flag|=UPDAT;
 }
-void Menu144_Calibration(unsigned status){calibration_status=status;}
+void Menu144_Calibration(unsigned status){(void)status;}
 static unsigned repaint,refresh_values,refresh_slow;
 static unsigned header_detail_shown,fft_gain_shown;
-static u16 last_second;static u8 last_phase,last_twink;
+static u16 last_second=0xffffu;static u8 last_phase,last_twink;
 static char meter_text[9][12];static u8 meter_item[9],meter_track[9],meter_enabled[9];
 extern u8 FlagMeter,UpdateMeter;
 static unsigned Available(unsigned group,unsigned detail)
@@ -111,7 +111,7 @@ static void Entry(unsigned group,unsigned detail,const char *override)
 }
 static void RunStatus(void)
 {
-    char cell[5];const char *text=!calibration_status?"CAL?":wait_visible?"WAIT":_State.Value==RUN?"RUN":"HOLD";
+    char cell[5];const char *text=_State.Value!=RUN?"HOLD":wait_visible?"WAIT":"RUN";
     unsigned n=(unsigned)strlen(text);if(n>4)n=4;
     memset(cell,' ',4);memcpy(cell,text,n);cell[4]=0;
     unsigned state=_State.Value==RUN?RUN:(frozen_frame?2u:HOLD);
@@ -284,7 +284,8 @@ void Menu144_View(const Scope144Measurements *m,int32_t dt,int32_t dv,unsigned v
     unsigned phase=(Cnt_20mS%16)<8;
     unsigned i,mask=UiCommon_MeterMask();
     unsigned meter_changed=ready!=(valid || presentation_available);
-    unsigned waiting=trigger_waiting==1 && (u16)(Tick()-wait_started)>=10u;
+    unsigned new_frame=valid && !ready;
+    unsigned waiting=_State.Value==RUN && trigger_waiting==1 && (u16)(Tick()-wait_started)>=10u;
     unsigned wait_changed=waiting!=wait_visible;
     unsigned run_changed=last_run_state!=(unsigned)_State.Value || frozen_frame!=(valid && _State.Value==HOLD);
     last_run_state=(unsigned)_State.Value;frozen_frame=valid && _State.Value==HOLD;
@@ -306,7 +307,11 @@ void Menu144_View(const Scope144Measurements *m,int32_t dt,int32_t dv,unsigned v
     /* New captures can move the window even without a menu refresh. Update
      * only the graphic, preserving Title blink and non-waveform footers. */
     Update_Buffer_Overview();
-    if(refresh || Twink!=last_twink || refresh_slow)Update_Battery();
+    /* Match Normal: key repeat/blink must not advance the charge animation. */
+    if(Sec_Cnt!=last_second)Update_Battery();
     if(refresh || Twink!=last_twink || refresh_slow || meter_changed || (FlagMeter==2 && refresh_values))Display_Meter();
+    /* Restore markers after plot/UI painting, also before a replacement
+     * record exists. Initial rows can restore the shared trace colors. */
+    if(refresh || new_frame)Update_Mark();
     last_second=Sec_Cnt;last_phase=(u8)phase;last_twink=Twink;
 }

@@ -4,6 +4,8 @@
 #define UI_KEY_SHORT_MS 500u
 #define UI_K2_SERVICE_MS 3000u
 #define UI_K3_CONFIG_MS 1500u
+unsigned char CursorSpeedLogic(unsigned char enable);
+int UiCommon_CursorSpeed(unsigned enable,unsigned frame_mode);
 int UiCommon_ServiceKey(unsigned key);
 int UiCommon_ServiceTitle(void);
 /* Runtime analog commands; reset after any external owner of input settings. */

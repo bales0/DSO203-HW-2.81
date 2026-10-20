@@ -54,6 +54,8 @@ int Frame144_Trigger(Frame144 *,unsigned width,unsigned base,int32_t threshold,
     int falling,ViewWindowGeometry *);
 unsigned Frame144_CsvRow(char out[80],const Frame144 *,unsigned sample,int factor);
 void Process144_DrawFrame(const Frame144 *,const ViewWindowGeometry *,unsigned position,unsigned invert);
+/* Paint only the retained display geometry; never accesses the raw epoch. */
+int Process144_Preview(unsigned position,unsigned invert);
 void Process144_ClearFrame(void);
 int File144_CsvFrame(const Frame144 *,unsigned base,unsigned number,int factor);
 #endif

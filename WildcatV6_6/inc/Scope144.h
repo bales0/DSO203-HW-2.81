@@ -9,6 +9,7 @@
 #define SCOPE144_MAX_SAMPLES 8192u
 #define SCOPE144_IMAGE_CRC 0x66B80BD2u
 #define SCOPE144_PIVOT 40u
+#define SCOPE144_NOMINAL 2u /* runtime only; never encodable */
 /* Shared Normal hardware pivot; capture calibration owns its DAC state. */
 typedef struct {
     int32_t gain_q10, bias_q10, zero_q10, span_q10, reference_uv;
@@ -31,6 +32,9 @@ int CalNative_Position(unsigned,unsigned,int,int,int,unsigned,unsigned *);
 /* 0 invalid, 1 single profile, 2 two supply profiles. */
 int Scope144_Select(const Scope144Bank *,unsigned,int,uint32_t,Scope144Cal *);
 int Scope144_SelectAt(const Scope144Bank *,unsigned,int,uint32_t,int,Scope144Cal *,unsigned commands[2]);
+int Scope144_Position(unsigned range,int offset,int ypos,unsigned battery,unsigned commands[2]);
+int Scope144_Runtime(const Scope144Bank *,unsigned range,int offset,unsigned battery,
+    unsigned scale,int *ypos,Scope144Cal *,unsigned commands[2],unsigned *measured);
 int Scope144_Normalize(const Scope144Cal *,int32_t *,unsigned);
 typedef struct {
     int32_t minimum_uv, maximum_uv, average_uv, rms_uv;

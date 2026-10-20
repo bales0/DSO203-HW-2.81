@@ -302,3 +302,29 @@ vertical_offset=headers+'#include "Calibrat.h"\nextern u8 ADCoffset,LastA_Mid,La
 vertical_offset+=block(files,files.index('s32 CSVdata(u8 Ch,u8 Inv,u16 i,u8 data){'))+'\n'
 vertical_offset+=block(process,process.index('s16 QParam(u8 Ch, u16 Position,u8 service){'))+'\n'
 (out/'normal_offset_export.c').write_text(vertical_offset,encoding='ascii')
+
+# Test the actual shared Normal marker glyphs/painter on the persistent LCD.
+draw=(root/'WildcatV6_6/Draw.c').read_text(encoding='latin1')
+glyph=re.search(r'uc8\s+Mark_TAB\[5\]\[7\]\s*=.*?;',draw,re.S).group(0)
+marks=headers+'extern s32 Tmp2;\nextern vu16 ConfNameTimer;\ns32 ScaleXposi(void);\nvoid DrawBase(u16,u16);\nvoid PrintConfigName(void);\n'+glyph+'\n'
+marks+=block(draw,draw.index('void Draw_Mark(u16')).replace('Draw_Mark(', 'Test_NormalMark(')+'\n'
+marks+=block(draw,draw.index('void Update_Mark(void)')).replace('Update_Mark(', 'Test_NormalMarks(').replace('Draw_Mark(', 'Test_NormalMark(')+'\n'
+(out/'normal_marks.c').write_text(marks,encoding='latin1')
+
+# Real completed-frame projection and pending-frame YPOS preview; generated only.
+preview=headers+'#include "Frame144.h"\n'
+preview+=block(draw,draw.index('int __attribute__((noinline,section(".text.trace_segment")))'))+'\n'
+start=process.index('int Process144_Preview(')
+end=process.index('/* Shared Normal/interlace transform',start)
+preview+=process[start:end]
+(out/'preview_renderer.c').write_text(preview,encoding='latin1')
+
+(out/'hold_p0_entry.c').write_text("""#define main NativeService_ExistingTests
+#include "test_native.c"
+#undef main
+int main(void){unsigned i;
+ CHECK(VirtualAlloc((void *)0x40000000,0x30000,0x3000,4)==(void *)0x40000000);
+ StartupImageCheck();xattributes[_100uS].PSC=0;xattributes[_100uS].ARR=239;
+ for(i=0;i<8;++i){strcpy(attributes[i].STR,"1V");attributes[i].SCALE=40000;}
+ WildcatFpga=FpgaProfile_Decode(0x5731,0x0101,0x0102);Wildcat144_CheckImage();HoldP0();return 0;}
+""",encoding='ascii')

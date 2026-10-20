@@ -651,3 +651,16 @@ void __attribute__((optimize("Os"))) UiFile_Draw(void)
 
 void UiFile_Begin(void)
 { Print_Str(230,0,(SCRN<<8)+TEXT1,PRN," >   "); }
+
+/* Original Normal repeat acceleration, shared with interlace. */
+int UiCommon_CursorSpeed(unsigned enable,unsigned frame_mode)
+{
+    int speed=0;
+    if(SetLowVolume && (enable ||
+       (((Current==T_VERNIE || Current==V_VERNIE) && _Det<2) || (Current<4 && _Det==3)))) {
+        speed=1;if(!frame_mode)++speed;
+    }
+    return speed;
+}
+u8 CursorSpeedLogic(u8 enable)
+{ return (u8)UiCommon_CursorSpeed(enable,FlagFrameMode); }
