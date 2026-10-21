@@ -26,6 +26,9 @@ void Test_NormalBattery(void);
 static unsigned normal_writes,normal_commands[2];
 void UiCommon_AnalogSet(unsigned char object,uint32_t value){if(object<2)normal_commands[object]=value;++normal_writes;}
 static unsigned table_pixels,headings,dc_errors;
+static char live_text[8][3][3][8];static unsigned live_color[8][3][3],live_check,live_captures,screen_clears;
+void Calibrat_TestLive(const UnifiedCal *,CalProgress,int32_t,int32_t,int);
+static void CheckLiveCapture(unsigned,unsigned);
 static int fail_dc,unstable_offset;
 static unsigned offset_errors,clock_panels,highlight_ppm;
 static int capture_status,flat_b;
@@ -66,11 +69,21 @@ u32 __Get(u8 object)
 void __Set(u8 object,u32 value){
     if(probe_active && object<=CH_B_OFFSET){probe_restore[object]=value;++probe_restores;}
 }
-void __Clear_Screen(u16 color){(void)color;probe_active=0;}
+void __Clear_Screen(u16 color){(void)color;probe_active=0;++screen_clears;
+    memset(live_text,0,sizeof live_text);memset(live_color,0,sizeof live_color);}
 void __Point_SCR(u16 x,u16 y){CHECK(x<400 && y<240);}
 void __LCD_SetPixl(u16 color){(void)color;++table_pixels;}
 void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
 {
+    if(y<=166 && y>=26 && (166-y)%20==0 && x>=36) {
+        unsigned g=(x-36)/121,k=(x-36)%121/35,r=(166-y)/20;
+        if(g<3 && k<3 && x==36+g*121+k*35) {
+            unsigned right=35+g*121+(k==0?35:k==1?70:121);
+            CHECK(strlen(s)==(k==2?6u:4u));CHECK(x+1+8*strlen(s)<right);
+            CHECK(color==WHT || color==YEL || color==GRAY);
+            strcpy(live_text[r][g][k],s);live_color[r][g][k]=color;
+        }
+    }
     if(y==222)snprintf(last_row,sizeof last_row,"%s",s);
     CHECK(x+1+8*strlen(s)<400 && y+14<=240);(void)color;(void)mode;
     if(strstr(s,"144 DAC REPEAT")) {
@@ -85,13 +98,13 @@ void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
         int expected=probe_fail_at?(probe_bad_mean?CAL_CAPTURE_CLIPPED:probe_fail_code):1;
         CHECK(strtol(strchr(s,':')+1,0,10)==expected);++probe_statuses;
     }
-    if(preview_retry && x==134 && y==166)CHECK(!strncmp(s,"--",2));
+    if(preview_retry && x==106 && y==166)CHECK(!strncmp(s,"--",2));
     if(preview_rendering) {
         if(y>=208 || y==6)++preview_bad_rows;
-        if(x==134 || x==334) {
+        if(x==106 || x==227) {
             ++preview_cells;
             if(!strncmp(s,"--",2))++preview_dashes;
-            if(x==134 && !strncmp(s,"154.0mV",7))++preview_smoothed;
+            if(x==106 && !strncmp(s,"154mV",5))++preview_smoothed;
         }
     }
     if(strstr(s,"NORMAL A+B ZERO"))panel_kind=1;
@@ -153,7 +166,7 @@ void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
     if(strstr(s,"Raw/expected (mADC): 155101/152632"))dac_lines|=16384;
     if(strstr(s,"CLOCK CALIBRATION"))++clock_panels;
     if(y==120 && mode==INV)++highlight_ppm;
-    if(strstr(s,"CH_A") || strstr(s,"CH_B"))++headings;
+    if(strstr(s,"A:Z") || strstr(s,"B:Z"))++headings;
     if(strstr(s,"Offset A R") || strstr(s,"Offset B R"))++offset_errors;
     if(strstr(s,"A DC: dADC=") || strstr(s,"B DC: dADC="))++dc_errors;
     if(strstr(s,"ground A+B")){positive=0;applied_reference=0;}
@@ -176,10 +189,12 @@ int File144_WptSave(Scope144Bank *bank,int native_updated)
     if(failed_save){--failed_save;return WR_ERR;}
     stored=*bank;return OK;
 }
-int WildcatCalibration_Capture(unsigned r,unsigned path,unsigned a,unsigned b,CalMean *m)
+static int FakeCapture(unsigned r,unsigned path,unsigned a,unsigned b,CalMean *m)
 {
     int64_t signal=positive?(int64_t)applied_reference*1024/scales[r]:0;
-    CHECK(r<8 && a<=200 && b<=200);CHECK(TIM2->DIER==0 && TIM4->DIER==0);++captures;
+    CHECK(r<8 && a<=200 && b<=200);CHECK(TIM2->DIER==0 && TIM4->DIER==0);
+    if(live_check)CheckLiveCapture(r,path);
+    ++captures;
     if(probe_active) {
         unsigned n=probe_reads++%8,k=n<4?n:7-n;
         CHECK(r==0 && path==1 && a==(unsigned)CalNative_Command(40,0,25));
@@ -230,6 +245,8 @@ int WildcatCalibration_Capture(unsigned r,unsigned path,unsigned a,unsigned b,Ca
     if(m->a<10*1024 || m->a>245*1024 || m->b<10*1024 || m->b>245*1024)fprintf(stderr,"Invalid UI fixture r=%u path=%u cmd=%u/%u raw=%ld/%ld positive=%d\n",r,path,a,b,(long)m->a,(long)m->b,positive);
     return 1;
 }
+int WildcatCalibration_Capture(unsigned r,unsigned path,unsigned a,unsigned b,CalMean *m)
+{ return FakeCapture(r,path,a,b,m); }
 int WildcatCalibration_Preview(CalPreview *p,unsigned r,unsigned a,unsigned b,CalMean *m)
 {
     int64_t signal=positive?(int64_t)applied_reference*1024/scales[r]:0;
@@ -258,7 +275,7 @@ static void Push(unsigned key,unsigned pressed){CHECK(nscript<1024);script[nscri
 static void Press(unsigned key){Push(key,0);Push(0,0);}
 static void Init(int with144)
 {
-    unsigned i;tick_override=reference_count=0;polls=nscript=pos=captures=writes=failed_save=fail_capture=reference_lines=clock_enables=0;
+    unsigned i;live_check=live_captures=screen_clears=0;tick_override=reference_count=0;polls=nscript=pos=captures=writes=failed_save=fail_capture=reference_lines=clock_enables=0;
     table_pixels=headings=dc_errors=offset_errors=clock_panels=highlight_ppm=diagnostic_lines=progress_lines=save_lines=0;fail_dc=unstable_offset=capture_status=flat_b=0;
     dac_fault=dac_94_count=dac_lines=dac_live=dac_record=0;
     normal_ref_mask=normal_ref_point=normal_ref_calls=normal_ref_flags=normal_zero_fault=normal_zero_limit=panel_kind=0;
@@ -289,6 +306,95 @@ static void CleanupChecks(void)
     CHECK(TIM2->DIER==1 && TIM4->DIER==0);CHECK(native_test_demcr==7 && native_test_dwt==8);
     CHECK(Title[OUTPUT][KIND].Value==3 && Title[OUTPUT][FRQN].Value==12);
     CHECK(Sweep==2 && GenAdjustMode==1 && !CalibrateMode);CHECK(!Key_Buffer);
+}
+
+static void CheckLiveCapture(unsigned r,unsigned path)
+{
+    unsigned g,k,prior; ++live_captures;
+    for(prior=0;prior<r;++prior)for(g=0;g<(interlace?3u:2u);++g)for(k=0;k<2;++k)
+        CHECK(live_color[prior][g][k]==WHT);
+    for(g=0;g<3;++g)for(k=0;k<2;++k) {
+        unsigned expected;
+        if(positive)expected=g<2 || interlace?WHT:GRAY;
+        else expected=g<2?(path?WHT:YEL):path?YEL:GRAY;
+        CHECK(live_color[r][g][k]==expected);
+        if(!positive && ((g<2 && !path) || (g==2 && path)))CHECK(!strncmp(live_text[r][g][k],"--",2));
+    }
+    if(path)for(g=0;g<2;++g) {
+        CHECK(strtol(live_text[r][g][0],0,10)==(g?-7:-5));
+        CHECK(strtol(live_text[r][g][1],0,10)==0);
+    }
+    if(positive) {
+        CHECK(live_color[r][0][2]==(path?WHT:YEL));
+        CHECK(live_color[r][1][2]==(path?WHT:YEL));
+        CHECK(live_color[r][2][2]==(path?YEL:GRAY));
+        if(path){CHECK(!strncmp(live_text[r][2][0],"3.0",3));CHECK(!strncmp(live_text[r][2][1],"0.0",3));}
+    }
+}
+static int32_t ParseVoltage(const char *text)
+{
+    char *unit;double value=strtod(text,&unit);
+    CHECK(unit!=text && (strstr(unit,"mV") || strstr(unit,"V")));
+    return (int32_t)(value*(strstr(unit,"mV")?1000:1000000)+(value<0?-0.5:0.5));
+}
+static int32_t VoltageResolution(const char *text)
+{
+    char *unit;const char *dot=strchr(text,'.');unsigned power=1;
+    strtod(text,&unit);
+    if(dot)while(++dot<unit)power*=10;
+    return (strstr(unit,"mV")?1000:1000000)/power;
+}
+static void LiveTests(void)
+{
+    unsigned i,g,k;static UnifiedCal s;
+    static const int32_t uv[]={1000,9999,12345,999499,999999,1000000,1234567,12345678,60000000};
+    Init(1);live_check=1;Full(KEY4);Calibrat(TRACK1);
+    CHECK(live_captures==280 && captures==280 && screen_clears==2 && !writes);
+    for(i=0;i<8;++i)for(g=0;g<3;++g)for(k=0;k<3;++k)CHECK(live_color[i][g][k]==WHT);
+    Init(0);live_check=1;Full(KEY4);Calibrat(TRACK1);CHECK(captures==136 && screen_clears==2);
+    for(i=0;i<8;++i)for(k=0;k<3;++k)CHECK(live_color[i][2][k]==GRAY && !strncmp(live_text[i][2][k],"--",2));
+    for(g=0;g<2;++g) {
+        Init(1);live_check=1;fail_capture=80+(g?14:2);Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
+        CHECK(!writes && live_captures==fail_capture);
+        for(i=0;i<4;++i)for(k=0;k<2;++k)CHECK(live_color[i][2][k]==WHT);
+        CHECK(live_color[4][g?2:0][0]!=WHT);
+        if(g)CHECK(live_color[4][0][0]==WHT && live_color[4][1][0]==WHT);
+    }
+    /* Retry rebuilds the same confirmed snapshot, then re-started fields lose
+     * their white status until the new branch has passed all checks. */
+    Init(1);live_check=1;fail_capture=94;Press(KEY2);Press(KEY2);Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
+    CHECK(!writes && captures==94+160 && screen_clears==3);
+    Init(1);live_check=1;fail_capture=167;Press(KEY2);Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
+    CHECK(!writes && live_color[0][0][2]==WHT && live_color[0][1][2]==WHT && live_color[0][2][2]!=WHT);
+    /* Real formatting/observer with hostile signs and compact unit boundaries.
+     * This host-only seam does not alter the target firmware or calibration. */
+    Init(1);memset(&s,0,sizeof s);s.include144=1;s.scale[0]=1024;
+    s.native[0].zero[0]=-128;s.native[0].offset[0]=127;s.native[1].zero[0]=127;s.native[1].offset[0]=-128;
+    Calibrat_TestLive(&s,CAL_UI_ZERO_START,0,0,1);Calibrat_TestLive(&s,CAL_UI_ZERO_VERIFIED,0,0,0);
+    CHECK(!strncmp(live_text[0][0][0],"-128",4) && !strncmp(live_text[0][1][1],"-128",4));
+    for(i=0;i<sizeof uv/sizeof uv[0];++i) {
+        int32_t tolerance;
+        s.delta[0]=uv[i];s.delta[1]=-uv[i];
+        Calibrat_TestLive(&s,CAL_UI_REF_START,0,0,0);Calibrat_TestLive(&s,CAL_UI_REF_VERIFIED,1024,1024,0);
+        tolerance=VoltageResolution(live_text[0][0][2])/2+1;
+        CHECK(abs(ParseVoltage(live_text[0][0][2])-uv[i])<=tolerance);
+        tolerance=VoltageResolution(live_text[0][1][2])/2+1;
+        CHECK(live_text[0][1][2][0]=='-');
+        CHECK(abs(ParseVoltage(live_text[0][1][2])+uv[i])<=tolerance);
+    }
+    s.zero144[0][0]=200*1024;s.zero144[0][1]=48*1024;s.dac144[0][0]=2048;s.dac144[0][1]=512;
+    Calibrat_TestLive(&s,CAL_UI_144_ZERO_START,0,0,0);Calibrat_TestLive(&s,CAL_UI_144_ZERO_VERIFIED,0,0,0);
+    CHECK(!strncmp(live_text[0][2][0],"-152",4) && !strncmp(live_text[0][2][1],"-75",3));
+    s.zero144[0][1]=s.zero144[0][0]+235*1024;s.dac144[0][0]=512;s.dac144[0][1]=2048;
+    Calibrat_TestLive(&s,CAL_UI_144_ZERO_VERIFIED,0,0,0);
+    CHECK(!strncmp(live_text[0][2][0],"235",3) && !strncmp(live_text[0][2][1],"300",3));
+    s.zero144[0][0]=100*1024;s.zero144[0][1]=100*1024-56;s.dac144[0][0]=1024;s.dac144[0][1]=1025;
+    Calibrat_TestLive(&s,CAL_UI_144_ZERO_VERIFIED,0,0,0);
+    CHECK(!strncmp(live_text[0][2][0],"-0.1",4) && !strncmp(live_text[0][2][1],"0.1",3));
+    CHECK(Scope144_CalibrateMeans(60*1024,63*1024,135*1024,138*1024,150000,s.pending144));
+    s.reference_input[0]=999000;s.reference=888000;
+    Calibrat_TestLive(&s,CAL_UI_144_REF_START,0,0,0);Calibrat_TestLive(&s,CAL_UI_144_REF_VERIFIED,139*1024,0,0);
+    CHECK(ParseVoltage(live_text[0][2][2])==152000 && live_color[0][2][2]==WHT);
 }
 int main(void)
 {
@@ -494,6 +600,7 @@ int main(void)
      CHECK(reference_trace[reference_count-1]==reference_trace[reference_count-2]-150);
     }
     CleanupChecks();
+    LiveTests();
     printf("PASS calibration UI: %u checks; actual Calibrat, held keys, all references, battery/charger, rollback, cancel, blinking\n",checks);
     return 0;
 }

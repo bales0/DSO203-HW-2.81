@@ -257,6 +257,8 @@ static __attribute__((noinline)) int Ground144(UnifiedCal *s,const CalOps *ops)
     }
     Fail(s,CAL_GROUND,11);return 0;
 }
+static void Progress(const CalOps *ops,const UnifiedCal *s,CalProgress event,int32_t a,int32_t b)
+{ if(ops->progress)ops->progress(ops->user,s,event,a,b); }
 static int Ground(UnifiedCal *s,const CalOps *ops)
 {
     unsigned r;
@@ -265,12 +267,18 @@ static int Ground(UnifiedCal *s,const CalOps *ops)
     s->battery=ops->battery(ops->user);
     if(s->battery<2800 || s->battery>5200){Fail(s,CAL_GROUND,14);return 0;}
     for(r=0;r<8;++r) {
-        if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_GROUND,14);return 0;}
+        if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_GROUND,14);return 0;}
         s->range=r;
+        Progress(ops,s,CAL_UI_ZERO_START,0,0);
         if(!GroundRange(s,ops))return 0;
-        if(s->include144 && !Ground144(s,ops))return 0;
+        Progress(ops,s,CAL_UI_ZERO_VERIFIED,0,0);
+        if(s->include144) {
+            Progress(ops,s,CAL_UI_144_ZERO_START,0,0);
+            if(!Ground144(s,ops))return 0;
+            Progress(ops,s,CAL_UI_144_ZERO_VERIFIED,0,0);
+        }
     }
-    if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_GROUND,14);return 0;}
+    if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_GROUND,14);return 0;}
     s->range=0;s->reference=s->reference_input[0];
     s->stage=CAL_REFERENCE;return 1;
 }
@@ -292,7 +300,7 @@ static void Diagnose(UnifiedCal *s,const CalMean *m,unsigned path)
         s->gain_result[s->failed_channel]=s->delta[1]>0?(int32_t)((int64_t)s->delta[0]*1024/s->delta[1]):0;
     }
 }
-int UnifiedCal_Preview(UnifiedCal *s,const CalOps *ops)
+int __attribute__((section(".text.cal_preview_ui"))) UnifiedCal_Preview(UnifiedCal *s,const CalOps *ops)
 {
     CalMean m={0,0,0};unsigned r=s->range;int result;
     if(s->stage!=CAL_REFERENCE || r>=8)return 0;
@@ -324,7 +332,7 @@ static __attribute__((noinline,section(".text.calibration"))) int Reference144(U
     }
     s->dac_diagnostic.step=CAL_DAC_RETURN;
     if(!Capture(s,ops,1,commands[1][0],commands[1][1],result,CAL_REFERENCE))return 0;
-    if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_REFERENCE,14);return 0;}
+    if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_REFERENCE,14);return 0;}
     s->dac_diagnostic.step=CAL_DAC_DRIFT;s->dac_diagnostic.point=1;
     if(!CheckDac(s,result,anchor.a,anchor.b,CAL_REFERENCE))return 0;
     s->dac_diagnostic.step=CAL_DAC_RETURN;
@@ -341,7 +349,8 @@ static int Reference(UnifiedCal *s,const CalOps *ops)
 {
     CalMean m;unsigned ch,r=s->range;Scope144Cal candidate;uint16_t gains[2];int32_t native_delta[2];
     s->pending144[r].valid=0;s->complete&=~(1u<<r);
-    if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_REFERENCE,14);return 0;}
+    Progress(ops,s,CAL_UI_REF_START,0,0);
+    if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_REFERENCE,14);return 0;}
     if(!Capture(s,ops,0,CalNative_Command(s->adc_offset,s->native[0].offset[r],25),
         CalNative_Command(s->adc_offset,s->native[1].offset[r],25),&m,CAL_REFERENCE))return 0;
     Diagnose(s,&m,0);native_delta[0]=s->delta[0];native_delta[1]=s->delta[1];
@@ -368,7 +377,9 @@ static int Reference(UnifiedCal *s,const CalOps *ops)
             }
         }
     }
+    Progress(ops,s,CAL_UI_REF_VERIFIED,gains[0],gains[1]);
     if(s->include144) {
+        Progress(ops,s,CAL_UI_144_REF_START,0,0);
         if(!Reference144(s,ops,&m))return 0;
         Diagnose(s,&m,1);
         s->dac_diagnostic.step=CAL_DAC_REFERENCE;s->dac_diagnostic.point=1;
@@ -393,6 +404,7 @@ static int Reference(UnifiedCal *s,const CalOps *ops)
             candidate.dac_window=commands[0][0] | (commands[3][0]<<8) | (commands[0][1]<<16) | (commands[3][1]<<24);
             if(!Scope144_Valid(&candidate)){Fail(s,CAL_REFERENCE,7);return 0;}
             s->pending144[r]=candidate;
+            Progress(ops,s,CAL_UI_144_REF_VERIFIED,m.b,0);
         }
     }
     for(ch=0;ch<2;++ch) {
@@ -443,7 +455,7 @@ void UnifiedCal_Step(UnifiedCal *s,CalKey key,const CalOps *ops)
         if(s->complete!=255){Fail(s,CAL_GROUND,9);return;}
         unsigned profile=key==CAL_CHARGER;Scope144Cal *dest=profile?s->bank.high:s->bank.range;
         uint32_t battery=ops->battery(ops->user),previous_battery=s->bank.battery[profile];
-        if(battery<2800 || battery>5200 || Magnitude((int32_t)battery-(int32_t)s->battery)>100){Fail(s,CAL_SAVE,14);return;}
+        if(battery<2800 || battery>5200 || Magnitude((int32_t)battery-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_SAVE,14);return;}
         s->battery=battery;
         memcpy(s->rollback144,dest,sizeof(s->rollback144));
         if(s->include144)memcpy(dest,s->pending144,sizeof(s->pending144));else memset(dest,0,sizeof(s->pending144));

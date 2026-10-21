@@ -16,6 +16,7 @@ static uint16_t normal_y[8][4];
 static int protect_normal;static unsigned last_path;
 static CalNative ground_snapshot[2];static uint16_t ground_y[8][4];
 static uint32_t battery_value=3700;
+static unsigned battery_checks,battery_change_at;static int battery_change;
 static const uint32_t scale[8]={2000,4000,8000,20000,40000,80000,200000,400000};
 #define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"FAIL %d: %s stage=%u error=%u range=%u cmds=%u/%u raw=%ld/%ld\n",__LINE__,#x,state.stage,state.error,state.range,state.capture_commands[0],state.capture_commands[1],(long)state.capture_mean.a,(long)state.capture_mean.b);exit(1);}}while(0)
 static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,CalMean *m)
@@ -59,16 +60,17 @@ static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,C
     m->clips=captures==clip_capture;return robust_capture?RobustCapture(m):1;
 }
 static int Gen(void *user,int on){(void)user;CHECK(on==0);++generators;return 1;}
-static uint32_t Battery(void *user){(void)user;return battery_value;}
+static uint32_t Battery(void *user){(void)user;++battery_checks;
+    return battery_value+(battery_change_at && battery_checks>=battery_change_at?battery_change:0);}
 static int Save(void *user,UnifiedCal *s,int high)
 {
     (void)user;CHECK(s->complete==255);CHECK(s->range==8);++writes;charger=high;
     return save_fail;
 }
-static CalOps ops={&state,Capture,Gen,Battery,Save};
+static CalOps ops={&state,Capture,Gen,Battery,Save,0};
 static void Init(int interlace)
 {
-    robust_capture=0;bad_upper=upper_visits=0;captures=writes=generators=fail_capture=clip_capture=save_fail=0;response_percent=100;missing_b=curve=initial_bias=unstable=0;cancel_capture=0;capture_status=flat_b=0;route_slope=route_error=route_drift=a_route_error=0;route_percent=100;route_offset=8;path_calls=normal_calls=last_path=0;protect_normal=0;battery_value=3700;
+    battery_checks=battery_change_at=0;battery_change=0;robust_capture=0;bad_upper=upper_visits=0;captures=writes=generators=fail_capture=clip_capture=save_fail=0;response_percent=100;missing_b=curve=initial_bias=unstable=0;cancel_capture=0;capture_status=flat_b=0;route_slope=route_error=route_drift=a_route_error=0;route_percent=100;route_offset=8;path_calls=normal_calls=last_path=0;protect_normal=0;battery_value=3700;
     UnifiedCal_Init(&state,54,0,scale,interlace,0);
 }
 static void Ground(void)
@@ -373,7 +375,7 @@ static void NormalPointLimits(void)
         CHECK(!writes);
         CHECK(!CalStable_Push(&stable,&in,&out));in.b+=ref_fault_size;
         CHECK(!CalStable_Push(&stable,&in,&out));in.b=80*1024;
-        CHECK(CalStable_Push(&stable,&in,&out)==(n==0));
+        CHECK(CalStable_Push(&stable,&in,&out)==(drift[n]<=CAL_CAPTURE_WINDOW_SPAN_Q10));
     }
 }
 
@@ -538,6 +540,202 @@ static void HoldAccelerationTests(void)
     }
     state.scale[7]=UINT32_MAX;state.range=7;UnifiedCal_Step(&state,CAL_FAST_UP,&ops);CHECK(state.reference==60000000);
     UnifiedCal_Step(&state,CAL_FAST_DOWN,&ops);CHECK(state.reference==1000 && !writes);
+}
+
+static struct {CalProgress event;unsigned range,count;} progress_trace[80];
+static unsigned progress_count;
+static void Observe(void *user,const UnifiedCal *s,CalProgress event,int32_t a,int32_t b)
+{
+    unsigned base=s->range*(s->include144?20u:12u),expected=base;
+    CHECK(user==&state && s==&state && progress_count<80 && s->range<8);
+    if(event>=CAL_UI_REF_START)base=8*(s->include144?20u:12u)+s->range*(s->include144?15u:5u);
+    expected=base;
+    if(event==CAL_UI_ZERO_VERIFIED || event==CAL_UI_144_ZERO_START)expected+=12;
+    if(event==CAL_UI_144_ZERO_VERIFIED)expected+=20;
+    if(event==CAL_UI_REF_VERIFIED || event==CAL_UI_144_REF_START)expected+=5;
+    if(event==CAL_UI_144_REF_VERIFIED)expected+=15;
+    CHECK(captures==expected);
+    progress_trace[progress_count].event=event;progress_trace[progress_count].range=s->range;
+    progress_trace[progress_count++].count=captures;
+    if(event==CAL_UI_ZERO_VERIFIED) {
+        CHECK(s->native[0].zero[s->range]==-5 && s->native[1].zero[s->range]==-7);
+        CHECK(!s->native[0].offset[s->range] && !s->native[1].offset[s->range]);
+    }
+    if(event==CAL_UI_144_ZERO_VERIFIED)CHECK(s->zero144[s->range][1]-s->zero144[s->range][0]==3*1024);
+    if(event==CAL_UI_REF_VERIFIED)CHECK(a==1024 && b==1024);
+    if(event==CAL_UI_144_REF_VERIFIED)CHECK(a==s->capture_mean.b && Scope144_Valid(s->pending144+s->range));
+}
+static void ProgressTests(void)
+{
+    static UnifiedCal baseline;unsigned mode,count,n;
+    for(mode=0;mode<2;++mode) {
+        ops.progress=0;Init(mode);Ground();References();baseline=state;count=captures;
+        Init(mode);progress_count=0;ops.progress=Observe;Ground();References();
+        CHECK(captures==count && !memcmp(&baseline,&state,sizeof state));
+        CHECK(progress_count==(mode?64u:32u));
+        for(n=0;n<progress_count;++n) {
+            unsigned phase=n/(mode?32u:16u),within=n%(mode?32u:16u);
+            CHECK(progress_trace[n].range==within/(mode?4u:2u));
+            CHECK(progress_trace[n].event==(CalProgress)(phase*4+within%(mode?4u:2u)));
+        }
+    }
+    for(n=0;n<3;++n) {
+        Init(1);progress_count=0;fail_capture=n?94:82;
+        if(n==2){fail_capture=0;cancel_capture=2;}
+        UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+        CHECK(!writes && progress_count==(n==2?1u:n?19u:17u));
+        CHECK(progress_trace[progress_count-1].event==(n==1?CAL_UI_144_ZERO_START:CAL_UI_ZERO_START));
+    }
+    ops.progress=0;
+    puts("PASS live calibration observer: exact branch order, before-return publication, null callback, unchanged complete state/capture counts, failure/cancel guards");
+}
+
+static void BlockWindowTests(void)
+{
+    unsigned ch,sign,rotation,n;CalStable w;CalMean in,out;
+    static const int32_t span[]={1024,1536,2048,2049};
+    for(ch=0;ch<2;++ch)for(sign=0;sign<2;++sign)for(rotation=0;rotation<3;++rotation)
+    for(n=0;n<4;++n) {
+        unsigned k;int32_t v[3]={0,span[n],span[n]/3};
+        memset(&w,0,sizeof w);in.a=in.b=120*1024;in.clips=0;
+        /* Advance the circular array, then explicitly test chronological order. */
+        for(k=0;k<rotation;++k)CalStable_Push(&w,&in,&out);
+        for(k=0;k<3;++k) {
+            int32_t value=120*1024+(sign?-v[k]:v[k]);in.a=in.b=120*1024;
+            if(ch)in.b=value;else in.a=value;
+            if(k<2)CalStable_Push(&w,&in,&out);
+            else CHECK(CalStable_Push(&w,&in,&out)==(span[n]<=2048));
+        }
+    }
+    for(ch=0;ch<2;++ch)for(sign=0;sign<2;++sign)for(rotation=0;rotation<3;++rotation) {
+        unsigned k;memset(&w,0,sizeof w);in.a=in.b=120*1024;in.clips=0;
+        for(k=0;k<rotation;++k)CalStable_Push(&w,&in,&out);
+        for(k=0;k<15;++k) {
+            int32_t value=120*1024+(sign?-(int32_t)(768*k):(int32_t)(768*k));
+            in.a=in.b=120*1024;if(ch)in.b=value;else in.a=value;
+            if(k<2)CalStable_Push(&w,&in,&out);else CHECK(!CalStable_Push(&w,&in,&out));
+        }
+    }
+    for(ch=0;ch<2;++ch)for(n=0;n<3;++n) {
+        memset(&w,0,sizeof w);in.a=120*1024;in.b=122*1024;in.clips=0;
+        CHECK(!CalStable_Push(&w,&in,&out));CHECK(!CalStable_Push(&w,&in,&out));
+        if(n==0)in.clips=1;else if(ch)in.b=(n==1?9:246)*1024;else in.a=(n==1?9:246)*1024;
+        CHECK(!CalStable_Push(&w,&in,&out) && !w.count && !w.next);
+        in.a=120*1024;in.b=122*1024;in.clips=0;
+        CHECK(!CalStable_Push(&w,&in,&out));CHECK(!CalStable_Push(&w,&in,&out));CHECK(CalStable_Push(&w,&in,&out));
+    }
+    /* Equal neighbors are not strict monotonic drift. Independent ADC traces. */
+    memset(&w,0,sizeof w);in.a=120*1024;in.b=122*1024;in.clips=0;
+    CHECK(!CalStable_Push(&w,&in,&out));in.a+=1536;in.b-=1024;
+    CHECK(!CalStable_Push(&w,&in,&out));in.a-=1024;in.b+=512;
+    CHECK(CalStable_Push(&w,&in,&out));
+    CHECK(CAL_OFFSET_STABILITY==1024 && CAL_CAPTURE_WINDOW_SPAN_Q10==2048);
+
+    for(n=0;n<2;++n) {
+        memset(&w,0,sizeof w);in.a=in.b=120*1024;in.clips=0;
+        CHECK(!CalStable_Push(&w,&in,&out));
+        if(n)in.a+=2048;
+        CHECK(!CalStable_Push(&w,&in,&out));in.a=122*1024;
+        CHECK(CalStable_Push(&w,&in,&out));
+    }
+
+    for(n=512;n<=513;++n) {
+        memset(&w,0,sizeof w);in.a=in.b=120*1024;in.clips=0;
+        CHECK(!CalStable_Push(&w,&in,&out));in.a+=(int32_t)n;
+        CHECK(!CalStable_Push(&w,&in,&out));in.a+=(int32_t)n;
+        CHECK(CalStable_Push(&w,&in,&out)==(n==512));
+    }
+    puts("PASS capture window: 2048/2049, independent A/B, strict drift >1024, chronological wrap, invalid reset");
+}
+
+#if defined(CAL_BLOCK_BEFORE)
+int BeforeDc(const void *,int32_t *);
+#endif
+static void NoiseAcceptanceTests(void)
+{
+    static CalDcHistogram h;int32_t mean;unsigned i,n,accepted=0,total=0;int32_t max_bias=0;
+#if defined(CAL_BLOCK_BEFORE)
+    unsigned old_accepted=0;int32_t old_max_bias=0,old_mean;
+#endif
+    /* First two examples have DC=120 and balanced temporal slices; the
+     * third has DC=121.5 and tests a 3 ADC alternating slice span. */
+    for(n=0;n<3;++n) {
+        static const int8_t pattern[16]={-4,-1,-1,-1,0,1,1,1,4,1,1,1,0,-1,-1,-1};
+        memset(&h,0,sizeof h);
+        for(i=0;i<4096;++i) {
+            unsigned code=120;
+            if(n==0)code+=pattern[i%16];
+            if(n==1)code+=i<84?(i%2?20:-20):(i%2?1:-1);
+            if(n==2)code=120+((i/1024)%2?3:0);
+            CalDc_Add(&h,code,i);
+        }
+        CHECK(CalDc_Estimate(&h,&mean)==1);CHECK(mean==(n==2?121*1024+512:120*1024));
+#if defined(CAL_BLOCK_BEFORE)
+        CHECK(BeforeDc(&h,&old_mean)==CAL_CAPTURE_UNSTABLE);
+#endif
+    }
+    for(n=0;n<144;++n) {
+        static const int wave[32]={0,195,383,556,707,831,924,981,1000,981,924,831,707,556,383,195,
+            0,-195,-383,-556,-707,-831,-924,-981,-1000,-981,-924,-831,-707,-556,-383,-195};
+        uint32_t phase=(n%8)*8192u,seed=0x12345678u+n;
+        uint32_t step=(uint32_t)((uint64_t)(200000+(n/8%3)*10000)*65536/300000);
+        unsigned amplitude=1+(n/24)*7;int result;memset(&h,0,sizeof h);
+        for(i=0;i<4096;++i) {
+            int32_t code,delta;seed=1664525u*seed+1013904223u;
+            phase+=step+(int32_t)(seed>>24)-128;
+            delta=wave[(phase>>11)&31]*(int)amplitude;
+            code=120+(delta>=0?(delta+500)/1000:-((-delta+500)/1000));
+            code+=(int)((seed>>8)%5)-2;
+            if(i%251==0)code+=i/251%2?40:-40;
+            CHECK(code>0 && code<255);CalDc_Add(&h,(unsigned)code,i);
+        }
+        result=CalDc_Estimate(&h,&mean);++total;
+        if(result==1) {int32_t bias=abs(mean-120*1024);++accepted;if(bias>max_bias)max_bias=bias;CHECK(bias<512);}
+        else CHECK(result==CAL_CAPTURE_UNSTABLE);
+#if defined(CAL_BLOCK_BEFORE)
+        if(BeforeDc(&h,&old_mean)==1) {
+            int32_t bias=abs(old_mean-120*1024);++old_accepted;if(bias>old_max_bias)old_max_bias=bias;
+        }
+#endif
+    }
+    printf("DC charger-like: %u/%u accepted; max known-DC bias=%ld Q10\n",accepted,total,(long)max_bias);
+#if defined(CAL_BLOCK_BEFORE)
+    printf("DC charger-like BEFORE: %u/%u accepted; max known-DC bias=%ld Q10\n",old_accepted,total,(long)old_max_bias);
+    CHECK(accepted>=old_accepted);
+#endif
+    CHECK(accepted>100);
+    /* New trim fraction must not admit a biased one-sided tail. */
+    memset(&h,0,sizeof h);for(i=0;i<4096;++i)CalDc_Add(&h,i<100?180:120,i);
+    CHECK(CalDc_Estimate(&h,&mean)==CAL_CAPTURE_UNSTABLE);
+    /* 3 ADC slice span inclusive, one Q10 unit beyond must fail. */
+    memset(&h,0,sizeof h);
+    for(i=0;i<4096;++i)CalDc_Add(&h,120+((i/1024)%2?3:0)+(i==4095),i);
+    CHECK(CalDc_Estimate(&h,&mean)==CAL_CAPTURE_UNSTABLE);
+}
+static void SupplyTests(void)
+{
+    static const unsigned at[]={2,10,11,12,27};unsigned p,i,n,sign;
+    for(p=0;p<2;++p)for(i=0;i<5;++i)for(n=199;n<=201;++n)for(sign=0;sign<2;++sign) {
+        Init(1);battery_value=p?4300:3200;battery_change_at=at[i];battery_change=sign?-(int)n:(int)n;
+        UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+        while(state.stage==CAL_REFERENCE)UnifiedCal_Step(&state,CAL_OK,&ops);
+        if(state.stage==CAL_SAVE)UnifiedCal_Step(&state,p?CAL_CHARGER:CAL_OK,&ops);
+        if(n<=200) {
+            CHECK(state.stage==CAL_DONE && writes==1 && charger==p);
+            CHECK(state.bank.battery[p]==(uint32_t)((int)battery_value+battery_change));
+        } else CHECK(state.stage==CAL_ERROR && state.error==14 && !writes && battery_checks==at[i]);
+    }
+    for(n=0;n<4;++n) {
+        static const uint32_t values[]={2799,2800,5200,5201};
+        Init(1);battery_value=values[n];UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+        CHECK(!writes);CHECK(n==0 || n==3?state.stage==CAL_ERROR && state.error==14:state.stage==CAL_REFERENCE);
+    }
+
+    for(n=0;n<2;++n) {
+        Init(1);battery_value=n?5200:2800;Ground();References();battery_value=n?5201:2799;
+        UnifiedCal_Step(&state,CAL_OK,&ops);CHECK(state.stage==CAL_ERROR && state.error==14 && !writes);
+    }
+    puts("PASS supply: all five drift gates, both profiles, +/-199/200 accepted, +/-201 rejected; 2800..5200 unchanged");
 }
 int main(void)
 {
@@ -704,6 +902,10 @@ int main(void)
     HistogramTests();
     HoldAccelerationTests();
     RobustWizardTests();
+    ProgressTests();
+    BlockWindowTests();
+    SupplyTests();
+    NoiseAcceptanceTests();
     printf("PASS unified calibration: %u checks; 8 ranges A+B+144, keys/release, no blink mutation, failures, signed gain/offset\n",checks);
     return 0;
 }

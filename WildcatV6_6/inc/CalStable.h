@@ -20,7 +20,16 @@ static inline int CalStable_Push(CalStable *s,const CalMean *m,CalMean *out)
         a+=av;b+=bv;
     }
     s->spread_a=amax-amin;s->spread_b=bmax-bmin;
-    if(s->count<3 || s->spread_a>CAL_OFFSET_STABILITY || s->spread_b>CAL_OFFSET_STABILITY)return 0;
+    if(s->count<3 || s->spread_a>CAL_CAPTURE_WINDOW_SPAN_Q10 || s->spread_b>CAL_CAPTURE_WINDOW_SPAN_Q10)return 0;
+    /* next is the oldest entry, not necessarily values[0]. Equal adjacent
+     * means alone do not establish a strictly monotonic trend. */
+    for(i=0;i<2;++i) {
+        int32_t first=i?s->values[s->next].b:s->values[s->next].a;
+        int32_t middle=i?s->values[(s->next+1)%3].b:s->values[(s->next+1)%3].a;
+        int32_t last=i?m->b:m->a;
+        if((first<middle && middle<last && last-first>CAL_OFFSET_STABILITY) ||
+           (first>middle && middle>last && first-last>CAL_OFFSET_STABILITY))return 0;
+    }
     out->a=(int32_t)((a+1)/3);out->b=(int32_t)((b+1)/3);out->clips=0;return 1;
 }
 
@@ -30,12 +39,12 @@ static inline int CalStable_Push(CalStable *s,const CalMean *m,CalMean *out)
 #define CAL_DC_MIN_RADIUS 2u
 #define CAL_DC_MAX_RADIUS 48u
 #define CAL_DC_MAX_MAD2 64u
-#define CAL_DC_REJECT_DIVISOR 64u
+#define CAL_DC_REJECT_DIVISOR 32u
 #define CAL_DC_MAX_RUN 2u
 #define CAL_DC_SLICE_RAILS 16u
 #define CAL_DC_MEAN_SHIFT 1024
 #define CAL_DC_MEDIAN_SHIFT 2048
-#define CAL_DC_TIME_SPAN 2048
+#define CAL_DC_TIME_SPAN 3072
 typedef struct {
     uint16_t bins[256],count[4],run,max_run;
     uint32_t sum[4];
@@ -82,7 +91,9 @@ static inline int CalDc_Estimate(const CalDcHistogram *h,int32_t *out)
         if(count>n/2){mad=(mad+t+1)/2;break;}
     }}
     if(t>CAL_DC_MAX_MAD2)return CAL_CAPTURE_UNSTABLE;
-    radius=(3*mad+1)/2;
+    /* mad is MAD2 (half ADC); 2*MAD2 gives a radius of 4*MAD in ADC.
+     * Bias/rail guards below remain independent of this wider noise band. */
+    radius=2*mad;
     if(radius<CAL_DC_MIN_RADIUS)radius=CAL_DC_MIN_RADIUS;
     if(radius>CAL_DC_MAX_RADIUS)radius=CAL_DC_MAX_RADIUS;
     for(k=1;k<255;++k)if((unsigned)CalDc_Abs((int32_t)(2*k)-(int32_t)median)<=2*radius) {

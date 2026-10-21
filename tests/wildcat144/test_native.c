@@ -200,6 +200,12 @@ u32 __Read_FIFO(void)
         if(capture_case==44){a=120;b=121+(index%2?2:-2);}
         if(capture_case==45){a=120;b=121;}
     }
+
+    if(capture_case==46) {
+        unsigned phase=record_count%3;
+        a=phase==0?121+(index%2):phase==1?120+(index%2):120;
+        b=phase==0?130:phase==1?131+(index%2):130+(index%2);
+    }
     if(capture_case==24){a=9;b=200;}
     if(capture_case==25){a=246;b=150;}
     if(capture_case==26){a=10;b=245;if(index%256==0 && index/256<4){a=255;b=0;}}
@@ -313,7 +319,7 @@ static int CalScenario(unsigned scenario,unsigned mode,CalMean *mean)
     CHECK(stats.elapsed_ms<=2021);
     if(result==1) {
         CHECK(stats.records>=4 && stats.blocks>=3 && stats.window==3);
-        CHECK(stats.block_ms>=20 && stats.spread_a<=1024 && stats.spread_b<=1024);
+        CHECK(stats.block_ms>=20 && stats.spread_a<=CAL_CAPTURE_WINDOW_SPAN_Q10 && stats.spread_b<=CAL_CAPTURE_WINDOW_SPAN_Q10);
     }
     CHECK((uint32_t)(fake_cycles-capture_started)<=2021u*72000u);
     if(scenario!=4)CHECK((uint32_t)(first_record_at-capture_started)>=300u*72000u);
@@ -939,6 +945,10 @@ int main(void)
       CHECK(CalScenario(25,1,&mean)==CAL_CAPTURE_CLIPPED && !mean.clips);
       CHECK(CalScenario(26,1,&mean)==1 && mean.a==10*1024 && mean.b==245*1024);
 
+
+      CHECK(CalScenario(46,0,&mean)==1 && record_count==4 && mean.a==123563 && mean.b==133803);
+      CHECK(CalScenario(46,1,&mean)==1 && record_count==4 && mean.a==123563 && mean.b==133803);
+      CHECK(CalScenario(8,1,&mean)==CAL_CAPTURE_UNSTABLE);
       CHECK(CalScenario(40,0,&mean)==1 && mean.a==214*1024 && mean.b==213*1024);
       CHECK(CalScenario(40,1,&mean)==1 && mean.a==214*1024 && mean.b==213*1024);
       CHECK(CalScenario(41,0,&mean)==CAL_CAPTURE_CLIPPED);

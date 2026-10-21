@@ -9,6 +9,9 @@
 #define CAL_OFFSET_ATTEMPTS 4u
 #define CAL_OFFSET_TOLERANCE (2*1024)
 #define CAL_OFFSET_STABILITY 1024
+/* Statistical capture window only; DAC pass/return drift stays at 1 ADC. */
+#define CAL_CAPTURE_WINDOW_SPAN_Q10 2048
+#define CAL_SUPPLY_DRIFT_MV 200
 /* Model residual, NOT the three-block temporal stability limit. */
 #define CAL_144_POINT_TOLERANCE (2*1024)
 #define CAL_144_A_TOLERANCE (2*1024)
@@ -69,6 +72,11 @@ typedef struct {
     unsigned offset_low_command[2],offset_high_command[2];
     CalMean capture_mean;unsigned capture_commands[2],capture_path;CalCaptureStats capture_stats;
 } UnifiedCal;
+/* Session UI observer: even events start, odd events certify the entire branch.
+ * Outside capture/FIFO. Normal REF payload: accepted gains A/B (Q10);
+ * 144 REF payload: accepted raw ADC B mean (Q10), paired with pending144. */
+typedef enum { CAL_UI_ZERO_START,CAL_UI_ZERO_VERIFIED,CAL_UI_144_ZERO_START,CAL_UI_144_ZERO_VERIFIED,
+    CAL_UI_REF_START,CAL_UI_REF_VERIFIED,CAL_UI_144_REF_START,CAL_UI_144_REF_VERIFIED } CalProgress;
 typedef struct {
     void *user;
     /* Configures the entire path, settles, then reads a FRESH record. */
@@ -76,6 +84,7 @@ typedef struct {
     int (*generator)(void *,int clock_on);
     uint32_t (*battery)(void *);
     int (*save)(void *,UnifiedCal *,int charger);
+    void (*progress)(void *,const UnifiedCal *,CalProgress,int32_t,int32_t);
 } CalOps;
 CalKey CalKey_Filter(CalKeyGate *,CalKey,unsigned pressed);
 int CalNative_Uncorrect(int display,int ypos,int zero,unsigned gain);

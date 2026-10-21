@@ -22,6 +22,10 @@ s16 PPM_Comp=0;
 u8 CalibrateMode=0;
 typedef struct { s8 zero[10],offset[10];u16 gain[10]; } NativeBank;
 typedef struct {
+    /* Published values survive failed candidates/retry; no persistent fields.
+     * 144 Z is B-A ADC, S is (DAC-A slope B/A - 1) in tenths of percent. */
+    struct { int32_t value[8][3][3],shown[8][3][3];u16 color[8][3][3];
+        u8 zero[3],voltage[3],active,row; } live;
     CalPreview preview;unsigned preview_drawn,preview_range,preview_valid;int32_t preview_uv[2];
     CalMean preview_filtered;unsigned preview_filter_valid,preview_good;
     uint32_t preview_last_good;
@@ -77,29 +81,130 @@ static void NumberCell(unsigned x,unsigned y,u16 color,unsigned mode,int32_t val
 {
     char n[13];Decimal(n,value);Cell(x,y,color,mode,n,width);
 }
+/* Round the display only; never clamp or alter calibration values. Six
+ * characters include sign/unit. Precision decreases only when width needs it. */
 static void VoltageCell(unsigned x,unsigned y,u16 color,unsigned mode,int32_t uv)
 {
-    char n[13];unsigned len;uint32_t v=uv<0?0:(uint32_t)uv;
-    if(v<1000000) {
-        len=Decimal(n,v/1000);n[len++]='.';n[len++]=(char)('0'+v/100%10);n[len++]='m';
-    } else {
-        len=Decimal(n,v/1000000);n[len++]='.';
-        n[len++]=(char)('0'+v/100000%10);n[len++]=(char)('0'+v/10000%10);n[len++]=(char)('0'+v/1000%10);
+    char text[16];uint32_t magnitude=uv<0?0u-(uint32_t)uv:(uint32_t)uv;
+    unsigned unit=magnitude<1000000u?1000u:1000000u,precision=unit==1000?2:3;
+    for(;;) {
+        unsigned i,n=0,power=1;uint32_t value;
+        for(i=0;i<precision;++i)power*=10;
+        value=(uint32_t)(((uint64_t)magnitude*power+unit/2)/unit);
+        if(uv<0)text[n++]='-';
+        n+=Decimal(text+n,(int32_t)(value/power));
+        if(precision) {
+            unsigned divisor=power/10;text[n++]='.';
+            while(divisor){text[n++]=(char)('0'+value/divisor%10);divisor/=10;}
+        }
+        if(unit==1000)text[n++]='m';
+        text[n++]='V';text[n]=0;
+        if(n<=6)break;
+        if(precision)--precision;else {unit=1000000;precision=3;}
     }
-    n[len++]='V';n[len]=0;Cell(x,y,color,mode,n,7);
+    Cell(x,y,color,mode,text,6);
 }
-static void Table(void)
+static void SmallRelative(char *text,int32_t value,int32_t divisor)
 {
-    unsigned x,y,i;const unsigned columns[]={0,44,88,132,200,244,288,332,398};
-    __Clear_Screen(BLACK);GPIOC->BRR=0x30;
+    /* Verified ADC difference <=235*1024, slope change <=3000 tenths %. */
+    int32_t scaled=value*10;
+    int32_t tenth=(int32_t)((scaled+(scaled<0?-divisor/2:divisor/2))/divisor);unsigned n;
+    /* At most four characters: tenths near zero, rounded ADC/% otherwise. */
+    if(tenth>=-99 && tenth<=999) {
+        n=Decimal(text,tenth/10);
+        if(tenth<0 && tenth>-10){text[0]='-';text[1]='0';n=2;}
+        text[n++]='.';text[n++]=(char)('0'+(tenth<0?-tenth:tenth)%10);text[n]=0;
+    } else Decimal(text,(tenth+(tenth<0?-5:5))/10);
+}
+static void Table(CalWorkspace *w)
+{
+    unsigned x,y,i,g;const unsigned columns[]={0,35,70,105,156,191,226,277,312,347,398};
+    __Clear_Screen(BLACK);GPIOC->BRR=0x30;memset(w->live.color,0,sizeof(w->live.color));
     for(y=0;y<=200;y+=20)for(x=0;x<399;++x){__Point_SCR(x,y);__LCD_SetPixl(WHT);}
     for(x=0;x<399;++x){__Point_SCR(x,239);__LCD_SetPixl(WHT);}
-    for(i=0;i<9;++i)for(y=(i==0 || i==8)?0:20;y<=(i==0 || i==8?239:200);++y){__Point_SCR(columns[i],y);__LCD_SetPixl(WHT);}
-    Cell(6,185,YEL,PRN,"CH_A",4);Cell(49,185,YEL,PRN,"ZERO",4);
-    Cell(93,185,YEL,PRN,"DIFF",4);Cell(134,185,YEL,PRN,"VOLTAGE",7);
-    Cell(206,185,0xFFE0,PRN,"CH_B",4);Cell(249,185,0xFFE0,PRN,"ZERO",4);
-    Cell(293,185,0xFFE0,PRN,"DIFF",4);Cell(334,185,0xFFE0,PRN,"VOLTAGE",7);
+    for(i=0;i<11;++i)for(y=(i==0 || i==10)?0:20;y<=(i==0 || i==10?239:200);++y){__Point_SCR(columns[i],y);__LCD_SetPixl(WHT);}
+    Cell(1,185,WHT,PRN,"RNG",4);
+    for(g=0;g<3;++g) {
+        unsigned base=36+121*g;
+        Cell(base,185,WHT,PRN,g==0?"A:Z":g==1?"B:Z":"dZ",4);
+        Cell(base+35,185,WHT,PRN,g==2?"dS%":"D",4);
+        Cell(base+70,185,WHT,PRN,g==2?"144V":"V",6);
+    }
+    for(i=0;i<8;++i)Cell(1,166-i*20,WHT,PRN,Y_Attr[i].STR,4);
 }
+static void LiveCell(CalWorkspace *w,unsigned r,unsigned g,unsigned k)
+{
+    UnifiedCal *s=&w->state;unsigned bit=1u<<r,active=w->live.active;
+    unsigned valid=(k==2?w->live.voltage[g]:w->live.zero[g])&bit;
+    unsigned ongoing=active && w->live.row==r && ((active-1>=4)==(k==2)) &&
+        (((active-1)/2%2)?g==2:g<2);
+    int32_t value=w->live.value[r][g][k];u16 color=valid?WHT:ongoing?YEL:GRAY;
+    char text[16];
+    if(!valid && !active && s->stage==CAL_REFERENCE && r==s->range && g<2 && k==2) {
+        color=YEL;
+        if(s->measured_valid && !s->diagnostic_path) {
+            value=(int32_t)((int64_t)s->delta[g]*s->scale[r]*s->native[g].gain[r]/(1024*1024));valid=1;
+        }
+    }
+    if(!valid)value=INT32_MIN;
+    if(w->live.color[r][g][k]==color && w->live.shown[r][g][k]==value)return;
+    w->live.color[r][g][k]=color;w->live.shown[r][g][k]=value;
+    if(value==INT32_MIN)Cell(36+g*121+k*35,166-r*20,color,PRN,"--",k==2?6:4);
+    else if(k==2)VoltageCell(106+g*121,166-r*20,color,PRN,value);
+    else {
+        if(g==2)SmallRelative(text,value,k?10:1024);else Decimal(text,value);
+        Cell(36+g*121+k*35,166-r*20,color,PRN,text,4);
+    }
+}
+static void Progress(void *user,const UnifiedCal *s,CalProgress event,int32_t a,int32_t b)
+{
+    CalWorkspace *w=user;unsigned r=s->range,g,k,ref=event>=CAL_UI_REF_START;
+    unsigned first=(event/2%2)?2:0,last=first==2?3:2,bit=1u<<r;
+    if(r>=8)return;
+    if(event==CAL_UI_REF_VERIFIED) {
+        a=(int32_t)((int64_t)s->delta[0]*s->scale[r]*a/(1024*1024));
+        b=(int32_t)((int64_t)s->delta[1]*s->scale[r]*b/(1024*1024));
+    } else if(event==CAL_UI_144_REF_VERIFIED) {
+        const Scope144Cal *c=s->pending144+r;
+        /* Same B->A->absolute->uV chain as Frame144/Scope144. */
+        int32_t relative=(int32_t)((int64_t)a*c->gain_q10/1024)+c->bias_q10;
+        int32_t absolute=(int32_t)((int64_t)relative*c->a_gain_q10/1024)+c->a_bias_q10;
+        a=Scope144_Voltage(c,absolute);
+    }
+    if(event==CAL_UI_ZERO_START) {
+        w->live.zero[2]&=(u8)~bit;
+        for(g=0;g<3;++g)w->live.voltage[g]&=(u8)~bit;
+    }
+    if(event==CAL_UI_REF_START || event==CAL_UI_144_ZERO_START)w->live.voltage[2]&=(u8)~bit;
+    w->live.row=(u8)r;w->live.active=(u8)event+1;
+    for(g=first;g<last;++g) {
+        u8 *mask=ref?w->live.voltage+g:w->live.zero+g;
+        if(!(event&1))*mask&=(u8)~bit;
+        else {
+            *mask|=(u8)bit;
+            if(ref)w->live.value[r][g][2]=g==1?b:a;
+            else if(g<2){w->live.value[r][g][0]=s->native[g].zero[r];w->live.value[r][g][1]=s->native[g].offset[r];}
+            else {
+                w->live.value[r][g][0]=s->zero144[r][1]-s->zero144[r][0];
+                {int32_t slope=s->dac144[r][0];int32_t delta=(s->dac144[r][1]-slope)*1000;
+                 w->live.value[r][g][1]=(int32_t)((delta+(delta<0?-slope/2:slope/2))/slope);}
+            }
+        }
+    }
+    for(g=0;g<3;++g)for(k=0;k<3;++k)LiveCell(w,r,g,k);
+    if(event&1)w->live.active=0;
+}
+#if defined(SCOPE144_HOST_TEST)
+/* Test seam executes the real table/observer against host LCD mocks only. */
+void Calibrat_TestLive(const UnifiedCal *s,CalProgress event,int32_t a,int32_t b,int reset)
+{
+    CalWorkspace *w=(CalWorkspace *)DataBuf;
+    if(reset)memset(w,0,sizeof(*w));
+    w->state=*s;
+    if(reset)Table(w);
+    Progress(w,&w->state,event,a,b);
+}
+#endif
 static void Horizontal(unsigned x0,unsigned x1,unsigned y,u16 color)
 {
     unsigned x;GPIOC->BRR=0x30;
@@ -206,17 +311,8 @@ static __attribute__((noinline,optimize("Os"),section(".text.cal_probe"))) void 
  * instructions remain visible, and identical numerical values are not redrawn. */
 static void RenderPreview(CalWorkspace *w)
 {
-    UnifiedCal *s=&w->state;unsigned ch,r=s->range,valid=s->measured_valid && !s->diagnostic_path;
-    if(r>=8)return;
-    for(ch=0;ch<2;++ch) {
-        int32_t uv=valid?(int32_t)((int64_t)s->delta[ch]*s->scale[r]*(s->native[ch].gain[r]?s->native[ch].gain[r]:1024)/(1024*1024)):0;
-        if(!w->preview_drawn || w->preview_range!=r || w->preview_valid!=valid || w->preview_uv[ch]!=uv) {
-            if(valid)VoltageCell(ch?334:134,166-r*20,ch?0xFFE0:YEL,INV,uv);
-            else Cell(ch?334:134,166-r*20,ch?0xFFE0:YEL,INV,"--",7);
-        }
-        w->preview_uv[ch]=uv;
-    }
-    w->preview_range=r;w->preview_valid=valid;w->preview_drawn=1;
+    unsigned ch,r=w->state.range;
+    if(r<8)for(ch=0;ch<2;++ch)LiveCell(w,r,ch,2);
 }
 static const char *DacStep(CalDacStep step)
 {
@@ -255,27 +351,16 @@ static void DacPanel(const UnifiedCal *s)
     PairValue(66,"Attempt/clips: ",s->offset_attempt,s->capture_mean.clips);
     PairValue(52,"Spread A/B (mADC): ",s->capture_stats.spread_a*1000/1024,s->capture_stats.spread_b*1000/1024);
 }
-static void Render(const UnifiedCal *s,int full)
+static void Render(CalWorkspace *w,int full)
 {
-    unsigned r,ch;CalStage phase=s->stage==CAL_ERROR?s->retry:s->stage;
+    UnifiedCal *s=&w->state;unsigned r,g,k;
     if(s->stage==CAL_CLOCK){ClockPanel(s,full);return;}
-    if(full)Table();
-    for(r=0;r<8;++r)for(ch=0;ch<2;++ch) {
-        unsigned x=ch?200:0,y=166-r*20,mode=(phase==CAL_REFERENCE || s->error==11) && r==s->range?INV:PRN;
-        u16 color=ch?0xFFE0:YEL;
-        Cell(x+6,y,color,mode,Y_Attr[r].STR,4);
-        NumberCell(x+45,y,color,PRN,s->native[ch].zero[r],5);
-        NumberCell(x+89,y,color,PRN,s->native[ch].offset[r],5);
-        if(s->complete&(1u<<r))VoltageCell(x+134,y,color,PRN,s->voltage_used[r][ch]);
-        else Cell(x+134,y,color,PRN,"--",7);
-        if(r==s->range && s->measured_valid && !s->diagnostic_path) {
-            int32_t uv=(int32_t)((int64_t)s->delta[ch]*s->scale[r]*(s->native[ch].gain[r]?s->native[ch].gain[r]:1024)/(1024*1024));
-            VoltageCell(x+134,y,color,mode,uv);
-        }
-    }
+    if(s->stage==CAL_ERROR)w->live.active=0;
+    if(full)Table(w);
+    for(r=0;r<8;++r)for(g=0;g<3;++g)for(k=0;k<3;++k)LiveCell(w,r,g,k);
     if(s->stage==CAL_GROUND) {
         Line(222," CAL A+B: disconnect signal; ground A+B");
-        Line(208,s->include144?" K2: ZERO + DIFF for A+B and 144":" K2: ZERO + DIFF for A+B");
+        Line(208,s->include144?" K2 ZERO A+B+144; dZ:ADC, dS:relative %":" K2: ZERO + DIFF for A+B");
         Line(6," K2 confirm ground; K4 cancel without saving");
     } else if(s->stage==CAL_REFERENCE) {
         {char row[49]="Reference: ",number[20];CalReference_Text(number,s->range,s->reference);strcat(row,number);Line(222,row);}
@@ -413,7 +498,7 @@ static __attribute__((noinline)) void Initialize(CalWorkspace *w)
 void Calibrat(u8 channel)
 {
     CalWorkspace *w=(CalWorkspace *)DataBuf;uint32_t before;unsigned i;
-    CalOps ops={w,Capture,Generator,Battery,Save};CalKeyGate gate={1};CalRefHold hold={0};
+    CalOps ops={w,Capture,Generator,Battery,Save,Progress};CalKeyGate gate={1};CalRefHold hold={0};
     uint32_t preview_time;
     CalStage last_stage;unsigned last_range;int32_t last_reference,last_ppm;unsigned last_error;
     volatile unsigned spin;
@@ -432,7 +517,7 @@ void Calibrat(u8 channel)
     before=DWT_CYCLES;for(spin=0;spin<64;++spin) { }
     if(before==DWT_CYCLES)goto cleanup;
     Initialize(w);
-    Generator(w,1);Key_Buffer=0;Render(&w->state,1);
+    Generator(w,1);Key_Buffer=0;Render(w,1);
     preview_time=DWT_CYCLES;
     last_stage=w->state.stage;last_range=w->state.range;last_reference=w->state.reference;
     last_ppm=w->state.ppm;last_error=w->state.error;
@@ -481,7 +566,7 @@ void Calibrat(u8 channel)
         if(w->state.stage!=last_stage || w->state.range!=last_range || w->state.reference!=last_reference ||
            w->state.ppm!=last_ppm || w->state.error!=last_error) {
             if(w->state.stage!=CAL_DONE && w->state.stage!=CAL_CANCELLED) {
-                Render(&w->state,last_stage==CAL_CLOCK || last_stage==CAL_ERROR);w->preview_drawn=0;
+                Render(w,last_stage==CAL_CLOCK || last_stage==CAL_ERROR);w->preview_drawn=0;
             }
             last_stage=w->state.stage;last_range=w->state.range;last_reference=w->state.reference;
             last_ppm=w->state.ppm;last_error=w->state.error;
