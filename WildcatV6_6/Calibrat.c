@@ -153,13 +153,13 @@ static void OffsetPanel(const UnifiedCal *s)
     unsigned c=s->failed_channel,r=s->range;
     if(r>=8 || c>1)return;
     if(s->capture_path) {
-        DiagnosticFrame("144 B ZERO/OFFSET");
-        PairValue(156,"Raw/CMD B: ",s->capture_mean.b*1000/1024,s->capture_commands[1]);
-        PairValue(136,"Expected/error (mADC): ",s->dac_diagnostic.expected[1]*1000/1024,s->dac_diagnostic.residual[1]*1000/1024);
-        PairValue(116,"Attempt/limit (mADC): ",s->offset_attempt,s->dac_diagnostic.tolerance*1000/1024);
+        DiagnosticFrame("144 SHARED DAC A");
+        PairValue(156,"Raw/CMD A: ",s->capture_mean.a*1000/1024,s->capture_commands[0]);
+        PairValue(136,"Raw B (mADC)/attempt: ",s->capture_mean.b*1000/1024,s->offset_attempt);
+        PairValue(116,"Slope A/B (Q10): ",s->dac144[r][0],s->dac144[r][1]);
         Value(96,"Spread B (mADC): ",s->capture_stats.spread_b*1000/1024);
-        Value(76,"Wanted ZERO (-255..255): ",s->requested_zero[c]);
-        Value(56,"Wanted DIFF (-512..1024): ",s->requested_offset[c]);return;
+        Line(76,"Both ADCs follow the same DAC A");
+        Line(56,"Temporal stability: +/-1 ADC");return;
     }
     DiagnosticFrame("RAW OFFSET DIAGNOSTICS");
     Value(156,"Raw low (mADC): ",s->zero_low[r][c]*1000/1024);
@@ -168,6 +168,35 @@ static void OffsetPanel(const UnifiedCal *s)
     Value(96,"High command: ",(int32_t)s->offset_high_command[c]);
     Value(76,"Wanted ZERO (-128..127): ",s->requested_zero[c]);
     Value(56,"Wanted DIFF (-128..127): ",s->requested_offset[c]);
+}
+/* Error-screen measurement only. Reuse the preview's single mean; the LCD
+ * retains both columns. Original fit, all coefficients and bank stay intact. */
+static __attribute__((noinline,optimize("Os"),section(".text.cal_probe"))) void DacRepeat(CalWorkspace *w)
+{
+    UnifiedCal *s=&w->state;unsigned k,n,a;int result=1;
+    if(s->range>=8 || s->ref144_verify[3].clips>200)return;
+    for(k=0;k<4;++k)if(s->ref144_verify[k].a<0 || s->ref144_verify[k].a>200 ||
+        (k && s->ref144_verify[k].a<=s->ref144_verify[k-1].a))return;
+    a=(unsigned)CalNative_Command(s->adc_offset,s->native[0].offset[s->range],25);
+    DiagnosticFrame("144 DAC REPEAT");Value(222,"Fixed A DAC: ",a);
+    Line(208,"Same DACs: UP then DOWN; values in mADC");
+    Cell(8,158,CYAN,PRN,"DAC",3);Cell(96,158,YEL,PRN,"UP",8);Cell(208,158,YEL,PRN,"DOWN",8);
+    for(k=0;k<4;++k) {
+        NumberCell(8,138-20*k,CYAN,PRN,s->ref144_verify[k].a,3);
+        Cell(96,138-20*k,WHT,PRN,"--",8);Cell(208,138-20*k,WHT,PRN,"--",8);
+    }
+    Line(6," Measuring - K4 cancel without saving");
+    for(n=0;n<8;++n) {
+        k=n<4?n:7-n;
+        result=WildcatCalibration_Capture(s->range,1,a,(unsigned)s->ref144_verify[k].a,&w->preview_filtered);
+        if(result<=0)break;
+        if(!CalMean_Valid(&w->preview_filtered)){result=CAL_CAPTURE_CLIPPED;break;}
+        NumberCell(n<4?96:208,138-20*k,WHT,PRN,w->preview_filtered.b*1000/1024,8);
+    }
+    __Set(CH_A_OFFSET,w->preview.commands[0]);__Set(CH_B_OFFSET,w->preview.commands[1]);
+    Value(54,"Capture status (1=OK): ",result);
+    Line(6," K3 repeat; K2 retry; K4 exit without saving");
+    if(result==-1)s->stage=CAL_CANCELLED;
 }
 /* Only the voltage cells change on an idle preview. Reference and button
  * instructions remain visible, and identical numerical values are not redrawn. */
@@ -199,7 +228,7 @@ static void DacPanel(const UnifiedCal *s)
     n+=Decimal(row+n,r+1);strcpy(row+n,ch?"/8 ADC B: ":"/8 ADC A: ");
     strcat(row,d->reason==CAL_DAC_SLOPE?"DAC SLOPE":d->step==CAL_DAC_DRIFT?"DRIFT ERROR":d->step==CAL_DAC_RETURN?"RETURN ERROR":"POINT ERROR");Line(222,row);
     Line(208,s->capture_path?"Both ADCs sample input A; values in mADC":"Separate inputs A/B; values in mADC");
-    DiagnosticFrame(s->retry==CAL_GROUND?"144 B ZERO/OFFSET":"144 B -> NORMAL A");
+    DiagnosticFrame(s->retry==CAL_GROUND?"144 SHARED DAC A":"144 B -> NORMAL A");
     PairValue(164,"Zero LOW A/B: ",s->dac144_low[r].a*1000/1024,s->dac144_low[r].b*1000/1024);
     PairValue(150,"Zero HIGH A/B: ",s->dac144_high[r].a*1000/1024,s->dac144_high[r].b*1000/1024);
     PairValue(136,"Slope A/B (mADC/CMD): ",(d->reason==CAL_DAC_SLOPE?s->gain_result[0]:s->dac144[r][0])*1000/1024,(d->reason==CAL_DAC_SLOPE?s->gain_result[1]:s->dac144[r][1])*1000/1024);
@@ -257,7 +286,7 @@ static void Render(const UnifiedCal *s,int full)
             DacPanel(s);
         } else if(s->error==11) {
             char row[49];unsigned n=0,c=s->failed_channel;
-            const char *prefix=s->capture_path?"144 B Offset R":c?"Offset B R":"Offset A R";
+            const char *prefix=s->capture_path?"144 stability R":c?"Offset B R":"Offset A R";
             while(*prefix)row[n++]=*prefix++;
             n+=Decimal(row+n,s->range+1);memcpy(row+n," err(mADC)=",11);n+=11;
             n+=Decimal(row+n,s->offset_residual[c]*1000/1024);row[n]=0;Line(222,row);
@@ -290,7 +319,8 @@ static void Render(const UnifiedCal *s,int full)
             Value(222,"Calibration error: ",s->error);
             Line(208,s->error==10?"WPT save failed; original RAM restored":s->error==13?"144 DAC response invalid; check offset data":s->error==14?"Supply changed or outside 2800..5200 mV":"Capture/offset error; check inputs");
         }
-        Line(6," K2 return to failed step; K4 cancel");
+        Line(6,(s->error==11 || s->error==13) && s->capture_path && s->retry==CAL_GROUND?
+            " K2 retry; K3 DAC test; K4 cancel":" K2 return to failed step; K4 cancel");
     }
 }
 static int Capture(void *user,unsigned range,unsigned mode,unsigned a,unsigned b,CalMean *m)
@@ -311,6 +341,7 @@ static int Capture(void *user,unsigned range,unsigned mode,unsigned a,unsigned b
     }
     memset(m,0,sizeof(*m));
     result=WildcatCalibration_Capture(range,mode,a,b,m);
+    w->preview.commands[0]=a;w->preview.commands[1]=b; /* Last physical setup, not a fit diagnostic point. */
     WildcatCalibration_Diagnostics(&w->state.capture_stats);
     {
         char *live=row;unsigned k=0;
@@ -399,7 +430,10 @@ void Calibrat(u8 channel)
         unsigned key=Key_Buffer;Key_Buffer=0;PD_Cnt=600;
         CalKey event=CalKey_Filter(&gate,Event(key),pressed);
         if(key || pressed)w->preview.phase=0;
-        UnifiedCal_Step(&w->state,event,&ops);
+        if(event==CAL_CHARGER && w->state.stage==CAL_ERROR && (w->state.error==11 || w->state.error==13) &&
+           w->state.capture_path && w->state.retry==CAL_GROUND) {
+            DacRepeat(w);Key_Buffer=0;
+        } else UnifiedCal_Step(&w->state,event,&ops);
         if(key || pressed || w->state.stage!=last_stage || w->state.range!=last_range) {
             w->preview.phase=0;w->preview_filter_valid=0;preview_time=DWT_CYCLES;
             if(w->state.stage!=last_stage || w->state.range!=last_range) {

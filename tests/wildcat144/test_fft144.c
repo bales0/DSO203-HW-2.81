@@ -61,7 +61,7 @@ static void FilterResponse(void)
 static void Fixture(unsigned raw_bin,unsigned amp,unsigned phase,unsigned mismatch,unsigned noise)
 {
  unsigned i,a,b,ai,bi;uint32_t random=19;
- Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};
+ Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,1024,0,1024,1024,54,1024,1024,0,0};
  Frame144_Reset(&frame,1);frame.words=words;frame.range=0;frame.calibration=cal;
  frame.capture.sample_period_ps_q16=(1000000000000ULL*65536+72000000)/144000000;
  frame.capture.fifo_words=4096;frame.capture.valid_begin=2;frame.capture.valid_words=4094;

@@ -34,7 +34,7 @@ static void Sparse(void)
 }
 static void Reference(void)
 {
- Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};
+ Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,1024,0,1024,1024,54,1024,1024,0,0};
  Frame144 f;ViewWindowGeometry triggered,plain;unsigned base;
  Frame144_Reset(&f,1);f.words=(const uint32_t *)DataBuf;f.calibration=cal;
  f.capture.fifo_words=4096;f.capture.valid_begin=2;f.capture.valid_words=4094;f.capture.time_samples=8188;
@@ -67,7 +67,7 @@ static void Pending(void)
 
 static void MakeFrame(Frame144 *f)
 {
- Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};
+ Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,1024,0,1024,1024,54,1024,1024,0,0};
  Frame144_Reset(f,1);f->words=(const uint32_t *)DataBuf;f->calibration=cal;
  f->capture.fifo_words=4096;f->capture.valid_begin=2;f->capture.valid_words=4094;
  f->capture.time_samples=8188;f->capture.status=CAPTURE_WINDOW_READY;

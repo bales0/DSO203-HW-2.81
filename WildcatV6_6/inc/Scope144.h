@@ -3,8 +3,8 @@
 #include "Interlace144.h"
 #define SCOPE144_RANGES 8u
 #define SCOPE144_CAL_BYTES 1024u
-#define SCOPE144_CAL_TAG "I144WIDE"
-#define SCOPE144_RECORD_BYTES 61u
+#define SCOPE144_CAL_VERSION 4u
+#define SCOPE144_RECORD_BYTES 60u
 #define SCOPE144_SAMPLES 1024u
 #define SCOPE144_MAX_SAMPLES 8192u
 #define SCOPE144_IMAGE_CRC 0x66B80BD2u
@@ -13,11 +13,11 @@
 /* Shared Normal hardware pivot; capture calibration owns its DAC state. */
 typedef struct {
     int32_t gain_q10, bias_q10, zero_q10, span_q10, reference_uv;
-    uint16_t valid;int16_t dac_b_correction; /* exact wide DIFF; no byte truncation */
+    uint32_t valid;
     int32_t a_gain_q10,a_bias_q10,dac_a_q10,dac_b_q10,adc_offset;
-    /* Offset response at the reference voltage, independent of ground. */
+    /* Both ADC responses to the SAME DAC A command, at ground/reference. */
     int32_t ref_dac_a_q10,ref_dac_b_q10;
-    uint32_t dac_anchor,dac_window; /* A/B anchors + signed Normal A DIFF; high byte reserved. A/B min/max. */
+    uint32_t dac_anchor,dac_window; /* Mirrored shared-A anchors/correction/window. Zero means pivot-only. */
 } Scope144Cal;
 typedef struct {
     Scope144Cal range[SCOPE144_RANGES],high[SCOPE144_RANGES];
@@ -25,8 +25,6 @@ typedef struct {
 } Scope144Bank;
 unsigned Scope144_Command(int adc_offset);
 int CalNative_Command(int,int,int);
-/* Wide B144 DIFF; -1 invalid, otherwise the actual safe DAC command 0..200. */
-int CalDac_Command(int,int,int);
 void Scope144_NativeBank(const Scope144Bank *);
 unsigned Scope144_NativeProfiles(unsigned);
 int CalNative_Interpolate(int,int,unsigned,unsigned,unsigned);

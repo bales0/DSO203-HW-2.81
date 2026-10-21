@@ -220,7 +220,7 @@ static void VoltageAverageCases(void)
 }
 int main(void){
  static const unsigned lengths[]={16,17,31,64,137,511,512,1024,8188};
- Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};Scope144Source src={0};
+ Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,1024,0,1024,1024,54,1024,1024,0,0};Scope144Source src={0};
  unsigned n,kind,i,clips,phase,range,matched=0;uint32_t random=17;src.period_ps_q16=1000000000000ULL*65536/144000000;Scope144_SetClock(0);
  for(n=0;n<sizeof lengths/sizeof lengths[0];++n)for(kind=0;kind<16;++kind){
   src.count=lengths[n];clips=0;

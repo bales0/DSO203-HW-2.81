@@ -61,6 +61,7 @@ SECTIONS
           *UiCommon.o(.text)
           *Scope144.o(.text)
           *UnifiedCal.o(.text)
+          *(.text.cal_probe)               /* Non-saving calibration error test */
           *Files144.o(.text)
           *NativeWindow.o(.text)
           *Digital144.o(.text)

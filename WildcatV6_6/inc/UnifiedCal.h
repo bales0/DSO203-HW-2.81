@@ -31,7 +31,8 @@ typedef struct {
 } CalPreview;
 
 typedef struct { int8_t zero[8],offset[8];uint16_t gain[8]; } CalNative;
-typedef struct { int32_t zero[8],offset[8]; } CalNative144;
+/* Retained workspace padding; no independent B144 coefficients are fitted. */
+typedef struct { int8_t zero[8],offset[8]; } CalNative144;
 typedef enum { CAL_CLOCK,CAL_GROUND,CAL_REFERENCE,CAL_SAVE,CAL_DONE,CAL_CANCELLED,CAL_ERROR } CalStage;
 typedef enum { CAL_NONE,CAL_OK,CAL_CHARGER,CAL_CANCEL,CAL_DOWN,CAL_UP,CAL_BIG_DOWN,CAL_BIG_UP,CAL_RANGE_DOWN,CAL_RANGE_UP } CalKey;
 typedef struct { unsigned waiting; } CalKeyGate;
@@ -51,7 +52,10 @@ typedef struct {
     CalMean dac144_low[8],dac144_high[8];
     uint16_t working_y[8][4],working144_y[8][4];
     /* Current reference curve/verification, kept in the wizard DataBuf. */
-    int32_t ref_dac144[2];CalMean ref144_verify[4];
+    int32_t ref_dac144[2];
+    /* ZERO error snapshot: a = actual B DAC, b = raw B Q10, clips = A DAC.
+     * Reference verification overwrites all four with ordinary ADC means. */
+    CalMean ref144_verify[4];
     CalCaptureStats ref144_stats[4];
     CalDacDiagnostic dac_diagnostic;
     Scope144Cal pending144[8],rollback144[8];
@@ -77,7 +81,6 @@ int CalNative_Uncorrect(int display,int ypos,int zero,unsigned gain);
 int CalNative_Threshold(int display,int ypos,int zero,unsigned gain,int adc_offset,int inverted);
 int CalNative_Correct(int raw_minus_offset,int ypos,int zero,unsigned gain);
 int CalNative_Command(int adc_offset,int correction,int ypos);
-int CalDac_Points(int,const int32_t[2],const int32_t[2],unsigned,uint16_t[4]);
 int CalNative_Points(int adc_offset,const int8_t zero[2],const int8_t correction[2],unsigned reference_steps,uint16_t ypos[4]);
 int CalNative_Gain(int32_t zero,int32_t high,int32_t reference,uint32_t scale,uint16_t *gain);
 int CalMean_Valid(const CalMean *);

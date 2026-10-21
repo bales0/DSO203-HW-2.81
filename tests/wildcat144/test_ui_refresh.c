@@ -118,7 +118,7 @@ static void ContinuousYposPixels(void)
 {
  static uint32_t words[4096];static Frame144 frame;
  int rel[397];u8 digital[397][2];unsigned panel,base,inv,x,n,i,width,positions[]={100,101,104,103,0,200,0,100};
- ViewWindowGeometry view;Scope144Measurements measure,before;Scope144Cal cal={1024,0,120*1024,125*1024,125000,1,0,1024,0,1024,1024,40,1024,1024,0,0};
+ ViewWindowGeometry view;Scope144Measurements measure,before;Scope144Cal cal={1024,0,120*1024,125*1024,125000,1,1024,0,1024,1024,40,1024,1024,0,0};
  CHECK(VirtualAlloc((void *)0x40000000,0x30000,0x3000,4)==(void *)0x40000000);
  for(panel=0;panel<2;++panel)for(base=0;base<3;++base)for(inv=0;inv<2;++inv){
   unsigned count,last=100;

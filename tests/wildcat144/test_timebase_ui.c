@@ -17,7 +17,7 @@ int Wildcat144_CursorTime(unsigned column,int32_t *ps)
 int Wildcat144_XposTime(int32_t *ps){++request_calls;*ps=123456789;return 1;}
 static void Setup(unsigned base,unsigned width,unsigned triggered)
 {
- Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};
+ Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,1024,0,1024,1024,54,1024,1024,0,0};
  Frame144_Reset(&time_frame,17);time_frame.words=time_words;time_frame.calibration=cal;
  time_frame.capture.fifo_words=4096;time_frame.capture.valid_begin=triggered?2:152;
  time_frame.capture.valid_words=4096-time_frame.capture.valid_begin;

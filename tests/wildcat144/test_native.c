@@ -125,7 +125,7 @@ u32 __Read_FIFO(void)
     if(hold_on_read && index==200) {
         hold_on_read=0;key_status&=~KEY1_STATUS;++Key1PressCount;Key_Buffer=KEY1;
     }
-    if(wide_test)return 0x2c0000u|((analog_command[CH_A_OFFSET]+17)&255u)|(((analog_command[CH_B_OFFSET]+19)&255u)<<8);
+    if(wide_test)return 0x2c0000u|((analog_command[CH_A_OFFSET]+17)&255u)|(((analog_command[CH_A_OFFSET]+19)&255u)<<8);
     /* ADC rails are intentional test input, not a hidden/spike filter. */
     if(capture_case==27 || capture_case==28) {
         CHECK(index<4097 && adc_mode==INTERLACE);
@@ -255,14 +255,14 @@ int File144_CalLoad(Scope144Bank *bank)
 {
     unsigned i;++cal_loads;memset(bank,0,sizeof(*bank));
     if(cal_fixture_mode==1)return 0;
-    for(i=0;i<8;++i){Scope144Cal c={1024,0,55*1024,125*1024,1234567+(int32_t)i*10000,1,0,1024,0,1024,1024,54,1024,1024,0,0};if(!cal_fixture_mode) {
+    for(i=0;i<8;++i){Scope144Cal c={1024,0,55*1024,125*1024,1234567+(int32_t)i*10000,1,1024,0,1024,1024,54,1024,1024,0,0};if(!cal_fixture_mode) {
         unsigned anchor=(unsigned)CalNative_Command(54,0,_1_posi);
         c.dac_anchor=anchor|(anchor<<8);c.dac_window=200u<<8|200u<<24;
     }
     if(cal_fixture_mode==3)c.gain_q10=0;
     if(wide_test) {
         c.zero_q10=55*1024;c.a_bias_q10=-29*1024;c.bias_q10=-1024;
-        c.dac_anchor=79u|(78u<<8);c.dac_b_correction=64;c.dac_window=64u|(157u<<8)|(62u<<16)|(161u<<24);
+        c.dac_anchor=79u|(79u<<8);c.dac_window=64u|(157u<<8)|(64u<<16)|(157u<<24);
     }bank->range[i]=c;}
     bank->battery[0]=3700;return 1;
 }
@@ -1317,7 +1317,7 @@ int main(void)
         _A_Range=4;_1_posi=100;_T_base=21;_1_source=1;_4_source=0;_State.Value=RUN;TrgAuto=0;
         Title[TRACK1][COUPLE].Value=SCOPE144_DC;Current=TRACK1;Detail[TRACK1]=POSI;
         CHECK(ServiceUntilFrame());CHECK(shown_valid && last_frame->capture_ypos==100);
-        CHECK(analog_command[CH_A_OFFSET]==154 && analog_command[CH_B_OFFSET]==158);
+        CHECK(analog_command[CH_A_OFFSET]==154 && analog_command[CH_B_OFFSET]==154);
         frozen=shown_measure;
         for(n=0;n<2;++n) {
             KeyEvent(K_INDEX_DEC);CHECK(shown_valid && last_frame->capture_ypos==99-(int)n);

@@ -1,4 +1,5 @@
 #include <stdio.h>
+typedef FILE HostFile;
 #include <stdlib.h>
 #include <string.h>
 #include "BIOS.h"
@@ -45,7 +46,8 @@ static void Add(const char *name,const unsigned char *bytes,unsigned length)
 u8 WriteFileSec(u8 *buffer,u16 *cluster,u32 *directory)
 { (void)directory; return __ProgFileSec(buffer,cluster)==OK?OK:WR_ERR; }
 u32 __Get(u8 object) { (void)object; abort(); }
-u32 __GetDev_SN(void) { return 0x12345678; }
+static u32 device_serial=0x12345678;
+u32 __GetDev_SN(void) { return device_serial; }
 void u8ToDec3(char *out,u16 value,u8 service) { (void)service;out[0]='0'+value/100;out[1]='0'+value/10%10;out[2]='0'+value%10;out[3]=0; }
 u8 __OpenFileRd(u8 *buffer,char *name,u16 *cluster,u32 *directory)
 {
@@ -85,13 +87,15 @@ static int32_t q[1024];static uint16_t pairs[664];
 int main(void)
 {
     unsigned sector,i,r,fail;Scope144Bank bank,loaded;
-    Scope144Cal c={1024,0,55*1024,125*1024,5000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};
+    Scope144Cal c={1024,0,55*1024,125*1024,5000000,1,1024,0,1024,1024,54,1024,1024,0,0};
     c.ref_dac_a_q10=1100;c.ref_dac_b_q10=990;
     for(sector=512;sector<=4096;sector*=8) {
         SectorSize=(u16)sector;memset(files,0,sizeof(files));memset(&bank,0,sizeof(bank));
         bank.battery[0]=3200;bank.battery[1]=4200;
         for(r=0;r<8;++r){bank.range[r]=c;bank.high[r]=c;bank.high[r].bias_q10=100+(int32_t)r;
-            bank.range[r].dac_b_correction=(int16_t)(150+(int)r);bank.high[r].dac_b_correction=(int16_t)(-129-(int)r);}
+            bank.range[r].dac_anchor=75u|(75u<<8)|((uint32_t)(uint8_t)(120+(int)r)<<16)|((uint32_t)(uint8_t)(120+(int)r)<<24);
+            bank.high[r].dac_anchor=75u|(75u<<8)|((uint32_t)(uint8_t)(-121-(int)r)<<16)|((uint32_t)(uint8_t)(-121-(int)r)<<24);
+            bank.range[r].dac_window=bank.high[r].dac_window=20u|(190u<<8)|(20u<<16)|(190u<<24);}
         Native(35);CHECK(!File144_CalLoad(&loaded));
         CHECK(File144_WptSave(&bank,1)==OK && bank.generation==1);
         CHECK(File144_CalLoad(&loaded));CHECK(!memcmp(&bank,&loaded,sizeof(bank)));
@@ -153,6 +157,58 @@ int main(void)
         /* Failed first save does not manufacture a valid calibration. */
         memset(files,0,sizeof(files));write_fail=1;CHECK(File144_WptSave(&bank,1)==WR_ERR);write_fail=0;
         CHECK(!File144_CalLoad(&loaded));
+    }
+    /* Old v4 keeps its verified Normal prefix, never its old B144 model.
+     * Read/CFG cannot rewrite it. Confirmed calibration uses the OTHER slot
+     * and a generation newer than the old envelope, including wrap-around. */
+    {
+        unsigned old,newslot,k;uint32_t hash,crc;static const uint32_t gens[]={19,0xffffffffu};
+        for(sector=512;sector<=4096;sector*=8)for(k=0;k<2;++k) {
+            SectorSize=(u16)sector;memset(files,0,sizeof files);memset(&bank,0,sizeof bank);
+            bank.range[0]=c;bank.battery[0]=3700;Native(35);
+            CHECK(File144_WptSave(&bank,1)==OK);old=Find("12345678WPT");CHECK(old<10);
+            memset(files[old].bytes+512+36,0,4);
+            {unsigned j;for(j=0;j<4;++j)files[old].bytes[512+16+j]=(unsigned char)(gens[k]>>(8*j));}
+            crc=Scope144_Crc(files[old].bytes+512,1020);
+            {unsigned j;for(j=0;j<4;++j)files[old].bytes[1532+j]=(unsigned char)(crc>>(8*j));}
+            hash=Scope144_Crc(files[old].bytes,files[old].size);
+            CHECK(!File144_CalLoad(&loaded));CHECK(!loaded.range[0].valid);
+            CHECK(File144_NativeLoad());CHECK(!memcmp(SecBuff,native_current,512));
+            CHECK(File144_SaveParams()==RD_ERR);
+            CHECK(Scope144_Crc(files[old].bytes,files[old].size)==hash);
+            CHECK(Find("12345678WPB")==10);
+            /* Corruption cannot turn an untrusted old prefix into a fallback. */
+            files[old].bytes[7]^=1;CHECK(!File144_NativeLoad());files[old].bytes[7]^=1;
+            files[old].bytes[512+36]=1;CHECK(!File144_NativeLoad());files[old].bytes[512+36]=0;
+            memset(&bank,0,sizeof bank);bank.range[0]=c;bank.battery[0]=3700;
+            Native(79);write_fail=1;CHECK(File144_WptSave(&bank,1)==WR_ERR);write_fail=0;
+            CHECK(Scope144_Crc(files[old].bytes,files[old].size)==hash);
+            CHECK(File144_NativeLoad());CHECK(!memcmp(SecBuff,files[old].bytes,512));
+            CHECK(File144_WptSave(&bank,1)==OK && bank.generation==gens[k]+1);
+            newslot=Find("12345678WPB");CHECK(newslot<10);
+            CHECK(!memcmp(files[newslot].bytes+512+36,"DACA",4));
+            CHECK(Scope144_Crc(files[old].bytes,files[old].size)==hash);
+            CHECK(File144_CalLoad(&loaded) && loaded.generation==gens[k]+1);
+            CHECK(File144_NativeLoad());CHECK(!memcmp(SecBuff,native_current,512));
+        }
+    }
+    /* Actual supplied 1536-byte WPT/WPB: read only, test in mock filesystem.
+     * They keep Normal usable, and cannot masquerade as a DACA calibration. */
+    {
+        static const char *paths[]={"bin/WildcatV6_6/931C989B.WPT","bin/WildcatV6_6/931C989B.WPB"};
+        static const char *names[]={"931C989BWPT","931C989BWPB"};
+        unsigned j,native_slot;uint32_t hashes[2];unsigned char image[1536];
+        memset(files,0,sizeof files);SectorSize=512;device_serial=0x931c989b;
+        for(j=0;j<2;++j) {
+            HostFile *fp=fopen(paths[j],"rb");CHECK(fp!=NULL);
+            CHECK(fread(image,1,sizeof image,fp)==sizeof image && fgetc(fp)==EOF);CHECK(!fclose(fp));
+            hashes[j]=Scope144_Crc(image,sizeof image);Add(names[j],image,sizeof image);
+        }
+        CHECK(!File144_CalLoad(&loaded));CHECK(File144_NativeLoad());
+        native_slot=Find(names[1]);CHECK(native_slot<10 && !memcmp(SecBuff,files[native_slot].bytes,512));
+        CHECK(File144_SaveParams()==RD_ERR);
+        for(j=0;j<2;++j)CHECK(Scope144_Crc(files[Find(names[j])].bytes,1536)==hashes[j]);
+        device_serial=0x12345678;
     }
     /* Full-frame CSV reads DataBuf without borrowing the calibration scratch
      * at its end; sector writes must not damage the frozen capture. */
@@ -299,7 +355,7 @@ int main(void)
             CHECK(files[j].size==512 && Scope144_Crc(files[j].bytes,512)==h);
         }
     }
-    printf("PASS Scope144 wide file IO: %u checks; two profiles, matching native prefix, alternating slots, 512/4096B faults, legacy/full CSV\n",checks);return 0;
+    printf("PASS Scope144 v4 file IO: %u checks; two profiles, matching native prefix, alternating slots, 512/4096B faults, legacy/full CSV\n",checks);return 0;
 }
 
 int Generator_SecBusy(void){return (int)uart_owner;}

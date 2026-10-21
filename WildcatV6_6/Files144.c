@@ -47,7 +47,10 @@ static int NativeValid(const u8 *bytes)
     unsigned i,sum=0;for(i=0;i<512;++i)sum+=bytes[i];
     return bytes[0]==6 && !(sum&255);
 }
-/* 1 valid four-point format, 0 missing/invalid, -1 IO error. No legacy imports. */
+static u32 WptWord(const u8 *p)
+{ return p[0]|((u32)p[1]<<8)|((u32)p[2]<<16)|((u32)p[3]<<24); }
+/* 1 DACA profile, 2 checked old Normal prefix only, 0 invalid, -1 IO.
+ * No old B144 coefficients are imported or converted. */
 static int ReadWpt(unsigned slot,Scope144Bank *bank,u8 native[512])
 {
     FileCalScratch *w=SCRATCH;char name[12];u16 cluster[3];u32 directory[1];
@@ -62,11 +65,20 @@ static int ReadWpt(unsigned slot,Scope144Bank *bank,u8 native[512])
         if(__ReadFileSec(io,cluster)!=OK){result=-1;break;}
         memcpy(w->image+offset,io,length);offset+=length;
     }
-    if(offset==sizeof(w->image) && NativeValid(w->image) &&
-       Scope144_Decode(w->image+512,__GetDev_SN(),bank) &&
-       bank->native_crc==Scope144_Crc(w->image,512)) {
-        if(native)memcpy(native,w->image,512);
-        result=1;
+    if(offset==sizeof(w->image) && NativeValid(w->image)) {
+        if(Scope144_Decode(w->image+512,__GetDev_SN(),bank) &&
+           bank->native_crc==Scope144_Crc(w->image,512))result=1;
+        else {
+            /* Exact previous v4 envelope, including both CRCs. Only its
+             * native prefix and generation survive; no old 144 profile. */
+            const u8 *p=w->image+512;
+            if(!memcmp(p,"I144",4) && WptWord(p+4)==4 && WptWord(p+8)==__GetDev_SN() &&
+               WptWord(p+12)==SCOPE144_IMAGE_CRC && WptWord(p+20)==SCOPE144_CAL_BYTES && !WptWord(p+36) &&
+               WptWord(p+32)==Scope144_Crc(w->image,512) && WptWord(p+1020)==Scope144_Crc(p,1020)) {
+                memset(bank,0,sizeof(*bank));bank->generation=WptWord(p+16);bank->native_crc=WptWord(p+32);result=2;
+            }
+        }
+        if(result && native)memcpy(native,w->image,512);
     }
     if(__CloseFile(io,0,cluster,directory)!=OK)result=-1;
     return result;
@@ -80,12 +92,12 @@ static int Latest(unsigned *slot,int strict)
     a=ReadWpt(0,&w->latest,w->native);
     b=ReadWpt(1,&w->candidate,0);
     if(strict && (a<0 || b<0))return -1;
-    if(b==1 && (a!=1 || Scope144_Newer(w->candidate.generation,w->latest.generation))) {
+    if(b>0 && (a<=0 || Scope144_Newer(w->candidate.generation,w->latest.generation))) {
         /* Reread also fetches the matching native prefix. */
-        if(ReadWpt(1,&w->latest,w->native)!=1)return -1;
-        *slot=1;return 1;
+        b=ReadWpt(1,&w->latest,w->native);if(b<=0)return -1;
+        *slot=1;return b;
     }
-    return a==1?1:0;
+    return a>0?a:0;
 }
 /* CFG updates only the native prefix of the latest strictly read slot.
  * A read fault must never turn an existing calibration into an empty bank. */
@@ -107,7 +119,7 @@ int File144_NativeLoad(void)
 {
     if(Generator_SecBusy())return 0;
     unsigned slot;
-    if(InitFileSystem()!=OK || Latest(&slot,0)!=1)return 0;
+    if(InitFileSystem()!=OK || Latest(&slot,0)<=0)return 0;
     Scope144_NativeBank(&SCRATCH->latest);
     memset(SecBuff,0,SectorSize);memcpy(SecBuff,SCRATCH->native,512);return 1;
 }
@@ -145,7 +157,7 @@ int File144_WptSave(Scope144Bank *bank,int native_updated)
         memcpy(w->native,SecBuff,512);
     }
     if(!NativeValid(w->native))return VER_ERR;
-    bank->generation=(prior && Scope144_Newer(w->latest.generation,generation)?w->latest.generation:generation)+1;
+    bank->generation=(prior==2 || (prior && Scope144_Newer(w->latest.generation,generation))?w->latest.generation:generation)+1;
     bank->native_crc=Scope144_Crc(w->native,512);
     memcpy(w->image,w->native,512);
     if(!Scope144_Encode(bank,__GetDev_SN(),w->image+512)){status=VER_ERR;goto failed;}

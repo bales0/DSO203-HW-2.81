@@ -12,21 +12,15 @@ static int NativeCorrection(int correction)
 { return correction>=-128 && correction<=127?correction:0; }
 static int NativeRaw(int offset,int correction,int ypos)
 { return offset+40+RoundRatio((int64_t)(1024+correction)*(ypos-40),1024); }
-/* A DIFF is a Q10 software slope correction, not a signed DAC register.
- * These bounds follow from the accepted physical slopes 512..2048 Q10. */
-int CalDac_Command(int adc_offset,int correction,int ypos)
+int CalNative_Command(int adc_offset,int correction,int ypos)
 {
-    int64_t d,command;
-    if(correction<-512 || correction>1024 || adc_offset<0 || adc_offset>54)return -1;
-    d=(int64_t)(1024+correction)*((int64_t)ypos-40);
-    command=(int64_t)adc_offset+40+(d>=0?(d+512)/1024:-((-d+512)/1024));
+    int64_t d=(int64_t)(1024+NativeCorrection(correction))*((int64_t)ypos-40);
+    int64_t command=(int64_t)(adc_offset>=0 && adc_offset<=54?adc_offset:0)+40+
+        (d>=0?(d+512)/1024:-((-d+512)/1024));
     return command<0?0:command>200?200:(int)command;
 }
-/* The original Normal interface retains its signed-byte validation. */
-int CalNative_Command(int adc_offset,int correction,int ypos)
-{ return CalDac_Command(adc_offset>=0 && adc_offset<=54?adc_offset:0,NativeCorrection(correction),ypos); }
 static uint32_t native_windows[2][8],native_battery[2];
-static int16_t native_correction[2][8][2];
+static int8_t native_correction[2][8][2];
 void __attribute__((section(".text.runtime"))) Scope144_NativeBank(const Scope144Bank *bank)
 {
     unsigned i;
@@ -37,7 +31,7 @@ void __attribute__((section(".text.runtime"))) Scope144_NativeBank(const Scope14
         if(c->valid==1 && Scope144_Valid(c) && bank->battery[i/8]>=2800 && bank->battery[i/8]<=5200) {
             native_windows[i/8][i%8]=c->dac_window;
             native_correction[i/8][i%8][0]=(int8_t)(c->dac_anchor>>16);
-            native_correction[i/8][i%8][1]=c->dac_b_correction;
+            native_correction[i/8][i%8][1]=(int8_t)(c->dac_anchor>>24);
         }
     }
     native_battery[0]=bank->battery[0];native_battery[1]=bank->battery[1];
@@ -74,7 +68,7 @@ static int Position(unsigned range,unsigned ch,int offset,int correction,int ypo
     /* Reference points 25/100 are not hardware stops. Use unsaturated
      * arithmetic to avoid a hidden plateau at DAC 0/200. */
     if(offset<0 || offset>54)offset=0;
-    if(!interlace)correction=NativeCorrection(correction);
+    correction=NativeCorrection(correction);
     if(lo>hi){lo=0;hi=200;}
     effective=ypos<10?10:ypos>190?190:ypos;
     target=NativeRaw(offset,correction,effective);
@@ -86,30 +80,19 @@ static int Position(unsigned range,unsigned ch,int offset,int correction,int ypo
         while(effective<190 && NativeRaw(offset,correction,effective)<lo)++effective;
         while(effective>10 && NativeRaw(offset,correction,effective)>hi)--effective;
     }
-    if(command)*command=(unsigned)CalDac_Command(offset,correction,effective);
+    if(command)*command=(unsigned)CalNative_Command(offset,correction,effective);
     return effective;
 }
 /* Normal uses only its own native correction, never the switched B144 bank. */
 int CalNative_Position(unsigned range,unsigned ch,int offset,int correction,int ypos,unsigned battery,unsigned *command)
 { return Position(range,ch,offset,correction,ypos,battery,command,0); }
-/* Both ADCs sample A. Intersect their attainable logical positions before
- * applying either command, including on the first key after a stop. */
+/* CH_A selects the same offset-controlled A path for both ADCs. */
 int Scope144_Position(unsigned range,int offset,int ypos,unsigned battery,unsigned commands[2])
 {
-    int low=10,high=190,p;unsigned ch;
+    int p;unsigned command;
     if(range>=8 || offset<0 || offset>54)return -1;
-    for(ch=0;ch<2;++ch) {
-        p=Position(range,ch,offset,0,10,battery,0,1);if(p>low)low=p;
-        p=Position(range,ch,offset,0,190,battery,0,1);if(p<high)high=p;
-    }
-    if(low>high) {
-        p=ypos<10?10:ypos>190?190:ypos;
-        if(p>200-offset)p=200-offset;
-        if(commands)commands[0]=commands[1]=(unsigned)(offset+p);
-        return p;
-    }
-    p=ypos<low?low:ypos>high?high:ypos;
-    for(ch=0;ch<2;++ch)Position(range,ch,offset,0,p,battery,commands?commands+ch:0,1);
+    p=Position(range,0,offset,0,ypos,battery,&command,1);
+    if(commands)commands[0]=commands[1]=command;
     return p;
 }
 
@@ -125,7 +108,6 @@ int Scope144_Valid(const Scope144Cal *c)
 {
     return c && (c->valid==1 || c->valid==SCOPE144_NOMINAL) && c->gain_q10>=512 && c->gain_q10<=2048 &&
         c->bias_q10>=-800000 && c->bias_q10<=800000 &&
-        c->dac_b_correction>=-512 && c->dac_b_correction<=1024 && !(c->dac_anchor&0xff000000u) &&
         c->zero_q10>=10*1024 && c->zero_q10<=245*1024 &&
         c->span_q10>=8*1024 && c->span_q10<=235*1024 &&
         c->zero_q10+c->span_q10<=245*1024 &&
@@ -136,11 +118,13 @@ int Scope144_Valid(const Scope144Cal *c)
         c->ref_dac_a_q10>=512 && c->ref_dac_a_q10<=2048 &&
         c->ref_dac_b_q10>=512 && c->ref_dac_b_q10<=2048 &&
         c->adc_offset>=0 && c->adc_offset<=54 &&
-        ((!c->dac_window && !c->dac_anchor) || ((c->dac_window&255u)<((c->dac_window>>8)&255u) &&
-         ((c->dac_window>>16)&255u)<(c->dac_window>>24) && ((c->dac_window>>8)&255u)<=200 &&
-         (c->dac_window>>24)<=200 && (c->dac_anchor&255u)>=(c->dac_window&255u) &&
-         (c->dac_anchor&255u)<=((c->dac_window>>8)&255u) && ((c->dac_anchor>>8)&255u)>=((c->dac_window>>16)&255u) &&
-         ((c->dac_anchor>>8)&255u)<=(c->dac_window>>24))) &&
+        ((!c->dac_window && !c->dac_anchor) || (
+         (c->dac_window&65535u)==(c->dac_window>>16) &&
+         (c->dac_anchor&255u)==((c->dac_anchor>>8)&255u) &&
+         (int8_t)(c->dac_anchor>>16)==(int8_t)(c->dac_anchor>>24) &&
+         (c->dac_window&255u)<((c->dac_window>>8)&255u) && ((c->dac_window>>8)&255u)<=200 &&
+         (c->dac_anchor&255u)>=(c->dac_window&255u) &&
+         (c->dac_anchor&255u)<=((c->dac_window>>8)&255u))) &&
         c->reference_uv>=1000 && c->reference_uv<=60000000 &&
         (int64_t)c->reference_uv*1024<=(int64_t)c->span_q10*800000;
 }
@@ -185,11 +169,8 @@ void Scope144_Relative(const Scope144Cal *c,unsigned range,Interlace144Calibrati
 }
 static void Put(uint8_t *p,uint32_t v) { unsigned i; for(i=0;i<4;++i) p[i]=(uint8_t)(v>>(i*8)); }
 static uint32_t Get(const uint8_t *p) { return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24); }
-typedef char Scope144RecordSize[(sizeof(Scope144Cal)==60 && 40+16*SCOPE144_RECORD_BYTES<=1020)?1:-1];
-/* One development layout, identified by its tag, not a version counter.
- * Header 40 + 16*61 records + 4 zero padding + CRC = 1024 bytes.
- * On disk DIFF B low byte occupies the former high anchor byte; byte 60
- * is its signed high byte. In RAM the anchor high byte stays reserved/zero. */
+typedef char Scope144RecordSize[(sizeof(Scope144Cal)==SCOPE144_RECORD_BYTES)?1:-1];
+/* Explicit little-endian v4; 40-byte header + 16*60-byte records + padding + CRC. */
 int Scope144_Encode(const Scope144Bank *bank,uint32_t serial,uint8_t out[SCOPE144_CAL_BYTES])
 {
     unsigned i,j;const Scope144Cal *c;uint8_t *p;
@@ -200,10 +181,11 @@ int Scope144_Encode(const Scope144Bank *bank,uint32_t serial,uint8_t out[SCOPE14
         if(c->valid>1 || (!c->valid && memcmp(c,&empty,sizeof(*c))) ||
            (c->valid && (!Scope144_Valid(c) || bank->battery[i/8]<2800 || bank->battery[i/8]>5200)))return 0;
     }
-    memset(out,0,SCOPE144_CAL_BYTES);memcpy(out,SCOPE144_CAL_TAG,8);
-    Put(out+8,serial);Put(out+12,SCOPE144_IMAGE_CRC);
+    memset(out,0,SCOPE144_CAL_BYTES);memcpy(out,"I144",4);
+    Put(out+4,SCOPE144_CAL_VERSION);Put(out+8,serial);Put(out+12,SCOPE144_IMAGE_CRC);
     Put(out+16,bank->generation);Put(out+20,SCOPE144_CAL_BYTES);
     Put(out+24,bank->battery[0]);Put(out+28,bank->battery[1]);Put(out+32,bank->native_crc);
+    memcpy(out+36,"DACA",4); /* ADC B offset response is measured against DAC A. */
     for(i=0;i<16;++i) {
         int32_t fields[15];c=i<8?&bank->range[i]:&bank->high[i-8];p=out+40+i*SCOPE144_RECORD_BYTES;
         if(!c->valid)continue;
@@ -211,8 +193,7 @@ int Scope144_Encode(const Scope144Bank *bank,uint32_t serial,uint8_t out[SCOPE14
         fields[4]=c->reference_uv;fields[5]=1;fields[6]=c->a_gain_q10;fields[7]=c->a_bias_q10;
         fields[8]=c->dac_a_q10;fields[9]=c->dac_b_q10;fields[10]=c->adc_offset;
         fields[11]=c->ref_dac_a_q10;fields[12]=c->ref_dac_b_q10;
-        fields[13]=(int32_t)(c->dac_anchor|((uint32_t)(uint8_t)c->dac_b_correction<<24));fields[14]=(int32_t)c->dac_window;
-        p[60]=(uint8_t)((uint16_t)c->dac_b_correction>>8);
+        fields[13]=(int32_t)c->dac_anchor;fields[14]=(int32_t)c->dac_window;
         for(j=0;j<15;++j)Put(p+j*4,(uint32_t)fields[j]);
     }
     Put(out+1020,Scope144_Crc(out,1020));return 1;
@@ -221,8 +202,7 @@ static void DecodeCal(const uint8_t *p,Scope144Cal *c)
 {
     c->gain_q10=(int32_t)Get(p);c->bias_q10=(int32_t)Get(p+4);
     c->zero_q10=(int32_t)Get(p+8);c->span_q10=(int32_t)Get(p+12);
-    c->reference_uv=(int32_t)Get(p+16);c->valid=(uint16_t)Get(p+20);
-    {unsigned v=p[55]|((unsigned)p[60]<<8);c->dac_b_correction=(int16_t)(v<32768?(int)v:(int)v-65536);}
+    c->reference_uv=(int32_t)Get(p+16);c->valid=Get(p+20);
     c->a_gain_q10=(int32_t)Get(p+24);c->a_bias_q10=(int32_t)Get(p+28);
     c->dac_a_q10=(int32_t)Get(p+32);c->dac_b_q10=(int32_t)Get(p+36);c->adc_offset=(int32_t)Get(p+40);
     c->ref_dac_a_q10=(int32_t)Get(p+44);c->ref_dac_b_q10=(int32_t)Get(p+48);
@@ -230,16 +210,15 @@ static void DecodeCal(const uint8_t *p,Scope144Cal *c)
 int Scope144_Decode(const uint8_t in[SCOPE144_CAL_BYTES],uint32_t serial,Scope144Bank *bank)
 {
     unsigned i,stride;Scope144Cal c;
-    if(!in || !bank || memcmp(in,SCOPE144_CAL_TAG,8) || Get(in+8)!=serial ||
-        Get(in+12)!=SCOPE144_IMAGE_CRC || Get(in+20)!=SCOPE144_CAL_BYTES ||
+    if(!in || !bank || memcmp(in,"I144",4) || Get(in+4)!=SCOPE144_CAL_VERSION || Get(in+8)!=serial ||
+        Get(in+12)!=SCOPE144_IMAGE_CRC || Get(in+20)!=SCOPE144_CAL_BYTES || memcmp(in+36,"DACA",4) ||
         Get(in+1020)!=Scope144_Crc(in,1020))return 0;
     stride=SCOPE144_RECORD_BYTES;
-    for(i=36;i<40;++i)if(in[i])return 0;
     for(i=40+16*stride;i<1020;++i)if(in[i])return 0;
     for(i=0;i<16;++i) {
         const uint8_t *p=in+40+i*stride;unsigned j;DecodeCal(p,&c);
-        c.dac_anchor=Get(p+52)&0x00ffffffu;c.dac_window=Get(p+56);
-        if(Get(p+20)>1 || (c.valid && (!Scope144_Valid(&c) || Get(in+24+(i/8)*4)<2800 || Get(in+24+(i/8)*4)>5200)))return 0;
+        c.dac_anchor=Get(p+52);c.dac_window=Get(p+56);
+        if(c.valid>1 || (c.valid && (!Scope144_Valid(&c) || Get(in+24+(i/8)*4)<2800 || Get(in+24+(i/8)*4)>5200)))return 0;
         if(!c.valid)for(j=0;j<stride;++j)if(p[j])return 0;
     }
     memset(bank,0,sizeof(*bank));bank->generation=Get(in+16);
@@ -247,7 +226,7 @@ int Scope144_Decode(const uint8_t in[SCOPE144_CAL_BYTES],uint32_t serial,Scope14
     for(i=0;i<16;++i) {
         Scope144Cal *out=i<8?&bank->range[i]:&bank->high[i-8];
         const uint8_t *p=in+40+i*stride;DecodeCal(p,out);
-        out->dac_anchor=Get(p+52)&0x00ffffffu;out->dac_window=Get(p+56);
+        out->dac_anchor=Get(p+52);out->dac_window=Get(p+56);
     }
     return 1;
 }
@@ -257,22 +236,19 @@ static int32_t Blend(int32_t a,int32_t b,uint32_t weight)
 { return a+(int32_t)(((int64_t)b-a)*weight/65536); }
 static int Rebase(const Scope144Cal *c,int offset,int ypos,Scope144Cal *out,unsigned commands[2],const unsigned fixed[2])
 {
-    int delta=offset-c->adc_offset,db=delta;unsigned ch,anchors=0;*out=*c;
-    for(ch=0;ch<2;++ch) {
-        int command=offset+40,anchor=c->adc_offset+40;
-        if(c->dac_window) {
-            int k=ch?c->dac_b_correction:(int8_t)(c->dac_anchor>>16);
-            int64_t d=(int64_t)(1024+k)*(ypos-40);
-            command+=RoundRatio(d,1024);anchor=(c->dac_anchor>>(ch*8))&255u;
-        } else if(command<40 || command>94)return 0;
-        if(fixed)command=(int)fixed[ch];
-        if(!c->dac_window && (command<40 || command>94))return 0;
-        anchors|=(unsigned)command<<(ch*8);
-        if(c->dac_window && (command<(int)((c->dac_window>>(ch*16))&255u) || command>(int)((c->dac_window>>(ch*16+8))&255u)))return 0;
-        if(commands)commands[ch]=(unsigned)command;
-        if(ch)db=command-anchor;else delta=command-anchor;
+    int delta,db,command=offset+40,anchor=c->adc_offset+40;*out=*c;
+    if(c->dac_window) {
+        int k=(int8_t)(c->dac_anchor>>16);
+        command+=RoundRatio((int64_t)(1024+k)*(ypos-40),1024);
+        anchor=c->dac_anchor&255u;
     }
-    if(c->dac_window)out->dac_anchor=(c->dac_anchor&0xffff0000u)|anchors;
+    if(fixed)command=(int)fixed[0];
+    if(command<0 || command>200)return 0;
+    if(!c->dac_window && (command<40 || command>94))return 0;
+    if(c->dac_window && (command<(int)(c->dac_window&255u) || command>(int)((c->dac_window>>8)&255u)))return 0;
+    if(commands)commands[0]=commands[1]=(unsigned)command;
+    delta=db=command-anchor; /* Both measured ADC responses share this drive. */
+    if(c->dac_window)out->dac_anchor=(c->dac_anchor&0xffff0000u)|(unsigned)command|((unsigned)command<<8);
     if(!delta && !db)return 1; /* Preserve the measured anchor exactly. */
     if(c->ref_dac_a_q10==c->dac_a_q10 && c->ref_dac_b_q10==c->dac_b_q10) {
         /* Preserve the previous rounding when the two responses coincide. */
@@ -311,8 +287,8 @@ static int Select(const Scope144Bank *bank,unsigned range,int offset,uint32_t ba
             lo<hi?(battery<=lo?0:battery>=hi?65536:(battery-lo)*65536/(hi-lo)):
             (battery<=hi?65536:battery>=lo?0:(lo-battery)*65536/(lo-hi));
         for(ch=0;ch<2;++ch) {
-            int ka=ch?bank->range[range].dac_b_correction:(int8_t)(bank->range[range].dac_anchor>>16);
-            int kb=ch?bank->high[range].dac_b_correction:(int8_t)(bank->high[range].dac_anchor>>16);
+            int ka=(int8_t)(bank->range[range].dac_anchor>>(16+ch*8));
+            int kb=(int8_t)(bank->high[range].dac_anchor>>(16+ch*8));
             int k=!va?kb:!vb?ka:lo<=hi?CalNative_Interpolate(ka,kb,lo,hi,battery):CalNative_Interpolate(kb,ka,hi,lo,battery),command=offset+40;
             if((va && bank->range[range].dac_window) || (vb && bank->high[range].dac_window))
                 command+=RoundRatio((int64_t)(1024+k)*(ypos-40),1024);
@@ -357,8 +333,8 @@ static int Select(const Scope144Bank *bank,unsigned range,int offset,uint32_t ba
     }
     if(out->dac_window) {
         int ka=(int8_t)(a.dac_anchor>>16)+RoundRatio((int64_t)((int8_t)(b.dac_anchor>>16)-(int8_t)(a.dac_anchor>>16))*weight,65536);
-        out->dac_b_correction=(int16_t)(a.dac_b_correction+RoundRatio((int64_t)(b.dac_b_correction-a.dac_b_correction)*weight,65536));
-        out->dac_anchor=(out->dac_anchor&65535u)|((uint32_t)(uint8_t)ka<<16);
+        int kb=(int8_t)(a.dac_anchor>>24)+RoundRatio((int64_t)((int8_t)(b.dac_anchor>>24)-(int8_t)(a.dac_anchor>>24))*weight,65536);
+        out->dac_anchor=(out->dac_anchor&65535u)|((uint32_t)(uint8_t)ka<<16)|((uint32_t)(uint8_t)kb<<24);
     }
     out->dac_a_q10=Blend(a.dac_a_q10,b.dac_a_q10,weight);out->dac_b_q10=Blend(a.dac_b_q10,b.dac_b_q10,weight);
     out->ref_dac_a_q10=Blend(a.ref_dac_a_q10,b.ref_dac_a_q10,weight);

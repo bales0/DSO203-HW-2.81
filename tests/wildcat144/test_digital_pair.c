@@ -22,7 +22,7 @@ int main(void)
 {
     static const unsigned counts[]={1,2,3,7,16,64,513,4094};
     static const int shifts[]={-2097153,-2097152,-2097151,-131073,-131072,-65537,-1,0,1,65535,65536,131071,131072,2097151,2097152,2097153,INT_MIN,INT_MAX};
-    Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};
+    Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,1024,0,1024,1024,54,1024,1024,0,0};
     Frame144 f;unsigned n,kind,i,k,phase;uint32_t random=17;
     Frame144_Reset(&f,1);f.words=words;f.range=0;f.calibration=cal;
     f.capture.fifo_words=4096;f.capture.valid_begin=2;f.capture.status=CAPTURE_WINDOW_READY;

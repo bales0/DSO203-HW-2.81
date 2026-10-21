@@ -81,7 +81,7 @@ static void Geometry(void)
 {
     static const unsigned slots[]={295,293,306,304};
     static const int shifts[]={-32*65536,-1,0,12*65536,32*65536};
-    Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,0,1024,0,1024,1024,54,1024,1024,0,0};
+    Scope144Cal cal={1024,0,55*1024,125*1024,1000000,1,1024,0,1024,1024,54,1024,1024,0,0};
     Frame144 f;ViewWindowGeometry v,before;unsigned w,base,t,sh,phase,col;
     Frame144_Reset(&f,1);f.words=(const uint32_t *)DataBuf;f.calibration=cal;
     f.capture.fifo_words=4096;f.capture.valid_begin=2;f.capture.valid_words=4094;

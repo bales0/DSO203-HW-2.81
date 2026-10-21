@@ -30,6 +30,11 @@ static unsigned offset_errors,clock_panels,highlight_ppm;
 static int capture_status,flat_b;
 static unsigned dac_fault,dac_94_count,dac_lines,dac_live,dac_record;
 static unsigned diagnostic_lines,progress_lines,save_lines;
+static unsigned fit_limit_fault,fit_limit_records;
+static CalMean fit_limit_points[4];
+static unsigned probe_on,probe_active,probe_runs,probe_reads,probe_up,probe_down,probe_restores,probe_statuses;
+static unsigned probe_fail_at,probe_bad_mean,probe_restore[2];static int probe_fail_code;
+static CalMean probe_source[4];
 static unsigned preview_calls,preview_rendering,preview_bad_rows,preview_cells,clip_reference,clip_lines;
 static unsigned preview_case,preview_dashes,preview_smoothed,preview_retry,clip_progress;
 static Scope144Bank stored;
@@ -49,20 +54,34 @@ u32 __Get(u8 object)
     if(object==KEY_STATUS) {
         preview_rendering=0;++polls;CHECK(polls<10000);Twink^=1;Blink=BLINK;
         if(pos<nscript){Key_Buffer=(u8)script[pos].key;
-            if(preview_case==5 && captures==8u*24u+1u && Key_Buffer==KEY2)preview_retry=1;
+            if(preview_case==5 && captures==8u*20u+1u && Key_Buffer==KEY2)preview_retry=1;
             return 0xffffu^script[pos++].pressed;}
         return 0xffff;
     }
     return 0;
 }
-void __Set(u8 object,u32 value){(void)object;(void)value;}
-void __Clear_Screen(u16 color){(void)color;}
+void __Set(u8 object,u32 value){
+    if(probe_active && object<=CH_B_OFFSET){probe_restore[object]=value;++probe_restores;}
+}
+void __Clear_Screen(u16 color){(void)color;probe_active=0;}
 void __Point_SCR(u16 x,u16 y){CHECK(x<400 && y<240);}
 void __LCD_SetPixl(u16 color){(void)color;++table_pixels;}
 void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
 {
     if(y==222)snprintf(last_row,sizeof last_row,"%s",s);
     CHECK(x+1+8*strlen(s)<400 && y+14<=240);(void)color;(void)mode;
+    if(strstr(s,"144 DAC REPEAT")) {
+        CHECK(probe_on);probe_active=1;++probe_runs;memcpy(probe_source,fit_limit_points,sizeof probe_source);
+    }
+    if(probe_active && (x==96 || x==208) && y<=138 && y>=78 && (138-y)%20==0 && strncmp(s,"--",2)) {
+        unsigned k=(138-y)/20;int32_t raw=CalNative_Command(40,0,25)*1024+15*1024+(x==208?16:0);
+        CHECK(strtol(s,0,10)==raw*1000/1024);
+        if(x==96)probe_up|=1u<<k;else probe_down|=1u<<k;
+    }
+    if(probe_active && y==54 && strstr(s,"Capture status (1=OK):")) {
+        int expected=probe_fail_at?(probe_bad_mean?CAL_CAPTURE_CLIPPED:probe_fail_code):1;
+        CHECK(strtol(strchr(s,':')+1,0,10)==expected);++probe_statuses;
+    }
     if(preview_retry && x==134 && y==166)CHECK(!strncmp(s,"--",2));
     if(preview_rendering) {
         if(y>=208 || y==6)++preview_bad_rows;
@@ -98,7 +117,7 @@ void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
     if(strstr(s,"Zero C94 A/B: 104000/107000"))dac_lines|=256;
     if(strstr(s,"144 ZERO R3/8 ADC A: POINT ERROR"))dac_lines|=512;
     if(strstr(s,"Raw/expected (mADC): 50000/51195"))dac_lines|=1024;
-    if(strstr(s,"144 ZERO R3/8 ADC B: RETURN ERROR") || strstr(s,"144 B Offset R3"))dac_lines|=2048;
+    if(strstr(s,"144 ZERO R3/8 ADC B: RETURN ERROR") || strstr(s,"144 stability R3"))dac_lines|=2048;
     if(strstr(s,"Raw/expected (mADC): 110000/107000"))dac_lines|=4096;
     if(strstr(s,"144 REF R3/8 ADC B: POINT ERROR"))dac_lines|=8192;
     if(strstr(s,"Raw/expected (mADC): 155101/152632"))dac_lines|=16384;
@@ -131,13 +150,24 @@ int WildcatCalibration_Capture(unsigned r,unsigned path,unsigned a,unsigned b,Ca
 {
     int64_t signal=positive?(int64_t)applied_reference*1024/scales[r]:0;
     CHECK(r<8 && a<=200 && b<=200);CHECK(TIM2->DIER==0 && TIM4->DIER==0);++captures;
+    if(probe_active) {
+        unsigned n=probe_reads++%8,k=n<4?n:7-n;
+        CHECK(r==0 && path==1 && a==(unsigned)CalNative_Command(40,0,25));
+        CHECK(b==(unsigned)probe_source[k].a && Ka1[0]==4 && Kb1[0]==6 && Ka3[0]==8 && Kb3[0]==9);
+        m->a=(int32_t)(a+5)*1024;m->b=(int32_t)a*1024+15*1024+(n>=4?16:0);m->clips=0;
+        if(probe_reads==probe_fail_at){
+            if(probe_bad_mean){if(probe_bad_mean==1)m->clips=1;else m->b=9*1024;return 1;}
+            return probe_fail_code;
+        }
+        return 1;
+    }
     if(captures==fail_capture)return 0;
     if(capture_status){m->a=99*1024;m->b=101*1024;m->clips=0;
         if(capture_status==CAL_CAPTURE_CLIPPED){m->a=168760;m->b=167072;m->clips=5;}
         return capture_status;}
     if(path)CHECK(interlace);
     m->a=((int32_t)a+5)*1024+(int32_t)signal;
-    m->b=((int32_t)b+(path?13:7))*1024+(int32_t)(signal*(path?1024:1100)/1024);
+    m->b=((int32_t)(path?a:b)+(path?8:7))*1024+(int32_t)(signal*(path?1024:1100)/1024);
     if(path && r==2) {
         ++dac_record;if(!positive && a==79)++dac_94_count;
         if(dac_fault==1 && !positive)m->b=100*1024;
@@ -145,6 +175,11 @@ int WildcatCalibration_Capture(unsigned r,unsigned path,unsigned a,unsigned b,Ca
         if(dac_fault==3 && !positive && a==79)m->a+=6*1024;
         if(dac_fault==4 && !positive && dac_record>4)m->b+=((dac_record-5)/4)%2?-1536:1536;
         if(dac_fault==5 && positive && a==79)m->b+=6*1024;
+    }
+    if(fit_limit_fault && path && !r && !positive) {
+        unsigned n=fit_limit_records++;
+        m->b=(int32_t)(a+8)*1024+((n%4==1 || n%4==2)?6*1024:0);
+        fit_limit_points[n%4].a=(int32_t)b;fit_limit_points[n%4].b=m->b;fit_limit_points[n%4].clips=a;
     }
     if(unstable_offset && !path && !positive && captures>4) {
         int shift=((captures-5)/4)%2?-1536:1536;m->a+=shift;m->b+=shift;
@@ -172,6 +207,7 @@ void WildcatCalibration_Diagnostics(CalCaptureStats *stats)
     memset(stats,0,sizeof(*stats));stats->records=25;stats->blocks=3;stats->window=3;
     stats->elapsed_ms=450;stats->block_ms=21;
     if(capture_status==CAL_CAPTURE_UNSTABLE){stats->elapsed_ms=2000;stats->spread_a=2048;stats->spread_b=4096;}
+    if(fit_limit_fault)stats->spread_b=24; /* Q10 -> displayed 23 mADC. */
     if(capture_status==CAL_CAPTURE_CLIPPED) {
         stats->records=276;stats->blocks=34;stats->window=0;stats->elapsed_ms=2001;stats->block_ms=43;
         stats->clips_a=5;stats->clips_b=0;stats->min_a=0;stats->max_a=166;stats->min_b=162;stats->max_b=164;
@@ -184,6 +220,9 @@ static void Init(int with144)
     unsigned i;polls=nscript=pos=captures=writes=failed_save=fail_capture=reference_lines=clock_enables=0;
     table_pixels=headings=dc_errors=offset_errors=clock_panels=highlight_ppm=diagnostic_lines=progress_lines=save_lines=0;fail_dc=unstable_offset=capture_status=flat_b=0;
     dac_fault=dac_94_count=dac_lines=dac_live=dac_record=0;
+    fit_limit_fault=fit_limit_records=0;memset(fit_limit_points,0,sizeof fit_limit_points);
+    probe_on=probe_active=probe_runs=probe_reads=probe_up=probe_down=probe_restores=probe_statuses=0;
+    probe_fail_at=probe_bad_mean=0;probe_fail_code=0;memset(probe_source,0,sizeof probe_source);
     preview_calls=preview_rendering=preview_bad_rows=preview_cells=clip_reference=clip_lines=0;
     preview_case=preview_dashes=preview_smoothed=preview_retry=clip_progress=0;
     memset(&stored,0,sizeof(stored));positive=0;applied_reference=0;interlace=with144;
@@ -217,12 +256,12 @@ int main(void)
     CHECK(DataBuf[0]==0x12345678 && !captures && !writes && last_ui_status==UI_FILE_BUSY);
     CHECK(TIM2->DIER==3 && TIM4->DIER==5 && _Kind==3);uart_owner=0;
     Init(1);Full(KEY2);Calibrat(TRACK1);
-    CHECK(captures==8u*(24u+15u) && writes==1 && reference_lines==8);CHECK(progress_lines==captures && save_lines==1);CHECK(table_pixels>4000 && headings==2);CHECK(clock_enables==1 && clock_panels==1 && highlight_ppm==1);
+    CHECK(captures==8u*(20u+15u) && writes==1 && reference_lines==8);CHECK(progress_lines==captures && save_lines==1);CHECK(table_pixels>4000 && headings==2);CHECK(clock_enables==1 && clock_panels==1 && highlight_ppm==1);
     CHECK(LoBatLevel[0]==3700 && LoBatLevel[1]==3700 && HiBatLevel[0]==4300);
     for(i=0;i<8;++i){CHECK(LKa1[i]==-5 && LKb1[i]==-7);CHECK(HKa1[i]==21 && HKb1[i]==22);CHECK(Scope144_Valid(&stored.range[i]));}
     CleanupChecks();
     Init(1);Full(KEY3);Calibrat(TRACK2);
-    CHECK(captures==8u*(24u+15u) && writes==1);CHECK(HiBatLevel[0]==3700 && LoBatLevel[0]==3200);
+    CHECK(captures==8u*(20u+15u) && writes==1);CHECK(HiBatLevel[0]==3700 && LoBatLevel[0]==3200);
     CHECK(HKa1[0]==-5 && LKa1[0]==11);CleanupChecks();
     Init(0);Full(KEY2);Calibrat(TRACK1);CHECK(captures==136 && writes==1);CleanupChecks();
     /* A held confirmation and its queued release must not confirm next stage. */
@@ -233,9 +272,9 @@ int main(void)
     CHECK(PPM_Comp==17 && writes==0);CleanupChecks();
     /* Cancel after all measurements: no writes and no RAM coefficients applied. */
     Init(1);Full(KEY4);Calibrat(TRACK2);
-    CHECK(captures==8u*(24u+15u) && writes==0 && Ka1[0]==4 && Ka2[0]==1177);CleanupChecks();
+    CHECK(captures==8u*(20u+15u) && writes==0 && Ka1[0]==4 && Ka2[0]==1177);CleanupChecks();
     Init(1);Full(KEY1);Press(KEY4);Calibrat(TRACK1);
-    CHECK(captures==8u*(24u+15u) && writes==0 && Ka1[0]==4);CleanupChecks();
+    CHECK(captures==8u*(20u+15u) && writes==0 && Ka1[0]==4);CleanupChecks();
     Init(1);Full(KEY2);failed_save=1;Press(KEY4);Calibrat(TRACK1);
     CHECK(writes==1 && Ka1[0]==4 && Ka2[0]==1177 && LoBatLevel[0]==3200 && PPM_Comp==17);CleanupChecks();
     Init(1);Full(KEY2);failed_save=1;Press(KEY2);Press(KEY3);Calibrat(TRACK1);
@@ -246,7 +285,7 @@ int main(void)
     Init(1);Press(KEY2);Press(KEY2);
     for(i=0;i<300;++i)Push(0,0);
     Press(KEY2);Press(KEY4);fail_dc=1;Calibrat(TRACK1);
-    CHECK(captures==8u*24u+1u && !writes && dc_errors==1 && reference_lines==1);
+    CHECK(captures==8u*20u+1u && !writes && dc_errors==1 && reference_lines==1);
     CHECK(preview_calls>=1 && !preview_bad_rows && preview_cells==2);CleanupChecks();
     /* Brief invalid previews retain the good value; persistent invalid data
      * expires, and a real input change is smoothed only for the display. */
@@ -254,20 +293,20 @@ int main(void)
         unsigned j;Init(1);preview_case=i;Press(KEY2);Press(KEY2);
         for(j=0;j<800;++j)Push(0,0);
         Press(KEY4);Calibrat(TRACK1);
-        CHECK(preview_calls>2 && !preview_bad_rows && !writes && captures==8u*24u);
+        CHECK(preview_calls>2 && !preview_bad_rows && !writes && captures==8u*20u);
         if(i==1)CHECK(!preview_dashes && preview_cells==2);
         if(i==2 || i==4)CHECK(preview_dashes==2);
         if(i==3)CHECK(preview_smoothed && !preview_dashes);
         CleanupChecks();
     }
     /* Retry after a failed K2 must not resurrect the old valid preview. */
-    Init(1);preview_case=5;fail_capture=8u*24u+1u;Press(KEY2);Press(KEY2);
+    Init(1);preview_case=5;fail_capture=8u*20u+1u;Press(KEY2);Press(KEY2);
     for(i=0;i<400;++i)Push(0,0);
     Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
-    CHECK(preview_retry && reference_lines==2 && captures==8u*24u+1u && !writes);CleanupChecks();
+    CHECK(preview_retry && reference_lines==2 && captures==8u*20u+1u && !writes);CleanupChecks();
     /* Original right toggle selects a range; it never confirms or saves. */
     Init(1);Press(KEY2);Press(KEY2);Press(K_ITEM_INC);Press(K_ITEM_DEC);Press(KEY4);Calibrat(TRACK1);
-    CHECK(captures==8u*24u && writes==0 && reference_lines==3);CleanupChecks();
+    CHECK(captures==8u*20u && writes==0 && reference_lines==3);CleanupChecks();
     Init(1);unstable_offset=1;Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
     CHECK(offset_errors==1 && captures==4+4*CAL_OFFSET_ATTEMPTS && writes==0);
     CHECK(Ka1[0]==4 && Ka2[0]==1177);CleanupChecks();
@@ -292,9 +331,9 @@ int main(void)
     Init(1);Press(KEY2);Press(KEY2);
     for(i=0;i<300;++i)Push(0,0);
     Press(K_INDEX_INC);Press(K_INDEX_INC);Press(K_INDEX_DEC);Press(KEY4);Calibrat(TRACK1);
-    CHECK(preview_calls>=1 && !preview_bad_rows && !writes && captures==8u*24u);CleanupChecks();
+    CHECK(preview_calls>=1 && !preview_bad_rows && !writes && captures==8u*20u);CleanupChecks();
     Init(1);clip_reference=1;Press(KEY2);Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
-    CHECK(clip_lines==127 && clip_progress && !writes && captures==8u*24u+1u);CleanupChecks();
+    CHECK(clip_lines==127 && clip_progress && !writes && captures==8u*20u+1u);CleanupChecks();
     /* Report the actual failing phase at the user's third range, without
      * leaving the wizard. Test B slope, both ADCs, return and reference. */
     for(i=1;i<=5;++i) {
@@ -311,11 +350,11 @@ int main(void)
     {
         Scope144Bank b={0};Scope144Cal c;unsigned old;
         Init(1);CalibrateMode=0;CHECK(Scope144_CalibrateMeans(80*1024,88*1024,155*1024,160*1024,1000000,&c));
-        c.adc_offset=54;c.dac_anchor=79u|(78u<<8);c.dac_window=64u|(157u<<8)|(62u<<16)|(161u<<24);
+        c.adc_offset=54;c.dac_anchor=79u|(79u<<8);c.dac_window=64u|(157u<<8)|(64u<<16)|(157u<<24);
         b.range[0]=c;b.battery[0]=3200;Scope144_NativeBank(&b);
         LKa1[0]=-5;LKa2[0]=1024;LKa3[0]=0;HKa1[0]=-15;HKa2[0]=1536;HKa3[0]=64;
         Test_NormalBattery();CHECK(Ka1[0]==-5 && Ka2[0]==1024 && Ka3[0]==0);
-        b.high[0]=c;b.high[0].dac_anchor=78u|(78u<<8)|(64u<<16);b.high[0].dac_b_correction=64;b.battery[1]=4300;
+        b.high[0]=c;b.high[0].dac_anchor=78u|(78u<<8)|(64u<<16)|(64u<<24);b.battery[1]=4300;
         Scope144_NativeBank(&b);Test_NormalBattery();CHECK(Ka1[0]==-10 && Ka2[0]==1257 && Ka3[0]==29);
         _State.Value=RUN;_1_posi=190;normal_writes=0;Test_NormalSetOffset(0,0,190);
         CHECK(normal_writes==1 && normal_commands[0]<=200 && normal_commands[0]>157 && _1_posi<190);
@@ -344,6 +383,43 @@ int main(void)
             old=normal_writes;_State.Value=HOLD;Test_NormalSetOffset((u8)ch,(u8)r,10);
             CHECK(normal_writes==old);
         }
+    }
+    /* A non-linear shared-A response still reports a real model error. */
+    Init(1);ADCoffset=40;fit_limit_fault=1;Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
+    CHECK(fit_limit_records==4 && !writes && Ka1[0]==4 && Kb1[0]==6);CleanupChecks();
+    /* K3 is an explicitly non-saving error-screen probe. Verify both sweep
+     * directions, a fixed A, exact rendering, repeat/held key and all faults. */
+    {
+        unsigned mode,at,repeats,k;static const int failures[]={-1,0,CAL_CAPTURE_UNSTABLE,CAL_CAPTURE_CLIPPED,1,1};
+        for(mode=0;mode<3;++mode) {
+            Init(1);ADCoffset=40;fit_limit_fault=1;probe_on=1;Press(KEY2);Press(KEY2);
+            if(mode==1){Push(KEY3,KEY3_STATUS);for(k=0;k<20;++k)Push(KEY3,KEY3_STATUS);Push(0,0);}
+            else {Press(KEY3);if(mode==2)Press(KEY3);}
+            Press(KEY4);Calibrat(TRACK1);repeats=mode==2?2u:1u;
+            CHECK(probe_runs==repeats && probe_reads==8*repeats && probe_statuses==repeats);
+            CHECK(probe_up==15 && probe_down==15 && probe_restores==2*repeats);
+            CHECK(probe_restore[0]==probe_source[3].clips && probe_restore[1]==(unsigned)probe_source[3].a);
+            CHECK(!writes && fit_limit_records==4 && Ka1[0]==4 && Kb1[0]==6 && Ka3[0]==8 && Kb3[0]==9);
+            CleanupChecks();
+        }
+        for(mode=0;mode<6;++mode)for(at=1;at<=8;++at) {
+            Init(1);ADCoffset=40;fit_limit_fault=1;probe_on=1;
+            probe_fail_at=at;probe_fail_code=failures[mode];probe_bad_mean=mode<4?0:mode-3;
+            Press(KEY2);Press(KEY2);Press(KEY3);Press(KEY4);Calibrat(TRACK1);
+            CHECK(probe_runs==1 && probe_reads==at && probe_statuses==1 && !writes);
+            CHECK(probe_restores==2 && probe_restore[0]==probe_source[3].clips && probe_restore[1]==(unsigned)probe_source[3].a);
+            CHECK(probe_up==(at<=4?(1u<<(at-1))-1:15u));
+            CHECK(probe_down==(at<=5?0u:15u&~((1u<<(9-at))-1)));
+            CHECK(Ka1[0]==4 && Kb1[0]==6 && Ka3[0]==8 && Kb3[0]==9);CleanupChecks();
+        }
+        /* Ordinary K2 retry still returns to GROUND; K3 never turns into SAVE. */
+        Init(1);ADCoffset=40;fit_limit_fault=1;probe_on=1;
+        Press(KEY2);Press(KEY2);Press(KEY3);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
+        CHECK(probe_reads==8 && !writes && !strcmp(last_row," CAL A+B: disconnect signal; ground A+B         "));CleanupChecks();
+        Init(0);flat_b=1;probe_on=1;Press(KEY2);Press(KEY2);Press(KEY3);Press(KEY4);Calibrat(TRACK1);
+        CHECK(!probe_runs && !probe_reads && !writes);CleanupChecks();
+        Init(1);fail_capture=1;probe_on=1;Press(KEY2);Press(KEY2);Press(KEY3);Press(KEY4);Calibrat(TRACK1);
+        CHECK(!probe_runs && !probe_reads && !writes);CleanupChecks();
     }
     printf("PASS calibration UI: %u checks; actual Calibrat, held keys, all references, battery/charger, rollback, cancel, blinking\n",checks);
     return 0;

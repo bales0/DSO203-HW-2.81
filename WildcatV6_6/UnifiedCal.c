@@ -68,37 +68,28 @@ static int CheckDac(UnifiedCal *s,const CalMean *actual,int32_t a,int32_t b,CalS
     }
     return 1;
 }
-static int __attribute__((section(".text.calibration"))) DacPoints(int adc_offset,const int32_t zero[2],const int32_t correction[2],unsigned reference_steps,uint16_t ypos[4],unsigned low_limit)
+int __attribute__((section(".text.calibration"))) CalNative_Points(int adc_offset,const int8_t zero[2],const int8_t correction[2],unsigned reference_steps,uint16_t ypos[4])
 {
     int low=10,high=190,ch;
     if(!Scope144_Command(adc_offset) || reference_steps>235)return 0;
     for(ch=0;ch<2;++ch) {
         int y;
-        if(zero[ch]<-255 || zero[ch]>255 || correction[ch]<-512 || correction[ch]>1024)return 0;
-        while(low<25 && (adc_offset+low-zero[ch]<12 || CalDac_Command(adc_offset,correction[ch],low)<2))++low;
+        while(low<25 && (adc_offset+low-zero[ch]<12 || CalNative_Command(adc_offset,correction[ch],low)<2))++low;
         y=239-adc_offset+zero[ch]-(int)reference_steps;
         if(y<high)high=y;
-        while(high>100 && CalDac_Command(adc_offset,correction[ch],high)>=200)--high;
+        while(high>100 && CalNative_Command(adc_offset,correction[ch],high)>=200)--high;
     }
-    if(low>(int)low_limit || high<102 || high>190)return 0;
+    if(low>17 || high<102 || high>190)return 0;
     ypos[0]=(uint16_t)low;ypos[1]=25;ypos[2]=100;ypos[3]=(uint16_t)high;
     for(ch=0;ch<2;++ch) {
         unsigned k,previous=0;
         for(k=0;k<4;++k) {
-            unsigned command=CalDac_Command(adc_offset,correction[ch],ypos[k]);
+            unsigned command=CalNative_Command(adc_offset,correction[ch],ypos[k]);
             if(command>200 || (k && command<previous+2))return 0;
             previous=command;
         }
     }
     return 1;
-}
-int CalDac_Points(int adc_offset,const int32_t zero[2],const int32_t correction[2],unsigned steps,uint16_t ypos[4])
-{ return DacPoints(adc_offset,zero,correction,steps,ypos,23); }
-/* Preserve Normal's public signed-byte interface and exact point selection. */
-int CalNative_Points(int adc_offset,const int8_t zero[2],const int8_t correction[2],unsigned reference_steps,uint16_t ypos[4])
-{
-    int32_t z[2]={zero[0],zero[1]},c[2]={correction[0],correction[1]};
-    return DacPoints(adc_offset,z,c,reference_steps,ypos,17);
 }
 /* One line, actual commands as X; 64-bit sums and signed rounding. */
 static int FitDacCurve(UnifiedCal *s,const CalMean points[4],const unsigned commands[4][2],
@@ -108,8 +99,9 @@ static int FitDacCurve(UnifiedCal *s,const CalMean points[4],const unsigned comm
     for(ch=0;ch<2;++ch) {
         int64_t sx=0,sy=0,sxx=0,sxy=0,den;
         for(k=0;k<4;++k) {
-            int32_t x=commands[k][ch],y=ch?points[k].b:points[k].a;
-            if(x>200 || (k && x<(int32_t)commands[k-1][ch]+2))goto bad;
+            unsigned drive=s->capture_path?0:ch;
+            int32_t x=commands[k][drive],y=ch?points[k].b:points[k].a;
+            if(x>200 || (k && x<(int32_t)commands[k-1][drive]+2))goto bad;
             sx+=x;sy+=y;sxx+=(int64_t)x*x;sxy+=(int64_t)x*y;
         }
         den=4*sxx-sx*sx;if(den<=0)goto bad;
@@ -121,29 +113,21 @@ static int FitDacCurve(UnifiedCal *s,const CalMean points[4],const unsigned comm
 bad:
     s->failed_channel=ch;s->dac_diagnostic.reason=CAL_DAC_SLOPE;Fail(s,retry,13);return 0;
 }
-/* Path-specific state: Normal A is shared; the switched B chain is not. */
-static int Correction(UnifiedCal *s,unsigned path,unsigned ch)
-{ return path && ch?s->native144_b.offset[s->range]:s->native[ch].offset[s->range]; }
+/* In CH_A routing both ADCs see the offset applied by DAC A. DAC B
+ * does not independently position B144; it must never drive a fitted DIFF. */
 static uint16_t *Positions(UnifiedCal *s,unsigned path)
 { return path?s->working144_y[s->range]:s->working_y[s->range]; }
+/* Normal keeps independent corrections; CH_A uses A for both readings. */
+static void PointCommands(int adc_offset,const uint16_t y[4],const int8_t offset[2],unsigned commands[4][2])
+{
+    unsigned k,ch;
+    for(k=0;k<4;++k)for(ch=0;ch<2;++ch)
+        commands[k][ch]=CalNative_Command(adc_offset,offset[ch],y[k]);
+}
 static void Commands(UnifiedCal *s,unsigned path,unsigned commands[4][2])
 {
-    unsigned k;int a=s->native[0].offset[s->range],b=Correction(s,path,1);
-    const uint16_t *y=Positions(s,path);
-    for(k=0;k<4;++k) {
-        commands[k][0]=CalNative_Command(s->adc_offset,a,y[k]);
-        commands[k][1]=CalDac_Command(s->adc_offset,b,y[k]);
-    }
-}
-/* Evaluate the whole switched-path curve before choosing its worst point. */
-static unsigned WorstPoint(const CalMean points[4],const unsigned commands[4][2],const int32_t slope[2],const int32_t intercept[2])
-{
-    unsigned k,ch,worst=0;int32_t maximum=-1;
-    for(k=0;k<4;++k)for(ch=0;ch<2;++ch) {
-        int32_t error=Magnitude((ch?points[k].b:points[k].a)-intercept[ch]-(int32_t)commands[k][ch]*slope[ch]);
-        if(error>maximum){maximum=error;worst=k;}
-    }
-    return worst;
+    int8_t offset[2]={s->native[0].offset[s->range],s->native[path?0:1].offset[s->range]};
+    PointCommands(s->adc_offset,Positions(s,path),offset,commands);
 }
 static __attribute__((noinline)) void DacPoint(UnifiedCal *s,const CalMean points[4],const unsigned commands[4][2],unsigned k)
 {
@@ -158,106 +142,117 @@ static int Curve(UnifiedCal *s,const CalOps *ops,unsigned path,CalStage retry,
         s->dac_diagnostic.step=k==0?CAL_DAC_LOW:k==3?CAL_DAC_HIGH:CAL_DAC_FIT;
         if(!Capture(s,ops,path,commands[k][0],commands[k][1],&points[k],retry))return 0;
         s->ref144_stats[k]=s->capture_stats;
+        if(path && retry==CAL_GROUND) {
+            s->ref144_verify[k]=points[k];s->ref144_verify[k].a=(int32_t)commands[k][1];
+            s->ref144_verify[k].clips=commands[k][0];
+        }
+    }
+    if(path && retry==CAL_GROUND) {
+        s->dac144_low[s->range]=points[0];s->dac144_high[s->range]=points[3];
     }
     if(!FitDacCurve(s,points,commands,slope,intercept,retry))return 0;
-    for(k=path?WorstPoint(points,commands,slope,intercept):0;k<4;++k) {
+    for(k=0;k<4;++k) {
         s->dac_diagnostic.step=CAL_DAC_POINT;
         DacPoint(s,points,commands,k);
         if(!CheckDac(s,&points[k],intercept[0]+commands[k][0]*slope[0],intercept[1]+commands[k][1]*slope[1],retry))return 0;
-        if(path)break;
     }
     return 1;
 }
-static int GroundRange(UnifiedCal *s,const CalOps *ops,unsigned path)
+static int GroundRange(UnifiedCal *s,const CalOps *ops)
 {
-    unsigned r=s->range,ch,k,attempt,passing=0,commands[4][2],cap=s->working_y[s->range][3];
-    /* B144 may narrow its own window, but cannot exceed the measured A window
-     * or alter the independently calibrated Normal A/B anchors. */
-    uint16_t *y=Positions(s,path);
-    int32_t slope[2],intercept[2];CalMean points[4],previous[4];int32_t zero[2]={0,0},offset[2]={0,0};
-    s->offset_attempt=0;s->offset_reason=0;
-    if(path){zero[0]=s->native[0].zero[r];offset[0]=s->native[0].offset[r];}
-    for(ch=path;ch<2;++ch) {
-        if(path)s->native144_b.zero[r]=s->native144_b.offset[r]=0;
-        else {s->native[ch].zero[r]=s->native[ch].offset[r]=0;s->native[ch].gain[r]=1024;}
-    }
-    if(!DacPoints(s->adc_offset,zero,offset,0,y,path?23:17)){Fail(s,CAL_GROUND,15);return 0;}
+    unsigned r=s->range,ch,k,attempt,passing=0,commands[4][2],cap;
+    uint16_t *y=s->working_y[r];
+    int32_t slope[2],intercept[2];CalMean points[4],previous[4];int8_t zero[2]={0,0},offset[2]={0,0};
+    cap=y[3];s->offset_attempt=0;s->offset_reason=0;
+    for(ch=0;ch<2;++ch){s->native[ch].zero[r]=s->native[ch].offset[r]=0;s->native[ch].gain[r]=1024;}
+    if(!CalNative_Points(s->adc_offset,zero,offset,0,y)){Fail(s,CAL_GROUND,15);return 0;}
     if(cap && y[3]>cap)y[3]=(uint16_t)cap;
-    /* First characterize B on the shortest four-point span. Expand only
-     * after its own slope/offset is known and all four points are verified. */
-    if(path){if(y[0]<20)y[0]=20;if(y[3]>102)y[3]=102;}
-    Commands(s,path,commands);
-    if(!Curve(s,ops,path,CAL_GROUND,commands,points,slope,intercept))return 0;
-    for(ch=path;ch<2;++ch) {
-        if(!path){s->zero_low[r][ch]=ch?points[1].b:points[1].a;s->zero_high[r][ch]=ch?points[2].b:points[2].a;}
+    PointCommands(s->adc_offset,y,offset,commands);
+    if(!Curve(s,ops,0,CAL_GROUND,commands,points,slope,intercept))return 0;
+    for(ch=0;ch<2;++ch) {
+        s->zero_low[r][ch]=ch?points[1].b:points[1].a;s->zero_high[r][ch]=ch?points[2].b:points[2].a;
         s->offset_low_command[ch]=commands[1][ch];s->offset_high_command[ch]=commands[2][ch];
     }
     for(attempt=1;attempt<=CAL_OFFSET_ATTEMPTS;++attempt) {
         int acceptable=1,stable=1;unsigned steps=(unsigned)(s->reference_input[r]/(int32_t)s->scale[r]);s->offset_attempt=attempt;
-        /* The Normal point helper reserves six additional codes (239 vs 245).
-         * B144 uses the physical 245 mean limit; native limits remain unchanged. */
-        if(path)steps=steps>6?steps-6:0;
-        if(path)memset(&s->dac_diagnostic,0,sizeof(s->dac_diagnostic));
-        for(ch=path;ch<2;++ch) {
+        for(ch=0;ch<2;++ch) {
             int z=s->adc_offset+40-Rounded((int64_t)(s->adc_offset+40)*slope[ch]+intercept[ch],1024);
             int o=Rounded(1024LL*1024,slope[ch])-1024;
             s->requested_zero[ch]=z;s->requested_offset[ch]=o;
-            if(path?(z<-255 || z>255 || o<-512 || o>1024):(z<INT8_MIN || z>INT8_MAX || o<INT8_MIN || o>INT8_MAX)) {
+            if(z<INT8_MIN || z>INT8_MAX || o<INT8_MIN || o>INT8_MAX) {
                 s->failed_channel=ch;Fail(s,CAL_GROUND,5);return 0;
             }
-            zero[ch]=z;offset[ch]=o;
-            if(path)s->native144_b.offset[r]=o;else s->native[ch].offset[r]=(int8_t)o;
+            zero[ch]=(int8_t)z;offset[ch]=(int8_t)o;s->native[ch].offset[r]=(int8_t)o;
         }
-        if(!DacPoints(s->adc_offset,zero,offset,steps,y,path?23:17)) {
-            if(attempt==1 && Curve(s,ops,path,CAL_GROUND,commands,points,slope,intercept))continue;
+        if(!CalNative_Points(s->adc_offset,zero,offset,steps,y)) {
+            if(attempt==1 && Curve(s,ops,0,CAL_GROUND,commands,points,slope,intercept))continue;
             if(s->stage!=CAL_ERROR)Fail(s,CAL_GROUND,15);
             return 0;
         }
         if(cap && y[3]>cap)y[3]=(uint16_t)cap;
-        Commands(s,path,commands);
+        PointCommands(s->adc_offset,y,offset,commands);
         for(k=0;k<4;++k) {
             CalMean m;
-            if(!Capture(s,ops,path,commands[k][0],commands[k][1],&m,CAL_GROUND))return 0;
-            if(path && Magnitude(m.a-(s->adc_offset+y[k]-s->native[0].zero[r])*1024)>CAL_144_A_TOLERANCE &&
-               !CheckDac(s,&m,(s->adc_offset+y[k]-s->native[0].zero[r])*1024,m.b,CAL_GROUND))return 0;
-            if(path)s->ref144_stats[k]=s->capture_stats;
-            for(ch=path;ch<2;++ch) {
+            if(!Capture(s,ops,0,commands[k][0],commands[k][1],&m,CAL_GROUND))return 0;
+            for(ch=0;ch<2;++ch) {
                 int32_t raw=ch?m.b:m.a;
                 int32_t residual=raw+(int32_t)zero[ch]*1024-(s->adc_offset+y[k])*1024;
-                if(path && Magnitude(residual)>=Magnitude(s->dac_diagnostic.residual[1])) {
-                    s->dac_diagnostic.step=CAL_DAC_POINT;s->dac_diagnostic.reason=CAL_DAC_RESIDUAL;
-                    s->dac_diagnostic.tolerance=CAL_144_POINT_TOLERANCE;
-                    s->dac_diagnostic.expected[1]=(s->adc_offset+y[k]-zero[1])*1024;
-                    s->dac_diagnostic.residual[1]=residual;s->dac_diagnostic.point=k;
-                }
-                if(Magnitude(residual)>(path?CAL_144_POINT_TOLERANCE:CAL_OFFSET_TOLERANCE)){acceptable=0;s->failed_channel=ch;}
+                if(Magnitude(residual)>CAL_OFFSET_TOLERANCE){acceptable=0;s->failed_channel=ch;}
                 if(passing && Magnitude(raw-(ch?previous[k].b:previous[k].a))>CAL_OFFSET_STABILITY){stable=0;s->failed_channel=ch;}
-                if(k==1){s->offset_residual[ch]=residual;if(!path){s->zero_low[r][ch]=raw;s->zero_ref[r][ch]=raw;}s->offset_low_command[ch]=commands[k][ch];}
-                if(k==2){s->offset_high_residual[ch]=residual;if(!path)s->zero_high[r][ch]=raw;s->offset_high_command[ch]=commands[k][ch];}
+                if(k==1){s->offset_residual[ch]=residual;s->zero_low[r][ch]=raw;s->zero_ref[r][ch]=raw;s->offset_low_command[ch]=commands[k][ch];}
+                if(k==2){s->offset_high_residual[ch]=residual;s->zero_high[r][ch]=raw;s->offset_high_command[ch]=commands[k][ch];}
             }
             points[k]=previous[k]=m;
         }
-        if(path) {
-            s->dac144_low[r]=points[0];s->dac144_high[r]=points[3];
-            DacPoint(s,points,commands,s->dac_diagnostic.point);
-        }
         if(acceptable && passing && stable) {
-            for(ch=path;ch<2;++ch) {
-                if(path){s->native144_b.zero[r]=zero[ch];s->native144_b.offset[r]=offset[ch];}
-                else {s->native[ch].zero[r]=(int8_t)zero[ch];s->native[ch].offset[r]=(int8_t)offset[ch];}
-            }
-            if(path) {
-                /* DAC response is characterized for rebasing, not an A144 absolute calibration. */
-                if(!FitDacCurve(s,points,commands,s->dac144[r],intercept,CAL_GROUND))return 0;
-                s->zero144[r][0]=points[1].a;s->zero144[r][1]=points[1].b;
-                if(!CheckDac(s,&points[1],s->zero_ref[r][0],points[1].b,CAL_GROUND)) {
-                    DacPoint(s,points,commands,1);return 0;
-                }
-            }
+            for(ch=0;ch<2;++ch){s->native[ch].zero[r]=(int8_t)zero[ch];s->native[ch].offset[r]=(int8_t)offset[ch];}
             return 1;
         }
         passing=acceptable;s->offset_reason=acceptable?2:1;
         if(!acceptable && !FitDacCurve(s,points,commands,slope,intercept,CAL_GROUND))return 0;
+    }
+    Fail(s,CAL_GROUND,11);return 0;
+}
+/* Four shared A commands, two complete agreeing passes. A retains its
+ * Normal calibration; B is fitted only as a response to the same DAC A.
+ * The capture adapter still requires three stable fresh blocks per point. */
+static __attribute__((noinline)) int Ground144(UnifiedCal *s,const CalOps *ops)
+{
+    unsigned r=s->range,k,attempt,commands[4][2];
+    CalMean points[4],current[4];int32_t intercept[2];
+    memcpy(s->working144_y[r],s->working_y[r],sizeof(s->working_y[r]));
+    Commands(s,1,commands);s->offset_attempt=0;s->offset_reason=0;
+    memset(&s->dac_diagnostic,0,sizeof(s->dac_diagnostic));
+    if(!Curve(s,ops,1,CAL_GROUND,commands,points,s->dac144[r],intercept))return 0;
+    for(attempt=1;attempt<=CAL_OFFSET_ATTEMPTS;++attempt) {
+        unsigned stable=1;s->offset_attempt=attempt;
+        for(k=0;k<4;++k) {
+            int32_t expected=(s->adc_offset+s->working144_y[r][k]-s->native[0].zero[r])*1024;
+            if(!Capture(s,ops,1,commands[k][0],commands[k][1],&current[k],CAL_GROUND))return 0;
+            s->ref144_stats[k]=s->capture_stats;
+            s->dac_diagnostic.step=CAL_DAC_POINT;s->dac_diagnostic.point=k;
+            if(!CheckDac(s,&current[k],intercept[0]+commands[k][0]*s->dac144[r][0],
+                intercept[1]+commands[k][0]*s->dac144[r][1],CAL_GROUND))return 0;
+            if(Magnitude(current[k].a-expected)>CAL_144_A_TOLERANCE) {
+                s->dac_diagnostic.reason=CAL_DAC_RESIDUAL;
+                s->dac_diagnostic.expected[0]=expected;s->dac_diagnostic.residual[0]=current[k].a-expected;
+                s->failed_channel=0;Fail(s,CAL_GROUND,13);return 0;
+            }
+            {
+                unsigned ch;int32_t drift[2]={current[k].a-points[k].a,current[k].b-points[k].b};
+                for(ch=0;ch<2;++ch) {
+                    if(k==1)s->offset_residual[ch]=drift[ch];
+                    if(k==2)s->offset_high_residual[ch]=drift[ch];
+                    if(Magnitude(drift[ch])>CAL_OFFSET_STABILITY){stable=0;s->failed_channel=ch;}
+                }
+            }
+        }
+        if(stable) {
+            s->dac144_low[r]=current[0];s->dac144_high[r]=current[3];
+            s->zero144[r][0]=current[1].a;s->zero144[r][1]=current[1].b;
+            return 1;
+        }
+        memcpy(points,current,sizeof points);s->offset_reason=2;
     }
     Fail(s,CAL_GROUND,11);return 0;
 }
@@ -271,8 +266,8 @@ static int Ground(UnifiedCal *s,const CalOps *ops)
     for(r=0;r<8;++r) {
         if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_GROUND,14);return 0;}
         s->range=r;
-        if(!GroundRange(s,ops,0))return 0;
-        if(s->include144 && !GroundRange(s,ops,1))return 0;
+        if(!GroundRange(s,ops))return 0;
+        if(s->include144 && !Ground144(s,ops))return 0;
     }
     if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_GROUND,14);return 0;}
     s->range=0;s->reference=s->reference_input[0];
@@ -333,10 +328,13 @@ static __attribute__((noinline,section(".text.calibration"))) int Reference144(U
     if(!CheckDac(s,result,anchor.a,anchor.b,CAL_REFERENCE))return 0;
     s->dac_diagnostic.step=CAL_DAC_RETURN;
     if(!CheckDac(s,result,intercept[0]+commands[1][0]*s->ref_dac144[0],intercept[1]+commands[1][1]*s->ref_dac144[1],CAL_REFERENCE))return 0;
-    k=WorstPoint(s->ref144_verify,commands,s->ref_dac144,intercept);
-    s->dac_diagnostic.step=CAL_DAC_POINT;
-    if(CheckDac(s,&s->ref144_verify[k],intercept[0]+commands[k][0]*s->ref_dac144[0],intercept[1]+commands[k][1]*s->ref_dac144[1],CAL_REFERENCE))return 1;
-    DacPoint(s,s->ref144_verify,commands,k);return 0;
+    for(k=0;k<4;++k) {
+        s->dac_diagnostic.step=CAL_DAC_POINT;
+        if(!CheckDac(s,&s->ref144_verify[k],intercept[0]+commands[k][0]*s->ref_dac144[0],intercept[1]+commands[k][1]*s->ref_dac144[1],CAL_REFERENCE)) {
+            DacPoint(s,s->ref144_verify,commands,k);return 0;
+        }
+    }
+    return 1;
 }
 static int Reference(UnifiedCal *s,const CalOps *ops)
 {
@@ -381,8 +379,8 @@ static int Reference(UnifiedCal *s,const CalOps *ops)
             candidate.ref_dac_a_q10=s->ref_dac144[0];candidate.ref_dac_b_q10=s->ref_dac144[1];
             Commands(s,1,commands);
             candidate.dac_anchor=commands[1][0] | (commands[1][1]<<8) |
-                ((uint32_t)(uint8_t)s->native[0].offset[r]<<16);
-            candidate.dac_b_correction=(int16_t)s->native144_b.offset[r];
+                ((uint32_t)(uint8_t)s->native[0].offset[r]<<16) |
+                ((uint32_t)(uint8_t)s->native[0].offset[r]<<24);
             candidate.dac_window=commands[0][0] | (commands[3][0]<<8) | (commands[0][1]<<16) | (commands[3][1]<<24);
             if(!Scope144_Valid(&candidate)){Fail(s,CAL_REFERENCE,7);return 0;}
             s->pending144[r]=candidate;
