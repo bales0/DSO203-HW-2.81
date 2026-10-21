@@ -175,19 +175,34 @@ u32 __Read_FIFO(void)
     if(capture_case==18) {
         a=166;b=165;
         if(index==0)a=255;else if(index==1)a=87;else if(index<225)a=165;
-        if(index<3)b=255;else if(index==3)b=72;else if(index<1238)b=164;
+        if(index>=4 && index<1238)b=164;
+        if(index==3)b=72;
+        if(index==0 || index==2048 || index==4095)b=255;
     }
     if(capture_case>=19 && capture_case<=23) {
         a=100;b=120;
-        if(capture_case==19){if(index<4)a=255;if(index>=4 && index<8)b=0;}
+        if(capture_case==19){if(index%256==0 && index/256<4)a=255;if(index%256==1 && index/256<4)b=0;}
         if(capture_case==20 && index<5)a=255;
         if(capture_case==21 && index<5)b=0;
-        if(capture_case==22 && index<4){a=0;b=255;}
+        if(capture_case==22 && index%256==0 && index/256<4){a=0;b=255;}
         if(capture_case==23){a=0;b=255;}
+    }
+
+    if(capture_case>=40 && capture_case<=45) {
+        a=214;b=213;
+        if(index%251==0 && index/251<13)a=index%2?0:255;
+        if(index%503==0 && index/503<3)b=index%2?255:0;
+        if(index==600)a=160;
+        if(index==1600)a=250;
+        if(capture_case==41 && index>=100 && index<108)a=255;
+        if(capture_case==42 && index%4==0)b=240;
+        if(capture_case==43){a=120+index/1024*2;b=130;}
+        if(capture_case==44){a=120;b=121+(index%2?2:-2);}
+        if(capture_case==45){a=120;b=121;}
     }
     if(capture_case==24){a=9;b=200;}
     if(capture_case==25){a=246;b=150;}
-    if(capture_case==26){a=10;b=245;if(index<4){a=255;b=0;}}
+    if(capture_case==26){a=10;b=245;if(index%256==0 && index/256<4){a=255;b=0;}}
     return a|(b<<8)|(clock_arr==239?0:(digital_constant?0:(((index/32)&3)<<16))|0x2c0000u);
 }
 void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
@@ -902,7 +917,7 @@ int main(void)
       CHECK(CalScenario(0,0,&mean)==1 && record_count==4); /* Cancellation/timeout leaves no stale stability state. */
       fake_cycles=0xffff0000u;
       CHECK(CalScenario(0,0,&mean)==1); /* Deadline and block span survive DWT wrap. */
-      CHECK(CalScenario(14,0,&mean)==1 && mean.a==55*1024+1 && mean.b==55*1024+1);
+      CHECK(CalScenario(14,0,&mean)==1 && mean.a==55*1024+1 && mean.b==55*1024);
       CHECK(fifo_index==4096); /* First and last word both count; no extra prime/history. */
       CHECK(CalScenario(15,1,&mean)==1 && mean.a==55*1024 && mean.b==55*1024 && !mean.clips);
       {CalCaptureStats st;WildcatCalibration_Diagnostics(&st);
@@ -910,7 +925,7 @@ int main(void)
       CHECK(CalScenario(17,0,&mean)==1 && mean.a==70*1024 && mean.b==95*1024);
       CHECK(CalScenario(17,1,&mean)==1 && mean.a==70*1024 && mean.b==72*1024);
       CHECK(CalScenario(17,0,&mean)==1 && mean.b==95*1024);
-      CHECK(CalScenario(18,0,&mean)==1 && mean.a==169908 && mean.b==168628 && !mean.clips);
+      {int result=CalScenario(18,0,&mean);printf("DC raw-fixture result=%d robust=%ld/%ld Q10\n",result,(long)mean.a,(long)mean.b);CHECK(result==1 && mean.a==(int32_t)(((uint32_t)166*4094-223)*1024u+2047)/4094 && mean.b==(int32_t)(((uint32_t)165*4092-1234)*1024u+2046)/4092 && !mean.clips);}
       {CalCaptureStats st;WildcatCalibration_Diagnostics(&st);
        CHECK(st.clips_a==1 && st.clips_b==3 && st.min_a==87 && st.max_a==255 && st.min_b==72 && st.max_b==255);}
       CHECK(CalScenario(19,0,&mean)==1 && mean.a==100*1024 && mean.b==120*1024 && !mean.clips);
@@ -923,6 +938,21 @@ int main(void)
       CHECK(CalScenario(24,0,&mean)==CAL_CAPTURE_CLIPPED && !mean.clips);
       CHECK(CalScenario(25,1,&mean)==CAL_CAPTURE_CLIPPED && !mean.clips);
       CHECK(CalScenario(26,1,&mean)==1 && mean.a==10*1024 && mean.b==245*1024);
+
+      CHECK(CalScenario(40,0,&mean)==1 && mean.a==214*1024 && mean.b==213*1024);
+      CHECK(CalScenario(40,1,&mean)==1 && mean.a==214*1024 && mean.b==213*1024);
+      CHECK(CalScenario(41,0,&mean)==CAL_CAPTURE_CLIPPED);
+      CHECK(CalScenario(42,1,&mean)==CAL_CAPTURE_UNSTABLE);
+      CHECK(CalScenario(43,0,&mean)==CAL_CAPTURE_UNSTABLE);
+      CHECK(CalScenario(44,0,&mean)==1 && mean.a==120*1024 && mean.b==121*1024);
+      CHECK(CalScenario(45,1,&mean)==1 && mean.a==120*1024 && mean.b==121*1024);
+      { CalPreview preview={0};unsigned attempts=0;int result=0;
+        capture_case=40;record_count=0;
+        while(!result && ++attempts<100000)result=WildcatCalibration_Preview(&preview,0,79,79,&mean);
+        CHECK(result==1 && record_count==2 && fifo_index==4096 && mean.a==214*1024 && mean.b==213*1024);
+        preview.phase=0;capture_case=0;
+        CHECK(CalScenario(0,0,&mean)==1 && mean.a==55*1024 && mean.b==55*1024);
+      }
       CHECK(!WildcatCalibration_Capture(8,0,79,79,&mean));
       { CalCaptureStats stats;WildcatCalibration_Diagnostics(&stats);CHECK(!stats.records && !stats.blocks && !stats.elapsed_ms); }
     }

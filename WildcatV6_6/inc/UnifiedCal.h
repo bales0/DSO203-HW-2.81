@@ -3,8 +3,9 @@
 #include "Scope144.h"
 #define CAL_CAPTURE_UNSTABLE (-2)
 #define CAL_CAPTURE_CLIPPED (-3)
-/* Calibration only: discard at most four raw 0/255 samples per ADC/4096. */
-#define CAL_CAPTURE_MAX_CLIPS 4u
+/* Calibration only: isolated rails also require distribution/run checks. */
+#define CAL_CAPTURE_MAX_CLIPS 32u
+#define CAL_HIST_WORK_WORD 1664u
 #define CAL_OFFSET_ATTEMPTS 4u
 #define CAL_OFFSET_TOLERANCE (2*1024)
 #define CAL_OFFSET_STABILITY 1024
@@ -34,7 +35,7 @@ typedef struct { int8_t zero[8],offset[8];uint16_t gain[8]; } CalNative;
 /* Retained workspace padding; no independent B144 coefficients are fitted. */
 typedef struct { int8_t zero[8],offset[8]; } CalNative144;
 typedef enum { CAL_CLOCK,CAL_GROUND,CAL_REFERENCE,CAL_SAVE,CAL_DONE,CAL_CANCELLED,CAL_ERROR } CalStage;
-typedef enum { CAL_NONE,CAL_OK,CAL_CHARGER,CAL_CANCEL,CAL_DOWN,CAL_UP,CAL_BIG_DOWN,CAL_BIG_UP,CAL_RANGE_DOWN,CAL_RANGE_UP } CalKey;
+typedef enum { CAL_NONE,CAL_OK,CAL_CHARGER,CAL_CANCEL,CAL_DOWN,CAL_UP,CAL_BIG_DOWN,CAL_BIG_UP,CAL_RANGE_DOWN,CAL_RANGE_UP,CAL_FAST_DOWN,CAL_FAST_UP } CalKey;
 typedef struct { unsigned waiting; } CalKeyGate;
 typedef enum { CAL_DAC_NONE,CAL_DAC_LOW,CAL_DAC_HIGH,CAL_DAC_POINT,CAL_DAC_RETURN,CAL_DAC_REFERENCE,CAL_DAC_FIT,CAL_DAC_DRIFT } CalDacStep;
 typedef enum { CAL_DAC_OK,CAL_DAC_SLOPE,CAL_DAC_RESIDUAL } CalDacReason;

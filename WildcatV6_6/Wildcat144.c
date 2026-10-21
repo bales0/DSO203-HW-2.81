@@ -282,15 +282,20 @@ static int CalibrationInputs(unsigned range,unsigned path,unsigned a,unsigned b)
     __Set(T_BASE_ARR,X_Attr[_100uS].ARR);
     return 1;
 }
+static CalDcHistogram *CalibrationHist(void)
+{ return (CalDcHistogram *)(DataBuf+CAL_HIST_WORK_WORD); }
+typedef char CalHistFits[(CAL_HIST_WORK_WORD*sizeof(DataBuf[0])+2*sizeof(CalDcHistogram)<=2048*sizeof(DataBuf[0]))?1:-1];
 static void CalibrationStart(CalPreview *s,uint32_t now)
 {
     s->index=s->sum_a=s->sum_b=s->clips=s->clips_a=s->clips_b=0;
     s->min_a=s->min_b=255;s->max_a=s->max_b=0;
+    memset(CalibrationHist(),0,2*sizeof(CalDcHistogram));
     Start(0);s->record_time=now;s->phase=2;
 }
-/* 0 pending, 1 full record, -1 setup failure, -2 timeout. The caller owns
+/* 0 pending, 1 valid, 2 untrustworthy distribution, 3 saturation/rail burst,
+ * -1 setup failure, -2 timeout. The caller owns
  * cancellation and the overall calibration deadline. No static record buffer. */
-static int CalibrationRead(CalPreview *s,unsigned range,unsigned path,
+static __attribute__((noinline,optimize("Os"),section(".text.calibration"))) int CalibrationRead(CalPreview *s,unsigned range,unsigned path,
     unsigned a,unsigned b,CalMean *mean)
 {
     unsigned budget=32;uint16_t pair;uint32_t now=DWT_CYCLES;
@@ -327,6 +332,8 @@ static int CalibrationRead(CalPreview *s,unsigned range,unsigned path,
         if(!s->discard) {
             /* Each ADC has its own denominator: one bad A sample must not
              * discard its valid B partner. Preserve all raw diagnostic counts. */
+            CalDc_Add(CalibrationHist(),av,s->index);
+            CalDc_Add(CalibrationHist()+1,bv,s->index);
             if(av && av!=255)s->sum_a+=av;
             if(bv && bv!=255)s->sum_b+=bv;
             s->clips+=!av || av==255 || !bv || bv==255;
@@ -343,19 +350,18 @@ static int CalibrationRead(CalPreview *s,unsigned range,unsigned path,
     if(s->discard){s->discard=0;s->record_time=now;s->phase=4;return 0;}
     s->block_ms=(uint32_t)(DWT_CYCLES-s->record_time)/CYCLES_MS;
     {
-        unsigned na=CAL_RECORD_PAIRS-s->clips_a,nb=CAL_RECORD_PAIRS-s->clips_b;
-        mean->a=na?(int32_t)((s->sum_a*1024+na/2)/na):0;
-        mean->b=nb?(int32_t)((s->sum_b*1024+nb/2)/nb):0;
-        /* Only this adapter can certify that bounded exclusions were removed
-         * before averaging. CalMean_Valid remains strict for other callers. */
-        mean->clips=s->clips_a<=CAL_CAPTURE_MAX_CLIPS && s->clips_b<=CAL_CAPTURE_MAX_CLIPS?0:s->clips;
+        int qa=CalDc_Estimate(CalibrationHist(),&mean->a);
+        int qb=CalDc_Estimate(CalibrationHist()+1,&mean->b);
+        mean->clips=qa==CAL_CAPTURE_CLIPPED || qb==CAL_CAPTURE_CLIPPED?s->clips:0;
+        s->phase=5;
+        if(qa==CAL_CAPTURE_CLIPPED || qb==CAL_CAPTURE_CLIPPED)return 3;
+        return qa==1 && qb==1?1:2;
     }
-    s->phase=5;return 1;
 }
-int WildcatCalibration_Capture(unsigned range,unsigned path,unsigned a,unsigned b,CalMean *mean)
+int __attribute__((optimize("Os"))) WildcatCalibration_Capture(unsigned range,unsigned path,unsigned a,unsigned b,CalMean *mean)
 {
     CalPreview record;CalMean last={0,0,0};CalStable stable;
-    uint32_t started;int status,result=0;
+    uint32_t started;int status=0,result=0,quality=0;
     memset(&calibration_stats,0,sizeof(calibration_stats));
     memset(&record,0,sizeof(record));memset(&stable,0,sizeof(stable));
     if(!mean || range>=8 || path>1 || a>200 || b>200)return 0;
@@ -363,19 +369,20 @@ int WildcatCalibration_Capture(unsigned range,unsigned path,unsigned a,unsigned 
     for(;;) {
         if(Cancel(0)){result=-1;break;}
         if((uint32_t)(DWT_CYCLES-started)>=2000u*CYCLES_MS) {
-            result=calibration_stats.blocks && !CalMean_Valid(&last)?CAL_CAPTURE_CLIPPED:
+            result=calibration_stats.blocks && quality==3?CAL_CAPTURE_CLIPPED:
                 calibration_stats.blocks?CAL_CAPTURE_UNSTABLE:0;break;
         }
         status=CalibrationRead(&record,range,path,a,b,&last);
         calibration_stats.records=record.records;
         if(status<0){result=0;break;}
-        if(status==1) {
+        if(status>0) {
+            CalMean invalid={0,0,0};quality=status;
             *mean=last;++calibration_stats.blocks;
             calibration_stats.block_ms=record.block_ms;
             calibration_stats.clips_a=record.clips_a;calibration_stats.clips_b=record.clips_b;
             calibration_stats.min_a=record.min_a;calibration_stats.max_a=record.max_a;
             calibration_stats.min_b=record.min_b;calibration_stats.max_b=record.max_b;
-            result=CalStable_Push(&stable,&last,mean);
+            result=CalStable_Push(&stable,status==1?&last:&invalid,mean);
             calibration_stats.window=stable.count;
             calibration_stats.spread_a=stable.spread_a;calibration_stats.spread_b=stable.spread_b;
             if(result)break;
@@ -389,7 +396,7 @@ int WildcatCalibration_Preview(CalPreview *s,unsigned range,unsigned a,unsigned 
     int result;
     if(!s || !mean || range>=8 || a>200 || b>200)return -1;
     result=CalibrationRead(s,range,0,a,b,mean);
-    return result<0?-1:result;
+    return result<0?-1:result==1?1:0;
 }
 
 int __attribute__((optimize("Os"))) Wildcat144_Service(void)

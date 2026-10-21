@@ -9,6 +9,8 @@ static int response_percent,missing_b,curve,initial_bias,unstable;
 static unsigned cancel_capture,bad_upper,upper_visits;
 static int capture_status,flat_b,route_slope,route_percent,route_offset,route_error,route_drift,a_route_error;
 static unsigned path_calls,normal_calls;
+static unsigned robust_capture;
+static int RobustCapture(CalMean *);
 static CalNative normal_snapshot[2];
 static uint16_t normal_y[8][4];
 static int protect_normal;static unsigned last_path;
@@ -54,7 +56,7 @@ static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,C
         ++upper_visits;
         if((bad_upper==1 && s->stage==CAL_GROUND) || (upper_visits==2 && bad_upper==2 && s->stage==CAL_REFERENCE))m->b-=8*1024;
     }
-    m->clips=captures==clip_capture;return 1;
+    m->clips=captures==clip_capture;return robust_capture?RobustCapture(m):1;
 }
 static int Gen(void *user,int on){(void)user;CHECK(on==0);++generators;return 1;}
 static uint32_t Battery(void *user){(void)user;return battery_value;}
@@ -66,7 +68,7 @@ static int Save(void *user,UnifiedCal *s,int high)
 static CalOps ops={&state,Capture,Gen,Battery,Save};
 static void Init(int interlace)
 {
-    bad_upper=upper_visits=0;captures=writes=generators=fail_capture=clip_capture=save_fail=0;response_percent=100;missing_b=curve=initial_bias=unstable=0;cancel_capture=0;capture_status=flat_b=0;route_slope=route_error=route_drift=a_route_error=0;route_percent=100;route_offset=8;path_calls=normal_calls=last_path=0;protect_normal=0;battery_value=3700;
+    robust_capture=0;bad_upper=upper_visits=0;captures=writes=generators=fail_capture=clip_capture=save_fail=0;response_percent=100;missing_b=curve=initial_bias=unstable=0;cancel_capture=0;capture_status=flat_b=0;route_slope=route_error=route_drift=a_route_error=0;route_percent=100;route_offset=8;path_calls=normal_calls=last_path=0;protect_normal=0;battery_value=3700;
     UnifiedCal_Init(&state,54,0,scale,interlace,0);
 }
 static void Ground(void)
@@ -374,6 +376,169 @@ static void NormalPointLimits(void)
         CHECK(CalStable_Push(&stable,&in,&out)==(n==0));
     }
 }
+
+
+static int RobustCapture(CalMean *m)
+{
+    static CalDcHistogram h[2];unsigned i,ch;int result[2];int32_t input[2]={m->a,m->b};
+    memset(h,0,sizeof h);
+    for(i=0;i<4096;++i)for(ch=0;ch<2;++ch) {
+        unsigned base=(unsigned)input[ch]/1024,frac=(unsigned)input[ch]%1024;
+        unsigned code=base+(i%1024<frac);
+        /* Symmetric small ripple and isolated spikes, every point and route. */
+        code+=i%2?1:-1;
+        if(i%251==0 && i/251<(ch?3u:13u))code=i%2?0:255;
+        else if(i==600)code=base>40?base-40:1;
+        else if(i==1600)code=base+40<255?base+40:254;
+        CalDc_Add(h+ch,code,i);
+    }
+    result[0]=CalDc_Estimate(h,&m->a);result[1]=CalDc_Estimate(h+1,&m->b);m->clips=0;
+    if(result[0]!=1 || result[1]!=1)return result[0]!=1?result[0]:result[1];
+    CHECK(CalDc_Abs(m->a-input[0])<=4 && CalDc_Abs(m->b-input[1])<=4);
+    return 1;
+}
+static void RobustWizardTests(void)
+{
+    CalNative native[2];Scope144Cal pending[8];unsigned p,i;
+    for(p=0;p<2;++p) {
+        Init(1);Ground();References();memcpy(native,state.native,sizeof native);memcpy(pending,state.pending144,sizeof pending);
+        Init(1);robust_capture=1;battery_value=p?4300:3200;Ground();References();
+        CHECK(!memcmp(native,state.native,sizeof native));
+        for(i=0;i<8;++i) {
+            CHECK(state.pending144[i].gain_q10==pending[i].gain_q10);
+            CHECK(CalDc_Abs(state.pending144[i].bias_q10-pending[i].bias_q10)<=8);
+        }
+        CHECK(!writes);UnifiedCal_Step(&state,p?CAL_CHARGER:CAL_OK,&ops);
+        CHECK(state.stage==CAL_DONE && writes==1 && charger==p);
+    }
+    Init(1);robust_capture=1;curve=1;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && !writes);
+    puts("DC full wizard: Normal A/B ZERO/DIFF/GAIN exact vs baseline; B144 gain exact, bias <=8 Q10; both power profiles; nonlinear Normal still rejected");
+}
+static void HistogramTests(void)
+{
+    static CalDcHistogram h;int32_t mean,max_bias=0;int64_t bias_sum=0;unsigned i,c,n,amplitude,phase,f,accepted=0,rejected=0;
+    static const int sine[32]={0,195,383,556,707,831,924,981,1000,981,924,831,707,556,383,195,
+        0,-195,-383,-556,-707,-831,-924,-981,-1000,-981,-924,-831,-707,-556,-383,-195};
+    for(c=10;c<=245;++c)for(n=0;n<8;++n) {
+        uint32_t sum=0;memset(&h,0,sizeof h);
+        for(i=0;i<4096;++i){unsigned code=c+(c<245 && i%8<n);sum+=code;CalDc_Add(&h,code,i);}
+        CHECK(CalDc_Estimate(&h,&mean)==1);CHECK(mean==(int32_t)((sum*1024u+2048)/4096));
+    }
+    for(n=1;n<=33;++n) {
+        memset(&h,0,sizeof h);
+        for(i=0;i<4096;++i) {
+            unsigned code=i%127==0 && i/127<n?255:214;
+            if(i==100)code=160;
+            if(i==300)code=250;
+            CalDc_Add(&h,code,i);
+        }
+        if(n==33){CHECK(CalDc_Estimate(&h,&mean)==CAL_CAPTURE_CLIPPED);continue;}
+        CHECK(CalDc_Estimate(&h,&mean)==1);CHECK(mean==214*1024);
+        CHECK(h.bins[255]==n);
+        if(n==13) {
+            unsigned q,total=0;for(q=0;q<4;++q)total+=h.sum[q];
+            printf("DC spikes: arithmetic=%lu, median2=%u, robust=%ld Q10; delta=%ld Q10; rails=%u; trim=2/4083 (0.049%%); known DC bias=0 Q10\n",
+                (unsigned long)((total*1024u+2041)/4083),CalDc_Median2(h.bins,4083),(long)mean,
+                (long)(mean-(int32_t)((total*1024u+2041)/4083)),n);
+        }
+    }
+
+    for(n=2;n<=3;++n) {
+        memset(&h,0,sizeof h);
+        for(i=0;i<4096;++i)CalDc_Add(&h,i>=100 && i<100+n?255:120,i);
+        CHECK(CalDc_Estimate(&h,&mean)==(n==2?1:CAL_CAPTURE_CLIPPED));
+    }
+    /* Wide symmetric non-sinusoidal distributions retain arithmetic DC. */
+    for(c=0;c<3;++c) {
+        uint32_t sum=0;memset(&h,0,sizeof h);
+        for(i=0;i<4096;++i) {
+            unsigned code=c==0?(i%2?100:140):c==1?(i%2?119:121):100+(i%41);
+            sum+=code;CalDc_Add(&h,code,i);
+        }
+        CHECK(CalDc_Estimate(&h,&mean)==1);
+        CHECK(mean==(int32_t)((sum*1024u+2048)/4096));
+    }
+    /* 200..220 kHz is a synthetic hypothesis, not a measured DS203 clock. */
+    for(amplitude=1;amplitude<=40;amplitude+=3)for(phase=0;phase<65536;phase+=4096)
+    for(f=200000;f<=220000;f+=10000) {
+        uint32_t acc=phase,sum=0,step=(uint32_t)((uint64_t)f*65536/300000);int result;
+        memset(&h,0,sizeof h);
+        for(i=0;i<4096;++i) {
+            int delta=sine[(acc>>11)&31]*(int)amplitude;
+            unsigned code=120+(delta>=0?(delta+500)/1000:-((-delta+500)/1000));
+            acc+=step;sum+=code;CalDc_Add(&h,code,i);
+        }
+        result=CalDc_Estimate(&h,&mean);
+        if(result==1) {
+            int32_t bias=mean-120*1024;bias_sum+=bias;if(CalDc_Abs(bias)>max_bias)max_bias=CalDc_Abs(bias);
+            ++accepted;CHECK(CalDc_Abs(mean-(int32_t)((sum*1024u+2048)/4096))<=1);CHECK(CalDc_Abs(bias)<512);
+        }
+        else {++rejected;CHECK(result==CAL_CAPTURE_UNSTABLE);}
+    }
+    printf("DC sine: %u accepted, %u rejected; max true DC bias=%ld Q10 (%ld mADC); signed bias sum=%ld Q10; raw/robust delta <=1 Q10\n",
+        accepted,rejected,(long)max_bias,(long)(max_bias*1000/1024),(long)bias_sum);
+    CHECK(bias_sum>-(int64_t)accepted && bias_sum<(int64_t)accepted);
+    CHECK(accepted>400);
+    /* Long rail burst, dominant rail, asymmetric mixture, broad distribution,
+     * missing samples, temporal DC step and center outside physical limits. */
+    for(c=0;c<10;++c) {
+        memset(&h,0,sizeof h);
+        for(i=0;i<(c==8?4095u:4096u);++i) {
+            unsigned code=120;
+            if(c==0 && i>=100 && i<105)code=255;
+            if(c==1)code=255;
+            if(c==2 && i%4==0)code=160;
+            if(c==3)code=i%2?40:200;
+            if(c==4)code=9;
+            if(c==5)code=246;
+            if(c==6)code=120+i/1024*2;
+            if(c==7 && i%100==0)code=255;
+            if(c==9 && i%100==0)code=1;
+            CalDc_Add(&h,code,i);
+        }
+        {int result=CalDc_Estimate(&h,&mean);
+         CHECK(result!=1);
+         printf("DC invalid case %u: status=%d, rails=%u, longest_run=%u, result=%ld Q10\n",c,result,h.bins[0]+h.bins[255],h.max_run,(long)mean);
+        }
+    }
+    /* Pairwise temporal stability is deliberately not a five-block selector:
+     * three already require every paired block to meet the same span limit. */
+    {CalStable stable={0};CalMean in={120*1024,121*1024,0},out;
+     for(i=0;i<20;++i){in.a+=768;in.b+=768;CHECK(!CalStable_Push(&stable,&in,&out));}}
+}
+static void HoldAccelerationTests(void)
+{
+    CalRefHold h={0};uint32_t start=0xffff0000u;unsigned i,r;int32_t before;
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_REFERENCE,0,2,start)==CAL_UP);
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_REFERENCE,0,2,start+100)==CAL_NONE);
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_REFERENCE,0,2,start+699*72000u)==CAL_UP);
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_REFERENCE,0,2,start+750*72000u)==CAL_BIG_UP);
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_REFERENCE,0,2,start+2000*72000u)==CAL_FAST_UP);
+    CHECK(CalRefHold_Key(&h,CAL_CANCEL,CAL_REFERENCE,0,2,start+2010*72000u)==CAL_CANCEL);
+    CHECK(CalRefHold_Key(&h,CAL_OK,CAL_REFERENCE,0,2,start+2020*72000u)==CAL_OK);
+    CHECK(CalRefHold_Key(&h,CAL_DOWN,CAL_REFERENCE,0,1,start+2030*72000u)==CAL_DOWN);
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_REFERENCE,7,2,start+5000*72000u)==CAL_UP);
+    for(i=0;i<20;++i) {
+        CalRefHold_Key(&h,CAL_NONE,CAL_REFERENCE,7,0,start+i*1000);
+        CHECK(CalRefHold_Key(&h,CAL_UP,CAL_REFERENCE,7,2,start+i*1000+1)==CAL_UP);
+    }
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_CLOCK,0,2,start)==CAL_UP && !h.direction);
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_GROUND,0,2,start)==CAL_UP && !h.direction);
+    CHECK(CalRefHold_Key(&h,CAL_RANGE_UP,CAL_REFERENCE,0,2,start)==CAL_RANGE_UP && !h.direction);
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_REFERENCE,1,3,start)==CAL_NONE && !h.direction);
+    CHECK(CalRefHold_Key(&h,CAL_UP,CAL_SAVE,0,2,start)==CAL_UP && !h.direction);
+    Init(1);Ground();
+    for(r=0;r<8;++r) {
+        state.range=r;before=state.reference=state.reference_input[r];
+        UnifiedCal_Step(&state,CAL_FAST_UP,&ops);CHECK(state.reference==before+(int32_t)scale[r]*75/10);
+        UnifiedCal_Step(&state,CAL_FAST_DOWN,&ops);CHECK(state.reference==before);
+        state.reference=59999999;UnifiedCal_Step(&state,CAL_FAST_UP,&ops);CHECK(state.reference==60000000);
+        state.reference=1001;UnifiedCal_Step(&state,CAL_FAST_DOWN,&ops);CHECK(state.reference==1000);
+    }
+    state.scale[7]=UINT32_MAX;state.range=7;UnifiedCal_Step(&state,CAL_FAST_UP,&ops);CHECK(state.reference==60000000);
+    UnifiedCal_Step(&state,CAL_FAST_DOWN,&ops);CHECK(state.reference==1000 && !writes);
+}
 int main(void)
 {
     unsigned r,ch,i,ground_count=0,total_count=0;uint16_t gain;CalKeyGate gate={0};UnifiedCal before;
@@ -536,6 +701,9 @@ int main(void)
     SharedSequence();
     ReferenceSnapshot();
     NormalPointLimits();
+    HistogramTests();
+    HoldAccelerationTests();
+    RobustWizardTests();
     printf("PASS unified calibration: %u checks; 8 ranges A+B+144, keys/release, no blink mutation, failures, signed gain/offset\n",checks);
     return 0;
 }

@@ -19,6 +19,7 @@ static unsigned checks,polls,nscript,pos,captures,writes,failed_save,fail_captur
 static struct {unsigned key,pressed;} script[1024];
 static int32_t applied_reference;
 static int interlace,positive;
+static uint32_t tick_override;static int32_t reference_trace[128];static unsigned reference_count;
 static char last_row[80];
 void Test_NormalSetOffset(u8,u8,s16);
 void Test_NormalBattery(void);
@@ -47,7 +48,7 @@ s8 Ka1[10],Kb1[10],Ka3[10],Kb3[10],LKa1[10],LKb1[10],LKa3[10],LKb3[10],HKa1[10],
 u16 Ka2[10],Kb2[10],LKa2[10],LKb2[10],HKa2[10],HKb2[10],HiBatLevel[2],LoBatLevel[2],VDiff[2];
 menu Title[13][4];vu8 Key_Buffer,Blink,Twink;vu16 PD_Cnt;
 uint32_t native_test_demcr,native_test_dwt;
-uint32_t NativeTestCycles(void){static uint32_t cycles;return cycles+=(preview_case==2 || preview_case==4)?144000:72000;}
+uint32_t NativeTestCycles(void){static uint32_t cycles;return cycles+=tick_override?tick_override:(preview_case==2 || preview_case==4)?144000:72000;}
 uint32_t Scope144_Crc(const void *data,uint32_t count)
 {CHECK(data==(void *)0x0805c800u && count==135096);return SCOPE144_IMAGE_CRC;}
 u32 __Get(u8 object)
@@ -121,7 +122,7 @@ void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
         if(y==66){CHECK(strstr(s,"Attempt/clips:") && strstr(s,"/0"));normal_ref_flags|=256;}
     }
     if(strstr(s,"mADC clip5/0"))clip_progress=1;
-    if(strstr(s,"Too many raw 0/255 samples (>4 per ADC)"))clip_lines|=1;
+    if(strstr(s,"ADC rails/burst or center outside 10..245"))clip_lines|=1;
     if(strstr(s,"Clip A/B (4096): 5/0"))clip_lines|=2;
     if(strstr(s,"Raw min/max A: 0/166"))clip_lines|=4;
     if(strstr(s,"Raw min/max B: 162/164"))clip_lines|=8;
@@ -157,7 +158,7 @@ void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
     if(strstr(s,"A DC: dADC=") || strstr(s,"B DC: dADC="))++dc_errors;
     if(strstr(s,"ground A+B")){positive=0;applied_reference=0;}
     if(strstr(s,"Apply SAME")){positive=1;if(clip_reference)capture_status=CAL_CAPTURE_CLIPPED;}
-    if(strstr(s,"Reference: ")){char *unit;double v=strtod(strchr(s,':')+1,&unit);applied_reference=(int32_t)(v*(strstr(unit,"mV")?1000:1000000)+0.5);++reference_lines;}
+    if(strstr(s,"Reference: ")){char *unit;double v=strtod(strchr(s,':')+1,&unit);applied_reference=(int32_t)(v*(strstr(unit,"mV")?1000:1000000)+0.5);++reference_lines;if(reference_count<128)reference_trace[reference_count++]=applied_reference;}
     if(strstr(s,"please wait; K4 cancel"))++progress_lines;
     if(strstr(s,"Saving calibration WPT/WPB"))++save_lines;
 }
@@ -257,7 +258,7 @@ static void Push(unsigned key,unsigned pressed){CHECK(nscript<1024);script[nscri
 static void Press(unsigned key){Push(key,0);Push(0,0);}
 static void Init(int with144)
 {
-    unsigned i;polls=nscript=pos=captures=writes=failed_save=fail_capture=reference_lines=clock_enables=0;
+    unsigned i;tick_override=reference_count=0;polls=nscript=pos=captures=writes=failed_save=fail_capture=reference_lines=clock_enables=0;
     table_pixels=headings=dc_errors=offset_errors=clock_panels=highlight_ppm=diagnostic_lines=progress_lines=save_lines=0;fail_dc=unstable_offset=capture_status=flat_b=0;
     dac_fault=dac_94_count=dac_lines=dac_live=dac_record=0;
     normal_ref_mask=normal_ref_point=normal_ref_calls=normal_ref_flags=normal_zero_fault=normal_zero_limit=panel_kind=0;
@@ -477,6 +478,22 @@ int main(void)
         Init(1);fail_capture=1;probe_on=1;Press(KEY2);Press(KEY2);Press(KEY3);Press(KEY4);Calibrat(TRACK1);
         CHECK(!probe_runs && !probe_reads && !writes);CleanupChecks();
     }
+
+    /* Physical active-low INDEX hold in actual Calibrat(), existing repeat
+     * events only. High test tick makes the script cross both thresholds. */
+    Init(0);tick_override=7200000u;Press(KEY2);Press(KEY2);
+    for(i=0;i<20;++i)Push(K_INDEX_INC,K_INDEX_I_STATUS);
+    Push(0,0);Push(K_INDEX_INC,K_INDEX_I_STATUS);Push(0,0);
+    Push(K_INDEX_DEC,K_INDEX_D_STATUS);Push(0,0);Press(KEY4);Calibrat(TRACK1);
+    {unsigned fine=0,medium=0,fast=0;
+     for(i=1;i<reference_count;++i) {
+        int32_t delta=reference_trace[i]-reference_trace[i-1];
+        if(delta==150)++fine;else if(delta==1500)++medium;else if(delta==15000)++fast;else CHECK(delta==-150);
+     }
+     CHECK(fine>=3 && medium && fast && !writes && captures==96);
+     CHECK(reference_trace[reference_count-1]==reference_trace[reference_count-2]-150);
+    }
+    CleanupChecks();
     printf("PASS calibration UI: %u checks; actual Calibrat, held keys, all references, battery/charger, rollback, cancel, blinking\n",checks);
     return 0;
 }

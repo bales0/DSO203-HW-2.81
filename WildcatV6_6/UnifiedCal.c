@@ -425,13 +425,17 @@ void UnifiedCal_Step(UnifiedCal *s,CalKey key,const CalOps *ops)
             s->range=(s->range+(key==CAL_RANGE_UP?1:7))%8;
             s->reference=s->reference_input[s->range];s->measured_valid=0;return;
         }
-        int64_t next=s->reference;int32_t small=(int32_t)s->scale[s->range]*75/1000;
+        int64_t next=s->reference,small=(int64_t)s->scale[s->range]*75/1000;
         if(small<1)small=1;
         if(key==CAL_DOWN)next-=small;
         if(key==CAL_UP)next+=small;
         if(key==CAL_BIG_DOWN)next-=small*10;
         if(key==CAL_BIG_UP)next+=small*10;
-        if(next>=1000 && next<=60000000){s->reference=(int32_t)next;s->reference_input[s->range]=s->reference;}
+        if(key==CAL_FAST_DOWN)next-=small*100;
+        if(key==CAL_FAST_UP)next+=small*100;
+        if(next<1000)next=1000;
+        if(next>60000000)next=60000000;
+        s->reference=(int32_t)next;s->reference_input[s->range]=s->reference;
         if(key==CAL_OK)Reference(s,ops);
         return;
     }

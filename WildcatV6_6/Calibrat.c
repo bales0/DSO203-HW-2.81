@@ -1,3 +1,6 @@
+#if defined(__GNUC__)
+#pragma GCC optimize ("Os")
+#endif
 /* Shared A+B+144 calibration. Numerical state and button transitions live in
  * UnifiedCal.c. Blink/Twink never change the ADC path or coefficients. */
 #include "Interrupt.h"
@@ -8,6 +11,7 @@
 #include "BIOS.h"
 #include "Menu.h"
 #include "UnifiedCal.h"
+#include "CalStable.h"
 #include "Clock144.h"
 #include "Text144.h"
 #include "CalText.h"
@@ -26,7 +30,7 @@ typedef struct {
     uint32_t demcr,dwt,irq2,irq4;u16 ccer,ccmr;
 } CalWorkspace;
 /* The scope is stopped while the wizard owns the existing acquisition RAM. */
-typedef char CalWorkspaceFits[(sizeof(CalWorkspace)<=2048*sizeof(DataBuf[0]))?1:-1];
+typedef char CalWorkspaceFits[(sizeof(CalWorkspace)<=CAL_HIST_WORK_WORD*sizeof(DataBuf[0]))?1:-1];
 static void CopyBanks(CalWorkspace *w,int restore)
 {
     s8 *z[3][2]={{Ka1,Kb1},{LKa1,LKb1},{HKa1,HKb1}};
@@ -309,7 +313,7 @@ static void Render(const UnifiedCal *s,int full)
             PairValue(150,"Last commands A/B: ",s->capture_commands[0],s->capture_commands[1]);
         } else if(s->error==12 || s->error==3 || s->error==2) {
             Value(222,"Calibration error: ",s->error);
-            Line(208,s->error==12?"DC blocks did not settle before deadline":s->error==3?(s->capture_mean.clips?"Too many raw 0/255 samples (>4 per ADC)":"ADC mean outside 10..245; see raw limits"):"FIFO/capture failed");
+            Line(208,s->error==12?"DC blocks did not settle before deadline":s->error==3?(s->capture_mean.clips?"ADC rails/burst or center outside 10..245":"ADC mean outside 10..245; see raw limits"):"FIFO/capture failed");
             DiagnosticFrame("RAW CAPTURE DIAGNOSTICS");
             PairValue(164,"Block A/B (mADC): ",s->capture_mean.a*1000/1024,s->capture_mean.b*1000/1024);
             PairValue(150,"Commands A/B: ",s->capture_commands[0],s->capture_commands[1]);
@@ -409,7 +413,7 @@ static __attribute__((noinline)) void Initialize(CalWorkspace *w)
 void Calibrat(u8 channel)
 {
     CalWorkspace *w=(CalWorkspace *)DataBuf;uint32_t before;unsigned i;
-    CalOps ops={w,Capture,Generator,Battery,Save};CalKeyGate gate={1};
+    CalOps ops={w,Capture,Generator,Battery,Save};CalKeyGate gate={1};CalRefHold hold={0};
     uint32_t preview_time;
     CalStage last_stage;unsigned last_range;int32_t last_reference,last_ppm;unsigned last_error;
     volatile unsigned spin;
@@ -433,9 +437,12 @@ void Calibrat(u8 channel)
     last_stage=w->state.stage;last_range=w->state.range;last_reference=w->state.reference;
     last_ppm=w->state.ppm;last_error=w->state.error;
     while(w->state.stage!=CAL_DONE && w->state.stage!=CAL_CANCELLED) {
-        unsigned pressed=(~__Get(KEY_STATUS))&(KEY1_STATUS|KEY2_STATUS|KEY3_STATUS|KEY4_STATUS);
+        unsigned physical=~__Get(KEY_STATUS);
+        unsigned pressed=physical&(KEY1_STATUS|KEY2_STATUS|KEY3_STATUS|KEY4_STATUS);
         unsigned key=Key_Buffer;Key_Buffer=0;PD_Cnt=600;
         CalKey event=CalKey_Filter(&gate,Event(key),pressed);
+        event=CalRefHold_Key(&hold,event,w->state.stage,w->state.range,
+            ((physical&K_INDEX_D_STATUS)?1u:0u)|((physical&K_INDEX_I_STATUS)?2u:0u),DWT_CYCLES);
         if(key || pressed)w->preview.phase=0;
         if(event==CAL_CHARGER && w->state.stage==CAL_ERROR && (w->state.error==11 || w->state.error==13) &&
            w->state.capture_path && w->state.retry==CAL_GROUND) {
