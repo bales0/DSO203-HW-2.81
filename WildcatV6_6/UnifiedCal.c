@@ -62,7 +62,8 @@ static int CheckDac(UnifiedCal *s,const CalMean *actual,int32_t a,int32_t b,CalS
     unsigned ch;CalDacDiagnostic *d=&s->dac_diagnostic;
     d->expected[0]=a;d->expected[1]=b;
     d->residual[0]=actual->a-a;d->residual[1]=actual->b-b;
-    d->tolerance=s->capture_path && d->step!=CAL_DAC_DRIFT?CAL_144_POINT_TOLERANCE:CAL_OFFSET_STABILITY;
+    d->tolerance=d->step==CAL_DAC_DRIFT?CAL_OFFSET_STABILITY:
+        s->capture_path?CAL_144_POINT_TOLERANCE:CAL_OFFSET_TOLERANCE;
     for(ch=0;ch<2;++ch)if(Magnitude(d->residual[ch])>d->tolerance) {
         s->failed_channel=ch;d->reason=CAL_DAC_RESIDUAL;Fail(s,retry,13);return 0;
     }
@@ -152,7 +153,7 @@ static int Curve(UnifiedCal *s,const CalOps *ops,unsigned path,CalStage retry,
     }
     if(!FitDacCurve(s,points,commands,slope,intercept,retry))return 0;
     for(k=0;k<4;++k) {
-        s->dac_diagnostic.step=CAL_DAC_POINT;
+        s->dac_diagnostic.step=CAL_DAC_POINT;s->dac_diagnostic.point=k;
         DacPoint(s,points,commands,k);
         if(!CheckDac(s,&points[k],intercept[0]+commands[k][0]*slope[0],intercept[1]+commands[k][1]*slope[1],retry))return 0;
     }
@@ -324,12 +325,12 @@ static __attribute__((noinline,section(".text.calibration"))) int Reference144(U
     s->dac_diagnostic.step=CAL_DAC_RETURN;
     if(!Capture(s,ops,1,commands[1][0],commands[1][1],result,CAL_REFERENCE))return 0;
     if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>100){Fail(s,CAL_REFERENCE,14);return 0;}
-    s->dac_diagnostic.step=CAL_DAC_DRIFT;
+    s->dac_diagnostic.step=CAL_DAC_DRIFT;s->dac_diagnostic.point=1;
     if(!CheckDac(s,result,anchor.a,anchor.b,CAL_REFERENCE))return 0;
     s->dac_diagnostic.step=CAL_DAC_RETURN;
     if(!CheckDac(s,result,intercept[0]+commands[1][0]*s->ref_dac144[0],intercept[1]+commands[1][1]*s->ref_dac144[1],CAL_REFERENCE))return 0;
     for(k=0;k<4;++k) {
-        s->dac_diagnostic.step=CAL_DAC_POINT;
+        s->dac_diagnostic.step=CAL_DAC_POINT;s->dac_diagnostic.point=k;
         if(!CheckDac(s,&s->ref144_verify[k],intercept[0]+commands[k][0]*s->ref_dac144[0],intercept[1]+commands[k][1]*s->ref_dac144[1],CAL_REFERENCE)) {
             DacPoint(s,s->ref144_verify,commands,k);return 0;
         }
@@ -351,18 +352,26 @@ static int Reference(UnifiedCal *s,const CalOps *ops)
         unsigned commands[4][2],k;CalMean p;Commands(s,0,commands);
         for(k=0;k<4;++k) {
             if(!Capture(s,ops,0,commands[k][0],commands[k][1],&p,CAL_REFERENCE))return 0;
+            /* Both model values belong to this same freshly captured block.
+             * Never leave the previous range/path's diagnostics on error 13. */
+            s->dac_diagnostic.step=CAL_DAC_POINT;s->dac_diagnostic.reason=CAL_DAC_OK;
+            s->dac_diagnostic.point=k;s->dac_diagnostic.tolerance=CAL_OFFSET_TOLERANCE;
             for(ch=0;ch<2;++ch) {
                 int32_t raw=ch?p.b:p.a;
                 int32_t ground=(s->adc_offset+s->working_y[r][k]-s->native[ch].zero[r])*1024;
-                if(Magnitude(raw-ground-native_delta[ch])>CAL_OFFSET_TOLERANCE) {
-                    s->failed_channel=ch;Fail(s,CAL_REFERENCE,13);return 0;
-                }
+                s->dac_diagnostic.expected[ch]=ground+native_delta[ch];
+                s->dac_diagnostic.residual[ch]=raw-s->dac_diagnostic.expected[ch];
+            }
+            for(ch=0;ch<2;++ch)if(Magnitude(s->dac_diagnostic.residual[ch])>CAL_OFFSET_TOLERANCE) {
+                s->dac_diagnostic.reason=CAL_DAC_RESIDUAL;
+                s->failed_channel=ch;Fail(s,CAL_REFERENCE,13);return 0;
             }
         }
     }
     if(s->include144) {
         if(!Reference144(s,ops,&m))return 0;
         Diagnose(s,&m,1);
+        s->dac_diagnostic.step=CAL_DAC_REFERENCE;s->dac_diagnostic.point=1;
         if(!CheckDac(s,&m,s->zero_ref[r][0]+native_delta[0],m.b,CAL_REFERENCE))return 0;
         if(!Scope144_CalibrateMeans(s->zero_ref[r][0],s->zero144[r][1],
             s->zero_ref[r][0]+native_delta[0],m.b,s->reference,&candidate)) {

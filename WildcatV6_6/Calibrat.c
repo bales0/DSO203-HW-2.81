@@ -228,11 +228,18 @@ static void DacPanel(const UnifiedCal *s)
     n+=Decimal(row+n,r+1);strcpy(row+n,ch?"/8 ADC B: ":"/8 ADC A: ");
     strcat(row,d->reason==CAL_DAC_SLOPE?"DAC SLOPE":d->step==CAL_DAC_DRIFT?"DRIFT ERROR":d->step==CAL_DAC_RETURN?"RETURN ERROR":"POINT ERROR");Line(222,row);
     Line(208,s->capture_path?"Both ADCs sample input A; values in mADC":"Separate inputs A/B; values in mADC");
-    DiagnosticFrame(s->retry==CAL_GROUND?"144 SHARED DAC A":"144 B -> NORMAL A");
-    PairValue(164,"Zero LOW A/B: ",s->dac144_low[r].a*1000/1024,s->dac144_low[r].b*1000/1024);
-    PairValue(150,"Zero HIGH A/B: ",s->dac144_high[r].a*1000/1024,s->dac144_high[r].b*1000/1024);
-    PairValue(136,"Slope A/B (mADC/CMD): ",(d->reason==CAL_DAC_SLOPE?s->gain_result[0]:s->dac144[r][0])*1000/1024,(d->reason==CAL_DAC_SLOPE?s->gain_result[1]:s->dac144[r][1])*1000/1024);
-    if(s->retry==CAL_REFERENCE)PairValue(122,"Ref slope A/B: ",s->ref_dac144[0]*1000/1024,s->ref_dac144[1]*1000/1024);
+    DiagnosticFrame(s->capture_path?(s->retry==CAL_GROUND?"144 SHARED DAC A":"144 B -> NORMAL A"):
+        (s->retry==CAL_GROUND?"NORMAL A+B ZERO":"NORMAL A+B REF"));
+    if(s->capture_path) {
+        PairValue(164,"Zero LOW A/B: ",s->dac144_low[r].a*1000/1024,s->dac144_low[r].b*1000/1024);
+        PairValue(150,"Zero HIGH A/B: ",s->dac144_high[r].a*1000/1024,s->dac144_high[r].b*1000/1024);
+        /* If fitting A failed, B has not been fitted in this pass. */
+        if(d->reason!=CAL_DAC_SLOPE || ch)PairValue(136,"Slope A/B (mADC/CMD): ",(d->reason==CAL_DAC_SLOPE?s->gain_result[0]:s->dac144[r][0])*1000/1024,(d->reason==CAL_DAC_SLOPE?s->gain_result[1]:s->dac144[r][1])*1000/1024);
+        if(s->retry==CAL_REFERENCE && (d->reason!=CAL_DAC_SLOPE || ch))PairValue(122,"Ref slope A/B: ",s->ref_dac144[0]*1000/1024,s->ref_dac144[1]*1000/1024);
+    } else {
+        if(d->reason!=CAL_DAC_SLOPE)Value(164,"Point (1..4): ",d->point+1);
+        if(s->retry==CAL_REFERENCE)PairValue(150,"DC span A/B (mADC): ",s->delta[0]*1000/1024,s->delta[1]*1000/1024);
+    }
     PairValue(108,"Point CMD A/B: ",s->capture_commands[0],s->capture_commands[1]);
     if(d->reason==CAL_DAC_SLOPE) {
         Value(94,"Failed ADC slope (mADC/CMD): ",s->gain_result[ch]*1000/1024);

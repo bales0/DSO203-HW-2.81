@@ -226,6 +226,154 @@ static void SharedSequence(void)
         }
     }
 }
+/* Deliberately poison the preceding B144 context, then fail one exact
+ * Normal reference block. ADC means stay Q10 until the renderer. */
+static unsigned ref_calls,ref_fault_at,ref_fault_mask,ref_fault_range,ref_fault_path;
+static int32_t ref_fault_size;static unsigned ref_curve_shift;
+static CalMean ref_fault_mean;static unsigned ref_fault_commands[2];
+static int ReferenceFault(void *user,unsigned r,unsigned path,unsigned a,unsigned b,CalMean *m)
+{
+    UnifiedCal *s=user;int result=Capture(user,r,path,a,b,m);
+    if(result>0 && s->stage==CAL_REFERENCE && r==ref_fault_range && path==ref_fault_path) {
+        ++ref_calls;
+        if(ref_curve_shift && ref_calls>=2 && ref_calls<=5)m->b+=3*1024;
+        if(ref_calls==ref_fault_at) {
+            if(ref_fault_mask&1)m->a+=ref_fault_size;
+            if(ref_fault_mask&2)m->b-=ref_fault_size;
+            ref_fault_mean=*m;ref_fault_commands[0]=a;ref_fault_commands[1]=b;
+        }
+        s->capture_stats.blocks=700+ref_calls;s->capture_stats.records=900+ref_calls;
+    }
+    return result;
+}
+static void ReferenceSnapshot(void)
+{
+    unsigned with144,r,k,mask,sign,ch,n;CalOps fault=ops;UnifiedCal before;
+    fault.capture=ReferenceFault;
+    for(with144=0;with144<2;++with144)for(r=0;r<8;r+=7)
+    for(k=0;k<4;++k)for(mask=1;mask<4;++mask)for(sign=0;sign<2;++sign) {
+        Init((int)with144);Ground();state.range=r;state.reference=state.reference_input[r];
+        state.dac_diagnostic.step=CAL_DAC_DRIFT;state.dac_diagnostic.reason=CAL_DAC_SLOPE;
+        state.dac_diagnostic.point=99;state.dac_diagnostic.tolerance=17;
+        state.dac_diagnostic.expected[0]=1;state.dac_diagnostic.expected[1]=2;
+        state.dac_diagnostic.residual[0]=3;state.dac_diagnostic.residual[1]=4;
+        ref_calls=0;ref_fault_range=r;ref_fault_path=0;ref_fault_at=k+2;ref_fault_mask=mask;
+        ref_fault_size=sign?-(CAL_OFFSET_TOLERANCE+1):CAL_OFFSET_TOLERANCE+1;
+        n=captures;UnifiedCal_Step(&state,CAL_OK,&fault);
+        CHECK(state.stage==CAL_ERROR && state.retry==CAL_REFERENCE && state.error==13);
+        CHECK(!state.capture_path && state.failed_channel==((mask&1)?0u:1u));
+        CHECK(state.dac_diagnostic.step==CAL_DAC_POINT && state.dac_diagnostic.reason==CAL_DAC_RESIDUAL);
+        CHECK(state.dac_diagnostic.point==k && state.dac_diagnostic.tolerance==CAL_OFFSET_TOLERANCE);
+        CHECK(ref_calls==k+2 && captures==n+k+2 && !writes && !state.pending144[r].valid);
+        CHECK(!memcmp(&state.capture_mean,&ref_fault_mean,sizeof ref_fault_mean));
+        for(ch=0;ch<2;++ch) {
+            int32_t expected=(state.adc_offset+state.working_y[r][k]-state.native[ch].zero[r])*1024+75*1024;
+            int32_t raw=ch?ref_fault_mean.b:ref_fault_mean.a;
+            CHECK(state.dac_diagnostic.expected[ch]==expected);
+            CHECK(state.dac_diagnostic.residual[ch]==raw-expected);
+            CHECK(state.capture_commands[ch]==ref_fault_commands[ch]);
+            CHECK(state.capture_commands[ch]==(unsigned)CalNative_Command(state.adc_offset,state.native[ch].offset[r],state.working_y[r][k]));
+        }
+        CHECK(abs(state.dac_diagnostic.residual[state.failed_channel])>CAL_OFFSET_TOLERANCE);
+        CHECK(state.capture_stats.blocks==700+ref_calls && state.capture_stats.records==900+ref_calls);
+        before=state;for(n=0;n<20;++n)UnifiedCal_Step(&state,CAL_NONE,&fault);
+        CHECK(!memcmp(&before,&state,sizeof state) && !writes);
+    }
+    /* Exactly +/-2 ADC is still accepted; the initial gain anchor is healthy. */
+    for(k=0;k<4;++k)for(sign=0;sign<2;++sign) {
+        Init(1);Ground();ref_calls=ref_fault_range=ref_fault_path=0;ref_fault_at=k+2;ref_fault_mask=3;
+        ref_fault_size=sign?-CAL_OFFSET_TOLERANCE:CAL_OFFSET_TOLERANCE;
+        UnifiedCal_Step(&state,CAL_OK,&fault);
+        CHECK(state.stage==CAL_REFERENCE && state.range==1 && state.complete==1 && !writes);
+    }
+    /* Verification of B144 point 1 is evaluated after its final anchor.
+     * The frozen mean, commands AND statistics must refer back to that point. */
+    Init(1);Ground();ref_calls=ref_fault_range=0;ref_fault_path=1;ref_fault_at=7;ref_fault_mask=2;ref_fault_size=3*1024;
+    UnifiedCal_Step(&state,CAL_OK,&fault);
+    CHECK(state.stage==CAL_ERROR && state.error==13 && state.capture_path==1 && state.failed_channel==1);
+    CHECK(state.dac_diagnostic.step==CAL_DAC_POINT && state.dac_diagnostic.point==1);
+    CHECK(!memcmp(&state.capture_mean,&ref_fault_mean,sizeof ref_fault_mean));
+    CHECK(state.capture_commands[0]==ref_fault_commands[0] && state.capture_commands[1]==ref_fault_commands[1]);
+    CHECK(state.capture_stats.blocks==707 && state.capture_stats.records==907 && !writes);
+    for(ch=0;ch<2;++ch)CHECK(state.dac_diagnostic.residual[ch]==(ch?state.capture_mean.b:state.capture_mean.a)-state.dac_diagnostic.expected[ch]);
+    /* Drift/return checks both belong to the measured anchor (point 1).
+     * No extra captures are allowed to manufacture a diagnostic snapshot. */
+    for(n=0;n<2;++n) {
+        Init(1);Ground();ref_calls=ref_fault_range=0;ref_fault_path=1;ref_fault_at=10;
+        ref_curve_shift=n;ref_fault_mask=n?0:2;ref_fault_size=3*1024;
+        UnifiedCal_Step(&state,CAL_OK,&fault);
+        CHECK(state.stage==CAL_ERROR && state.error==13 && state.capture_path==1 && state.failed_channel==1);
+        CHECK(state.dac_diagnostic.step==(n?CAL_DAC_RETURN:CAL_DAC_DRIFT) && state.dac_diagnostic.point==1);
+        CHECK(!memcmp(&state.capture_mean,&ref_fault_mean,sizeof ref_fault_mean));
+        CHECK(state.capture_commands[0]==ref_fault_commands[0] && state.capture_commands[1]==ref_fault_commands[1]);
+        CHECK(state.capture_stats.blocks==710 && ref_calls==10 && !writes);
+        CHECK(state.dac_diagnostic.tolerance==(n?CAL_144_POINT_TOLERANCE:CAL_OFFSET_STABILITY));
+        for(ch=0;ch<2;++ch)CHECK(state.dac_diagnostic.residual[ch]==(ch?state.capture_mean.b:state.capture_mean.a)-state.dac_diagnostic.expected[ch]);
+    }
+    ref_curve_shift=0;
+    /* Curve() failures also identify the exact already-captured point. */
+    Init(0);curve=1;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && state.error==13 && !state.capture_path && state.retry==CAL_GROUND);
+    for(k=0;k<4;++k)if((unsigned)CalNative_Command(state.adc_offset,0,state.working_y[0][k])==state.capture_commands[0])break;
+    CHECK(k<4 && state.dac_diagnostic.point==k);
+    /* The final switched-route A check uses the reference anchor, not the
+     * last verification point whose model happened to be checked before it. */
+    Init(1);Ground();a_route_error=3*1024;UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && state.error==13 && state.failed_channel==0 && state.capture_path==1);
+    CHECK(state.dac_diagnostic.step==CAL_DAC_REFERENCE && state.dac_diagnostic.point==1);
+    CHECK(state.capture_commands[0]==(unsigned)CalNative_Command(state.adc_offset,state.native[0].offset[0],25));
+}
+/* Balanced residuals leave the rounded fitted line unchanged. This tests
+ * the real Normal Curve -> CheckDac path, not a copy of its comparison. */
+static int32_t normal_point_error;static unsigned normal_point_mask;
+static int NormalPointResponse(void *user,unsigned r,unsigned path,unsigned a,unsigned b,CalMean *m)
+{
+    UnifiedCal *s=user;int result=Capture(user,r,path,a,b,m);unsigned ch,k;
+    if(result>0 && !path && !r && s->stage==CAL_GROUND)for(ch=0;ch<2;++ch)if(normal_point_mask&(1u<<ch)) {
+        unsigned cmd=ch?b:a,x[4];int32_t tail,e;
+        for(k=0;k<4;++k)x[k]=(unsigned)CalNative_Command(s->adc_offset,s->native[ch].offset[r],s->working_y[r][k]);
+        CHECK(x[3]>x[2]);
+        tail=(int32_t)((int64_t)normal_point_error*(x[1]-x[0])/(x[3]-x[2]));
+        for(k=0;k<4 && x[k]!=cmd;++k) { }
+        CHECK(k<4);e=k==0?normal_point_error:k==1?-normal_point_error:k==2?-tail:tail;
+        if(ch)m->b+=e;else m->a+=e;
+    }
+    return result;
+}
+static void NormalPointLimits(void)
+{
+    static const int32_t errors[]={0,1024,1536,2047,2048,2049};
+    unsigned n,sign,mask;CalOps point=ops;point.capture=NormalPointResponse;
+    for(n=0;n<sizeof errors/sizeof errors[0];++n)for(sign=0;sign<2;++sign)for(mask=1;mask<4;++mask) {
+        Init(0);state.adc_offset=40;normal_point_mask=mask;normal_point_error=sign?-errors[n]:errors[n];
+        UnifiedCal_Step(&state,CAL_OK,&point);UnifiedCal_Step(&state,CAL_OK,&point);
+        CHECK(!writes && CAL_OFFSET_STABILITY==1024 && CAL_144_POINT_TOLERANCE==2048);
+        if(errors[n]<=CAL_OFFSET_TOLERANCE) {
+            CHECK(state.stage==CAL_REFERENCE && captures==8u*12u);
+            CHECK(state.native[0].zero[0]==-5 && state.native[1].zero[0]==-7);
+            CHECK(!state.native[0].offset[0] && !state.native[1].offset[0]);
+        } else {
+            CHECK(state.stage==CAL_ERROR && state.error==13 && !state.capture_path && state.retry==CAL_GROUND);
+            CHECK(state.failed_channel==((mask&1)?0u:1u) && state.dac_diagnostic.point==0);
+            CHECK(state.dac_diagnostic.tolerance==CAL_OFFSET_TOLERANCE);
+            CHECK(abs(state.dac_diagnostic.residual[state.failed_channel])==errors[n]);
+            CHECK(captures==4);
+        }
+    }
+    /* Temporal drift still uses 1 ADC even though the point model uses 2. */
+    for(n=0;n<4;++n)for(sign=0;sign<2;++sign) {
+        static const int32_t drift[]={1024,1025,1536,2048};CalStable stable={0};CalMean in={80*1024,80*1024,0},out;
+        Init(1);Ground();ref_calls=ref_fault_range=0;ref_fault_path=1;ref_fault_at=10;ref_fault_mask=2;
+        ref_curve_shift=0;ref_fault_size=sign?-drift[n]:drift[n];
+        point.capture=ReferenceFault;UnifiedCal_Step(&state,CAL_OK,&point);
+        if(!n)CHECK(state.stage==CAL_REFERENCE && state.complete==1);
+        else CHECK(state.stage==CAL_ERROR && state.error==13 && state.dac_diagnostic.step==CAL_DAC_DRIFT && state.dac_diagnostic.tolerance==1024);
+        CHECK(!writes);
+        CHECK(!CalStable_Push(&stable,&in,&out));in.b+=ref_fault_size;
+        CHECK(!CalStable_Push(&stable,&in,&out));in.b=80*1024;
+        CHECK(CalStable_Push(&stable,&in,&out)==(n==0));
+    }
+}
 int main(void)
 {
     unsigned r,ch,i,ground_count=0,total_count=0;uint16_t gain;CalKeyGate gate={0};UnifiedCal before;
@@ -386,6 +534,8 @@ int main(void)
     }
     RoutedCalibration();
     SharedSequence();
+    ReferenceSnapshot();
+    NormalPointLimits();
     printf("PASS unified calibration: %u checks; 8 ranges A+B+144, keys/release, no blink mutation, failures, signed gain/offset\n",checks);
     return 0;
 }

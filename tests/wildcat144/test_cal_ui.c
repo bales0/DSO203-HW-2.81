@@ -29,6 +29,8 @@ static int fail_dc,unstable_offset;
 static unsigned offset_errors,clock_panels,highlight_ppm;
 static int capture_status,flat_b;
 static unsigned dac_fault,dac_94_count,dac_lines,dac_live,dac_record;
+static unsigned normal_ref_mask,normal_ref_point,normal_ref_calls,normal_ref_flags,normal_zero_fault,normal_zero_limit,panel_kind;
+static CalMean normal_ref_mean;static unsigned normal_ref_commands[2];
 static unsigned diagnostic_lines,progress_lines,save_lines;
 static unsigned fit_limit_fault,fit_limit_records;
 static CalMean fit_limit_points[4];
@@ -90,6 +92,33 @@ void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
             if(!strncmp(s,"--",2))++preview_dashes;
             if(x==134 && !strncmp(s,"154.0mV",7))++preview_smoothed;
         }
+    }
+    if(strstr(s,"NORMAL A+B ZERO"))panel_kind=1;
+    if(strstr(s,"NORMAL A+B REF")){panel_kind=2;normal_ref_flags|=2;}
+    if(strstr(s,"144 SHARED DAC A"))panel_kind=3;
+    if(strstr(s,"144 B -> NORMAL A"))panel_kind=4;
+    if(normal_zero_fault && panel_kind==1 && y==80) {
+        const char *slash=strrchr(s,'/');
+        CHECK(slash && strtol(slash+1,0,10)==2000);++normal_zero_limit;
+    }
+    if(dac_fault==6 && panel_kind==3)CHECK(!strstr(s,"Slope A/B") && !strstr(s,"Ref slope"));
+    if(strstr(s,"144 ZERO R3/8 ADC A: DAC SLOPE"))dac_lines|=32768;
+    if(dac_fault==6 && strstr(s,"Failed ADC slope (mADC/CMD): 0"))dac_lines|=65536;
+    if(normal_ref_mask && strstr(s,"Normal REF R1/8 ADC")) {
+        CHECK(strstr(s,(normal_ref_mask&1)?"ADC A: POINT ERROR":"ADC B: POINT ERROR"));normal_ref_flags|=1;
+    }
+    if(normal_ref_mask && panel_kind==2) {
+        char expected[80];unsigned ch=(normal_ref_mask&1)?0:1;
+        int32_t raw=ch?normal_ref_mean.b:normal_ref_mean.a;
+        int32_t model=(int32_t)(normal_ref_commands[ch]+(ch?7:5))*1024+(ch?82500:76800);
+        CHECK(!strstr(s,"144 B") && !strstr(s,"144 SHARED") && !strstr(s,"144 ZERO") && !strstr(s,"144 REF") && !strstr(s,"Zero LOW") && !strstr(s,"Zero HIGH") && !strstr(s,"slope") && !strstr(s,"Slope"));
+        if(y==108){snprintf(expected,sizeof expected,"Point CMD A/B: %u/%u",normal_ref_commands[0],normal_ref_commands[1]);CHECK(!strncmp(s,expected,strlen(expected)));normal_ref_flags|=4;}
+        if(y==94){snprintf(expected,sizeof expected,"Raw/expected (mADC): %ld/%ld",(long)(raw*1000/1024),(long)(model*1000/1024));CHECK(!strncmp(s,expected,strlen(expected)));normal_ref_flags|=8;}
+        if(y==80){snprintf(expected,sizeof expected,"Error/limit (mADC): %ld/2000",(long)((raw-model)*1000/1024));CHECK(!strncmp(s,expected,strlen(expected)));normal_ref_flags|=16;}
+        if(y==52){CHECK(strstr(s,"Spread A/B (mADC): 22/14"));normal_ref_flags|=32;}
+        if(y==164){snprintf(expected,sizeof expected,"Point (1..4): %u",normal_ref_point+1);CHECK(!strncmp(s,expected,strlen(expected)));normal_ref_flags|=64;}
+        if(y==150){CHECK(strstr(s,"DC span A/B (mADC): 75000/80566"));normal_ref_flags|=128;}
+        if(y==66){CHECK(strstr(s,"Attempt/clips:") && strstr(s,"/0"));normal_ref_flags|=256;}
     }
     if(strstr(s,"mADC clip5/0"))clip_progress=1;
     if(strstr(s,"Too many raw 0/255 samples (>4 per ADC)"))clip_lines|=1;
@@ -171,6 +200,7 @@ int WildcatCalibration_Capture(unsigned r,unsigned path,unsigned a,unsigned b,Ca
     if(path && r==2) {
         ++dac_record;if(!positive && a==79)++dac_94_count;
         if(dac_fault==1 && !positive)m->b=100*1024;
+        if(dac_fault==6 && !positive)m->a=100*1024;
         if(dac_fault==2 && !positive && a==79)m->b+=6*1024;
         if(dac_fault==3 && !positive && a==79)m->a+=6*1024;
         if(dac_fault==4 && !positive && dac_record>4)m->b+=((dac_record-5)/4)%2?-1536:1536;
@@ -180,6 +210,15 @@ int WildcatCalibration_Capture(unsigned r,unsigned path,unsigned a,unsigned b,Ca
         unsigned n=fit_limit_records++;
         m->b=(int32_t)(a+8)*1024+((n%4==1 || n%4==2)?6*1024:0);
         fit_limit_points[n%4].a=(int32_t)b;fit_limit_points[n%4].b=m->b;fit_limit_points[n%4].clips=a;
+    }
+    if(normal_zero_fault && !path && !positive && !r && a==79)m->b+=6*1024;
+    if(normal_ref_mask && !path && positive && !r) {
+        ++normal_ref_calls;
+        if(normal_ref_calls==normal_ref_point+2) {
+            if(normal_ref_mask&1)m->a+=3*1024;
+            if(normal_ref_mask&2)m->b-=3*1024;
+            normal_ref_mean=*m;normal_ref_commands[0]=a;normal_ref_commands[1]=b;
+        }
     }
     if(unstable_offset && !path && !positive && captures>4) {
         int shift=((captures-5)/4)%2?-1536:1536;m->a+=shift;m->b+=shift;
@@ -207,6 +246,7 @@ void WildcatCalibration_Diagnostics(CalCaptureStats *stats)
     memset(stats,0,sizeof(*stats));stats->records=25;stats->blocks=3;stats->window=3;
     stats->elapsed_ms=450;stats->block_ms=21;
     if(capture_status==CAL_CAPTURE_UNSTABLE){stats->elapsed_ms=2000;stats->spread_a=2048;stats->spread_b=4096;}
+    if(normal_ref_mask && normal_ref_calls==normal_ref_point+2){stats->spread_a=23;stats->spread_b=15;}
     if(fit_limit_fault)stats->spread_b=24; /* Q10 -> displayed 23 mADC. */
     if(capture_status==CAL_CAPTURE_CLIPPED) {
         stats->records=276;stats->blocks=34;stats->window=0;stats->elapsed_ms=2001;stats->block_ms=43;
@@ -220,6 +260,7 @@ static void Init(int with144)
     unsigned i;polls=nscript=pos=captures=writes=failed_save=fail_capture=reference_lines=clock_enables=0;
     table_pixels=headings=dc_errors=offset_errors=clock_panels=highlight_ppm=diagnostic_lines=progress_lines=save_lines=0;fail_dc=unstable_offset=capture_status=flat_b=0;
     dac_fault=dac_94_count=dac_lines=dac_live=dac_record=0;
+    normal_ref_mask=normal_ref_point=normal_ref_calls=normal_ref_flags=normal_zero_fault=normal_zero_limit=panel_kind=0;
     fit_limit_fault=fit_limit_records=0;memset(fit_limit_points,0,sizeof fit_limit_points);
     probe_on=probe_active=probe_runs=probe_reads=probe_up=probe_down=probe_restores=probe_statuses=0;
     probe_fail_at=probe_bad_mean=0;probe_fail_code=0;memset(probe_source,0,sizeof probe_source);
@@ -336,15 +377,16 @@ int main(void)
     CHECK(clip_lines==127 && clip_progress && !writes && captures==8u*20u+1u);CleanupChecks();
     /* Report the actual failing phase at the user's third range, without
      * leaving the wizard. Test B slope, both ADCs, return and reference. */
-    for(i=1;i<=5;++i) {
+    for(i=1;i<=6;++i) {
         unsigned expected;
         Init(1);dac_fault=i;Press(KEY2);Press(KEY2);
         if(i==5){Press(KEY2);Press(KEY2);Press(KEY2);}
         Press(KEY4);Calibrat(TRACK1);
-        expected=i==1?5:i==2?8:i==3?512:i==4?2048:8192;
+        expected=i==1?5:i==2?8:i==3?512:i==4?2048:i==5?8192:98304;
         if((dac_lines&expected)!=expected)fprintf(stderr,"DAC UI fault=%u flags=%u expected=%u\n",i,dac_lines,expected);
         CHECK((dac_lines&expected)==expected);
-        if(i!=1)CHECK(dac_live==3);
+        if(i!=1 && i!=6)CHECK(dac_live==3);
+        CHECK(panel_kind==(i==5?4u:3u));
         CHECK(!writes && Ka1[0]==4 && Ka2[0]==1177);CleanupChecks();
     }
     {
@@ -383,6 +425,20 @@ int main(void)
             old=normal_writes;_State.Value=HOLD;Test_NormalSetOffset((u8)ch,(u8)r,10);
             CHECK(normal_writes==old);
         }
+    }
+    /* Real error renderer: Normal must never borrow B144 LOW/HIGH/slopes.
+     * Check exact signed numbers, units, threshold, source and point labels. */
+    {
+        unsigned with144,point,mask;
+        for(with144=0;with144<2;++with144)for(point=0;point<4;++point)for(mask=1;mask<4;++mask) {
+            Init((int)with144);normal_ref_mask=mask;normal_ref_point=point;
+            Press(KEY2);Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
+            CHECK(panel_kind==2 && normal_ref_flags==511 && !writes);
+            CHECK(normal_ref_calls==point+2 && captures==8u*(with144?20u:12u)+point+2);
+            CHECK(Ka1[0]==4 && Kb1[0]==6 && Ka2[0]==1177);CleanupChecks();
+        }
+        Init(1);normal_zero_fault=1;Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
+        CHECK(panel_kind==1 && normal_zero_limit && !writes && Ka1[0]==4 && Kb1[0]==6);CleanupChecks();
     }
     /* A non-linear shared-A response still reports a real model error. */
     Init(1);ADCoffset=40;fit_limit_fault=1;Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
