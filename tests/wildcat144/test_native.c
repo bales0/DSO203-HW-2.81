@@ -963,6 +963,20 @@ int main(void)
         preview.phase=0;capture_case=0;
         CHECK(CalScenario(0,0,&mean)==1 && mean.a==55*1024 && mean.b==55*1024);
       }
+      /* Detailed preview certifies each ADC from one actual paired record.
+       * Pending and a completed all-invalid block remain distinguishable. */
+      {unsigned test;
+       for(test=0;test<4;++test) {
+        CalPreview preview={0};unsigned attempts=0;int result=0;
+        capture_case=41+test;record_count=0;
+        while(!result && ++attempts<100000)result=WildcatCalibration_PreviewDetailed(&preview,0,79,79,&mean);
+        CHECK(result==1 && record_count==2 && fifo_index==4096);
+        CHECK(preview.valid_mask==(test==0?2u:test==1?1u:test==2?2u:3u));
+        CHECK(preview.reason[0]==(test==0?CAL_REJECT_RAILS:test==2?CAL_REJECT_TIME:CAL_REJECT_NONE));
+        CHECK(preview.reason[1]==(test==1?CAL_REJECT_TRIM:CAL_REJECT_NONE));
+       }
+       capture_case=0;
+      }
       CHECK(!WildcatCalibration_Capture(8,0,79,79,&mean));
       { CalCaptureStats stats;WildcatCalibration_Diagnostics(&stats);CHECK(!stats.records && !stats.blocks && !stats.elapsed_ms); }
     }

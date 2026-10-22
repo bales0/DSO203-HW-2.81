@@ -21,14 +21,16 @@
 s16 PPM_Comp=0;
 u8 CalibrateMode=0;
 typedef struct { s8 zero[10],offset[10];u16 gain[10]; } NativeBank;
+typedef struct {uint32_t mv,sequence,stamp,ready;} CalSupplyLatch;
 typedef struct {
     /* Published values survive failed candidates/retry; no persistent fields.
      * 144 Z is B-A ADC, S is (DAC-A slope B/A - 1) in tenths of percent. */
     struct { int32_t value[8][3][3],shown[8][3][3];u16 color[8][3][3];
         u8 zero[3],voltage[3],active,row; } live;
+    volatile CalSupplyLatch supply_sample;
     CalPreview preview;unsigned preview_drawn,preview_range,preview_valid;int32_t preview_uv[2];
     CalMean preview_filtered;unsigned preview_filter_valid,preview_good;
-    uint32_t preview_last_good;
+    uint32_t preview_last_good[2];
     UnifiedCal state;Scope144Bank previous;NativeBank saved[3][2];u16 lo[2],hi[2],difference[2];
     s16 ppm,output[4];u8 sweep,adjust,calmode;
     uint32_t demcr,dwt,irq2,irq4;u16 ccer,ccmr;
@@ -142,8 +144,8 @@ static void LiveCell(CalWorkspace *w,unsigned r,unsigned g,unsigned k)
     char text[16];
     if(!valid && !active && s->stage==CAL_REFERENCE && r==s->range && g<2 && k==2) {
         color=YEL;
-        if(s->measured_valid && !s->diagnostic_path) {
-            value=(int32_t)((int64_t)s->delta[g]*s->scale[r]*s->native[g].gain[r]/(1024*1024));valid=1;
+        if(w->preview_good&(1u<<g)) {
+            value=(int32_t)((int64_t)((g?w->preview_filtered.b:w->preview_filtered.a)-s->zero_ref[r][g])*s->scale[r]*s->native[g].gain[r]/(1024*1024));valid=1;
         }
     }
     if(!valid)value=INT32_MIN;
@@ -156,7 +158,7 @@ static void LiveCell(CalWorkspace *w,unsigned r,unsigned g,unsigned k)
         Cell(36+g*121+k*35,166-r*20,color,PRN,text,4);
     }
 }
-static void Progress(void *user,const UnifiedCal *s,CalProgress event,int32_t a,int32_t b)
+static __attribute__((section(".text.cal_work"))) void Progress(void *user,const UnifiedCal *s,CalProgress event,int32_t a,int32_t b)
 {
     CalWorkspace *w=user;unsigned r=s->range,g,k,ref=event>=CAL_UI_REF_START;
     unsigned first=(event/2%2)?2:0,last=first==2?3:2,bit=1u<<r;
@@ -351,6 +353,12 @@ static void DacPanel(const UnifiedCal *s)
     PairValue(66,"Attempt/clips: ",s->offset_attempt,s->capture_mean.clips);
     PairValue(52,"Spread A/B (mADC): ",s->capture_stats.spread_a*1000/1024,s->capture_stats.spread_b*1000/1024);
 }
+static const char *RejectName(unsigned reason)
+{
+    static const char *const names[]={"OK","rails/burst","wide MAD","trim excess",
+        "mean bias","slice spread","ADC center","block instability"};
+    return reason<sizeof(names)/sizeof(names[0])?names[reason]:"unknown";
+}
 static void Render(CalWorkspace *w,int full)
 {
     UnifiedCal *s=&w->state;unsigned r,g,k;
@@ -399,6 +407,8 @@ static void Render(CalWorkspace *w,int full)
         } else if(s->error==12 || s->error==3 || s->error==2) {
             Value(222,"Calibration error: ",s->error);
             Line(208,s->error==12?"DC blocks did not settle before deadline":s->error==3?(s->capture_mean.clips?"ADC rails/burst or center outside 10..245":"ADC mean outside 10..245; see raw limits"):"FIFO/capture failed");
+            if(s->capture_stats.blocks){char row[49]="A: ";strcat(row,RejectName(s->capture_stats.reason[0]));
+                strcat(row," / B: ");strcat(row,RejectName(s->capture_stats.reason[1]));Line(208,row);}
             DiagnosticFrame("RAW CAPTURE DIAGNOSTICS");
             PairValue(164,"Block A/B (mADC): ",s->capture_mean.a*1000/1024,s->capture_mean.b*1000/1024);
             PairValue(150,"Commands A/B: ",s->capture_commands[0],s->capture_commands[1]);
@@ -411,6 +421,17 @@ static void Render(CalWorkspace *w,int full)
                 PairValue(66,"Raw min/max A: ",s->capture_stats.min_a,s->capture_stats.max_a);
                 PairValue(52,"Raw min/max B: ",s->capture_stats.min_b,s->capture_stats.max_b);
             } else {Line(66,"Raw min/max A: -- (no complete block)");Line(52,"Raw min/max B: -- (no complete block)");}
+        } else if(s->error==14) {
+            const CalSupply *f=&s->supply;char row[49]="Supply ";
+            const char *reason=f->reason==CAL_SUPPLY_ABSOLUTE?"absolute limit":
+                f->reason==CAL_SUPPLY_DRIFT?"sustained drift":f->reason==CAL_SUPPLY_USB?"USB mode changed":"stale ADC3";
+            strcat(row,s->retry==CAL_GROUND?"ZERO":s->retry==CAL_SAVE?"SAVE":"DC REF");Line(222,row);
+            Line(208,reason);DiagnosticFrame("SUPPLY VALIDATION (mV)");
+            Value(164,"Range (0=all): ",s->range<8?s->range+1:0);Value(150,"ZERO baseline: ",f->zero_mv);
+            Value(136,"REF baseline: ",f->ref_mv);Value(122,"Verified/current: ",f->current_mv);
+            Value(108,"Delta/active baseline: ",(int32_t)f->current_mv-(int32_t)(s->retry==CAL_GROUND?f->zero_mv:f->ref_mv));
+            PairValue(94,"USB baseline / transients: ",f->usb,f->rejected);
+            Line(80,"Allowed: 2800..5200 mV; drift +/-200");
         } else {
             Value(222,"Calibration error: ",s->error);
             Line(208,s->error==10?"WPT save failed; original RAM restored":s->error==13?"144 DAC response invalid; check offset data":s->error==14?"Supply changed or outside 2800..5200 mV":"Capture/offset error; check inputs");
@@ -419,7 +440,7 @@ static void Render(CalWorkspace *w,int full)
             " K2 retry; K3 DAC test; K4 cancel":" K2 return to failed step; K4 cancel");
     }
 }
-static int Capture(void *user,unsigned range,unsigned mode,unsigned a,unsigned b,CalMean *m)
+static __attribute__((section(".text.cal_work"))) int Capture(void *user,unsigned range,unsigned mode,unsigned a,unsigned b,CalMean *m)
 {
     CalWorkspace *w=user;int result;
     char row[49]="Measuring ";unsigned n=(unsigned)strlen(row);
@@ -455,7 +476,43 @@ static int Generator(void *unused,int clock)
     (void)unused;Sweep=0;GenAdjustMode=0;_Kind=clock?PWM:6;
     if(clock){_Frqn=18;_Duty=15000;}Update_Output();TIM2->DIER=0;TIM4->DIER=0;return 1;
 }
-static uint32_t Battery(void *unused){(void)unused;return __Get(V_BATTERY);}
+/* TIM3 latches only completed conversions. Reading DR clears EOC. Existing
+ * one-second BIOS conversion triggers are preserved; no extra ADC3 starts. */
+void Calibrat_SupplyTick(void)
+{
+    CalWorkspace *w=(void *)DataBuf;
+    volatile CalSupplyLatch *v=&w->supply_sample;uint32_t now=DWT_CYCLES;
+    if((*(volatile uint32_t *)0x40013c00u)&2u) {
+        v->mv=__Get(V_BATTERY);v->stamp=now;++v->sequence;v->ready=1;
+    } else if((uint32_t)(now-v->stamp)>108000000u)v->ready=0;
+    /* Expiry is sticky until another conversion. A full DWT wrap while
+     * idle must never make a stopped ADC look fresh again. */
+}
+static void SupplySnapshot(CalWorkspace *w,CalSupplySample *out)
+{
+    uint32_t sequence;
+    do {
+        sequence=w->supply_sample.sequence;
+        out->mv=w->supply_sample.mv;out->stamp=w->supply_sample.stamp;
+        out->sequence=w->supply_sample.ready?sequence:0;
+    } while(sequence!=w->supply_sample.sequence);
+    out->now=DWT_CYCLES;out->usb=__Get(USB_POWER);
+}
+#if defined(SCOPE144_HOST_TEST)
+void Calibrat_TestSupplyLatched(CalSupplySample *out)
+{ SupplySnapshot((void *)DataBuf,out); }
+unsigned Calibrat_TestWorkspaceBytes(void){return sizeof(CalWorkspace);}
+#endif
+static int Battery(void *user,CalSupplySample *out)
+{
+#if defined(SCOPE144_HOST_TEST)
+    extern int Calibrat_TestSupplySample(CalSupplySample *);
+    (void)user;return Calibrat_TestSupplySample(out);
+#else
+    if((~__Get(KEY_STATUS))&KEY4_STATUS)return -1;
+    SupplySnapshot(user,out);return 1;
+#endif
+}
 static int Save(void *user,UnifiedCal *s,int charger)
 {
     CalWorkspace *w=user;unsigned ch;int result;
@@ -516,7 +573,7 @@ void Calibrat(u8 channel)
     CalibrateMode=1;TIM2->DIER=0;TIM4->DIER=0;DEMCR|=0x01000000u;DWT_CTRL|=1;
     before=DWT_CYCLES;for(spin=0;spin<64;++spin) { }
     if(before==DWT_CYCLES)goto cleanup;
-    Initialize(w);
+    Initialize(w);(*(volatile uint32_t *)0x40013c00u)&=~2u;
     Generator(w,1);Key_Buffer=0;Render(w,1);
     preview_time=DWT_CYCLES;
     last_stage=w->state.stage;last_range=w->state.range;last_reference=w->state.reference;
@@ -536,32 +593,36 @@ void Calibrat(u8 channel)
         if(key || pressed || w->state.stage!=last_stage || w->state.range!=last_range) {
             w->preview.phase=0;w->preview_filter_valid=0;preview_time=DWT_CYCLES;
             if(w->state.stage!=last_stage || w->state.range!=last_range) {
-                w->preview_good=0;
+                w->preview_good=w->preview_filter_valid=0;
                 if(w->state.stage==CAL_REFERENCE)w->state.measured_valid=0;
             }
         }
         if(event==CAL_NONE && !pressed && w->state.stage==CAL_REFERENCE && (uint32_t)(DWT_CYCLES-preview_time)>=18000000u) {
             CalMean m={0,0,0};unsigned r=w->state.range;
-            int result=WildcatCalibration_Preview(&w->preview,r,
+            int result=WildcatCalibration_PreviewDetailed(&w->preview,r,
                 CalNative_Command(ADCoffset,w->state.native[0].offset[r],25),
                 CalNative_Command(ADCoffset,w->state.native[1].offset[r],25),&m);
-            if(result>0 && CalMean_Valid(&m)) {
-                /* Display-only low pass, never passed to the K2 capture/fit. */
-                if(w->preview_filter_valid) {
-                    m.a=w->preview_filtered.a+(m.a-w->preview_filtered.a)/4;
-                    m.b=w->preview_filtered.b+(m.b-w->preview_filtered.b)/4;
+            if(result>0) {
+                unsigned ch;uint32_t now=DWT_CYCLES;
+                /* Each mask bit certifies only that ADC from the same record.
+                 * Never feed a partly valid pair to the calibration state. */
+                for(ch=0;ch<2;++ch)if(w->preview.valid_mask&(1u<<ch)) {
+                    int32_t *filtered=ch?&w->preview_filtered.b:&w->preview_filtered.a;
+                    int32_t value=ch?m.b:m.a;
+                    if(w->preview_filter_valid&(1u<<ch))value=*filtered+(value-*filtered)/4;
+                    *filtered=value;w->preview_filter_valid|=1u<<ch;w->preview_good|=1u<<ch;
+                    w->preview_last_good[ch]=now;
                 }
-                w->preview_filtered=m;w->preview_filter_valid=1;
-                w->preview_last_good=DWT_CYCLES;w->preview_good=1;
-                UnifiedCal_PreviewMean(&w->state,&m);RenderPreview(w);
+                RenderPreview(w);
             }
         }
-        /* Brief bad blocks retain the last good display. After 1.5 s even a
-         * pending/failed FIFO must visibly expire; never keep stale DC forever. */
-        if(w->state.stage==CAL_REFERENCE && w->preview_good &&
-           (uint32_t)(DWT_CYCLES-w->preview_last_good)>=108000000u) {
-            w->preview_good=w->preview_filter_valid=0;w->state.measured_valid=0;
-            RenderPreview(w);
+        if(w->state.stage==CAL_REFERENCE) {
+            unsigned ch,changed=0;uint32_t now=DWT_CYCLES;
+            for(ch=0;ch<2;++ch)if((w->preview_good&(1u<<ch)) &&
+               (uint32_t)(now-w->preview_last_good[ch])>=108000000u) {
+                w->preview_good&=~(1u<<ch);w->preview_filter_valid&=~(1u<<ch);changed=1;
+            }
+            if(changed)RenderPreview(w);
         }
         if(w->state.stage!=last_stage || w->state.range!=last_range || w->state.reference!=last_reference ||
            w->state.ppm!=last_ppm || w->state.error!=last_error) {

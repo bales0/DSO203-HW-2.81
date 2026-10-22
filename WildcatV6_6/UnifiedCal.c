@@ -45,14 +45,53 @@ void UnifiedCal_Init(UnifiedCal *s,int adc_offset,int ppm,const uint32_t scale[8
 }
 static void Fail(UnifiedCal *s,CalStage retry,unsigned error)
 { s->retry=retry;s->error=error;s->stage=error==1?CAL_CANCELLED:CAL_ERROR; }
+/* Called only outside FIFO reads. The filter consumes sequence changes, never
+ * repeated DR reads. Confirmation yields to timer/key IRQs, polls K4 each turn,
+ * and is bounded to 3 s even if ADC3 stops. No supply baseline is rolled. */
+static int Supply(UnifiedCal *s,const CalOps *ops,CalStage phase,int new_sample)
+{
+    CalSupply *f=&s->supply;CalSupplySample v;uint32_t started=0,sequence=f->sequence;unsigned first=1;
+    uint32_t baseline=phase==CAL_GROUND?f->zero_mv:f->ref_mv;
+    for(;;) {
+        unsigned reason=CAL_SUPPLY_OK;int fresh;
+        if(ops->supply(ops->user,&v)<0){Fail(s,phase,1);return 0;}
+        if(first){started=v.now;first=0;}
+        fresh=v.sequence && (uint32_t)(v.now-v.stamp)<=108000000u;
+        if(fresh && v.sequence!=f->sequence) {
+            f->sequence=v.sequence;f->stamp=v.stamp;
+            if(f->usb_valid && f->usb!=v.usb)reason=CAL_SUPPLY_USB;
+            else if(v.mv<2800 || v.mv>5200)reason=CAL_SUPPLY_ABSOLUTE;
+            else if(baseline && ((int32_t)v.mv-(int32_t)baseline>CAL_SUPPLY_DRIFT_MV ||
+                (int32_t)baseline-(int32_t)v.mv>CAL_SUPPLY_DRIFT_MV))reason=CAL_SUPPLY_DRIFT;
+            if(reason==CAL_SUPPLY_USB){f->reason=reason;break;}
+            if(reason) {
+                if(f->bad==reason){f->current_mv=v.mv;f->reason=reason;break;}
+                f->bad=reason;f->reason=CAL_SUPPLY_TRANSIENT;++f->rejected;
+            } else {
+                /* Two real conversions bootstrap a phase; thereafter one
+                 * good conversion clears an isolated outlier. */
+                if(f->have && (v.mv>f->previous_mv?v.mv-f->previous_mv:f->previous_mv-v.mv)<=CAL_SUPPLY_DRIFT_MV)
+                    f->have=2;
+                else f->have=1;
+                f->previous_mv=v.mv;f->current_mv=v.mv;f->bad=0;f->reason=CAL_SUPPLY_OK;
+                if(!f->usb_valid){f->usb=v.usb;f->usb_valid=1;}
+            }
+        }
+        if(fresh && !f->bad && f->have==2 && f->sequence==v.sequence &&
+           (!new_sample || sequence!=f->sequence))return 1;
+        if((uint32_t)(v.now-started)>=216000000u){f->reason=CAL_SUPPLY_STALE;break;}
+    }
+    Fail(s,phase,14);return 0;
+}
 static int Capture(UnifiedCal *s,const CalOps *ops,unsigned path,unsigned a,unsigned b,CalMean *m,CalStage retry)
 {
     int result;
+    if(!Supply(s,ops,retry,0))return 0;
     memset(m,0,sizeof(*m));result=ops->capture(ops->user,s->range,path,a,b,m);
     s->capture_mean=*m;s->capture_path=path;s->capture_commands[0]=a;s->capture_commands[1]=b;
     if(result<=0){Fail(s,retry,result==-1?1:result==CAL_CAPTURE_UNSTABLE?12:result==CAL_CAPTURE_CLIPPED?3:2);return 0;}
     if(!CalMean_Valid(m)){Fail(s,retry,3);return 0;}
-    return 1;
+    return Supply(s,ops,retry,0);
 }
 static int Magnitude(int32_t value) { return value<0?-value:value; }
 /* Record both phases before deciding which one failed. Diagnostics do not
@@ -262,13 +301,13 @@ static void Progress(const CalOps *ops,const UnifiedCal *s,CalProgress event,int
 static int Ground(UnifiedCal *s,const CalOps *ops)
 {
     unsigned r;
-    s->complete=0;memset(s->pending144,0,sizeof(s->pending144));
+    s->range=0;s->complete=0;memset(s->pending144,0,sizeof(s->pending144));
     if(!Scope144_Command(s->adc_offset)){Fail(s,CAL_GROUND,4);return 0;}
-    s->battery=ops->battery(ops->user);
-    if(s->battery<2800 || s->battery>5200){Fail(s,CAL_GROUND,14);return 0;}
+    if(!Supply(s,ops,CAL_GROUND,0))return 0;
+    if(!s->supply.zero_mv)s->supply.zero_mv=s->supply.current_mv;
     for(r=0;r<8;++r) {
-        if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_GROUND,14);return 0;}
         s->range=r;
+        if(!Supply(s,ops,CAL_GROUND,0))return 0;
         Progress(ops,s,CAL_UI_ZERO_START,0,0);
         if(!GroundRange(s,ops))return 0;
         Progress(ops,s,CAL_UI_ZERO_VERIFIED,0,0);
@@ -278,7 +317,10 @@ static int Ground(UnifiedCal *s,const CalOps *ops)
             Progress(ops,s,CAL_UI_144_ZERO_VERIFIED,0,0);
         }
     }
-    if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_GROUND,14);return 0;}
+    if(!Supply(s,ops,CAL_GROUND,1))return 0;
+    /* A new completed conversion at the actual successful ZERO -> REF boundary. Retry
+     * and changing ranges never silently rebase either immutable reference. */
+    if(!s->supply.ref_mv)s->supply.ref_mv=s->supply.current_mv;
     s->range=0;s->reference=s->reference_input[0];
     s->stage=CAL_REFERENCE;return 1;
 }
@@ -332,7 +374,7 @@ static __attribute__((noinline,section(".text.calibration"))) int Reference144(U
     }
     s->dac_diagnostic.step=CAL_DAC_RETURN;
     if(!Capture(s,ops,1,commands[1][0],commands[1][1],result,CAL_REFERENCE))return 0;
-    if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_REFERENCE,14);return 0;}
+    if(!Supply(s,ops,CAL_REFERENCE,0))return 0;
     s->dac_diagnostic.step=CAL_DAC_DRIFT;s->dac_diagnostic.point=1;
     if(!CheckDac(s,result,anchor.a,anchor.b,CAL_REFERENCE))return 0;
     s->dac_diagnostic.step=CAL_DAC_RETURN;
@@ -350,7 +392,7 @@ static int Reference(UnifiedCal *s,const CalOps *ops)
     CalMean m;unsigned ch,r=s->range;Scope144Cal candidate;uint16_t gains[2];int32_t native_delta[2];
     s->pending144[r].valid=0;s->complete&=~(1u<<r);
     Progress(ops,s,CAL_UI_REF_START,0,0);
-    if(Magnitude((int32_t)ops->battery(ops->user)-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_REFERENCE,14);return 0;}
+    if(!Supply(s,ops,CAL_REFERENCE,0))return 0;
     if(!Capture(s,ops,0,CalNative_Command(s->adc_offset,s->native[0].offset[r],25),
         CalNative_Command(s->adc_offset,s->native[1].offset[r],25),&m,CAL_REFERENCE))return 0;
     Diagnose(s,&m,0);native_delta[0]=s->delta[0];native_delta[1]=s->delta[1];
@@ -454,9 +496,9 @@ void UnifiedCal_Step(UnifiedCal *s,CalKey key,const CalOps *ops)
     if(s->stage==CAL_SAVE && (key==CAL_OK || key==CAL_CHARGER)) {
         if(s->complete!=255){Fail(s,CAL_GROUND,9);return;}
         unsigned profile=key==CAL_CHARGER;Scope144Cal *dest=profile?s->bank.high:s->bank.range;
-        uint32_t battery=ops->battery(ops->user),previous_battery=s->bank.battery[profile];
-        if(battery<2800 || battery>5200 || Magnitude((int32_t)battery-(int32_t)s->battery)>CAL_SUPPLY_DRIFT_MV){Fail(s,CAL_SAVE,14);return;}
-        s->battery=battery;
+        uint32_t previous_battery=s->bank.battery[profile];
+        if(!Supply(s,ops,CAL_SAVE,1))return;
+        s->battery=s->supply.current_mv;
         memcpy(s->rollback144,dest,sizeof(s->rollback144));
         if(s->include144)memcpy(dest,s->pending144,sizeof(s->pending144));else memset(dest,0,sizeof(s->pending144));
         s->bank.battery[profile]=s->battery;

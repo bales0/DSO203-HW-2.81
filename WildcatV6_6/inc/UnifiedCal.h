@@ -18,11 +18,14 @@
 /* ADC means in Q10. Nonzero clips rejects a block; tolerated calibration
  * exclusions are counted separately in CalCaptureStats, never hidden there. */
 typedef struct { int32_t a,b; unsigned clips; } CalMean;
+typedef enum { CAL_REJECT_NONE,CAL_REJECT_RAILS,CAL_REJECT_MAD,CAL_REJECT_TRIM,
+    CAL_REJECT_BIAS,CAL_REJECT_TIME,CAL_REJECT_CENTER,CAL_REJECT_BLOCKS } CalReject;
 typedef struct {
     uint32_t records,blocks,window,elapsed_ms,block_ms;
     int32_t spread_a,spread_b; /* latest stability window, Q10 ADC steps */
     uint32_t clips_a,clips_b; /* last complete 4096-pair block, each ADC separately */
     uint16_t min_a,max_a,min_b,max_b; /* same block, raw ADC codes */
+    uint8_t reason[2]; /* CalReject, independently for each ADC */
 } CalCaptureStats;
 /* Cooperative calibration acquisition, shared by the K2 capture and preview.
  * Original 100 us/div, SEPARATE ADCs, 4096 consecutive FIFO words, no
@@ -32,6 +35,7 @@ typedef struct {
     unsigned phase,range,path,commands[2],discard,index,records;
     uint32_t started,record_time,sum_a,sum_b,clips,clips_a,clips_b,block_ms;
     uint16_t min_a,max_a,min_b,max_b;
+    uint8_t valid_mask,reason[2];
 } CalPreview;
 
 typedef struct { int8_t zero[8],offset[8];uint16_t gain[8]; } CalNative;
@@ -47,9 +51,19 @@ typedef struct {
     int32_t tolerance;unsigned point;
     int32_t expected[2],residual[2]; /* Q10 raw ADC, never display-rounded */
 } CalDacDiagnostic;
+/* RAM-only supply state. Sequence identifies an actual completed ADC3
+ * conversion; all timestamps are wrapping 72 MHz DWT cycles. */
+typedef struct { uint32_t mv,sequence,stamp,now;unsigned usb; } CalSupplySample;
+typedef enum { CAL_SUPPLY_OK,CAL_SUPPLY_ABSOLUTE,CAL_SUPPLY_DRIFT,
+    CAL_SUPPLY_STALE,CAL_SUPPLY_USB,CAL_SUPPLY_TRANSIENT } CalSupplyReason;
+typedef struct {
+    uint32_t zero_mv,ref_mv,current_mv,sequence,stamp,previous_mv;
+    unsigned have,bad,usb,usb_valid,rejected;CalSupplyReason reason;
+} CalSupply;
 typedef struct {
     CalStage stage,retry;unsigned range,include144,complete,error;
-    int adc_offset,ppm;uint32_t scale[8],battery;
+    int adc_offset,ppm;uint32_t scale[8],battery; /* battery = verified SAVE voltage */
+    CalSupply supply;
     int32_t reference_used[8],reference_input[8],voltage_used[8][2];
     int32_t reference,zero_ref[8][2],zero_low[8][2],zero_high[8][2],zero144[8][2];
     int32_t dac144[8][2];
@@ -82,7 +96,8 @@ typedef struct {
     /* Configures the entire path, settles, then reads a FRESH record. */
     int (*capture)(void *,unsigned range,unsigned interlace,unsigned aoffset,unsigned boffset,CalMean *);
     int (*generator)(void *,int clock_on);
-    uint32_t (*battery)(void *);
+    /* Nonblocking poll; -1 = K4 Cancel, otherwise sample includes current time. */
+    int (*supply)(void *,CalSupplySample *);
     int (*save)(void *,UnifiedCal *,int charger);
     void (*progress)(void *,const UnifiedCal *,CalProgress,int32_t,int32_t);
 } CalOps;
@@ -99,6 +114,9 @@ int UnifiedCal_Preview(UnifiedCal *,const CalOps *);
 int UnifiedCal_PreviewMean(UnifiedCal *,const CalMean *);
 /* 0 pending; 1 fresh preview; -1 unavailable. Never a calibration acceptance. */
 int WildcatCalibration_Preview(CalPreview *,unsigned,unsigned,unsigned,CalMean *);
+/* -1 unavailable, 0 pending, 1 completed (including valid_mask == 0).
+ * Mask/reasons refer to this same simultaneous record; display only. */
+int WildcatCalibration_PreviewDetailed(CalPreview *,unsigned,unsigned,unsigned,CalMean *);
 void UnifiedCal_Step(UnifiedCal *,CalKey,const CalOps *);
 /* Hardware adapter; calibration reuses the existing capture buffer. */
 int WildcatCalibration_Capture(unsigned,unsigned,unsigned,unsigned,CalMean *);

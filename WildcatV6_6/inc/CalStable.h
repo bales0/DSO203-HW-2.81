@@ -3,10 +3,11 @@
 #include "UnifiedCal.h"
 /* Span of the entire three-block window; adjacent-only comparison would
  * accept a slowly drifting zero. Each input is a time-distributed 4096-sample block. */
-typedef struct { CalMean values[3];unsigned count,next;int32_t spread_a,spread_b; } CalStable;
+typedef struct { CalMean values[3];unsigned count,next;int32_t spread_a,spread_b;uint8_t reason[2]; } CalStable;
 static inline int CalStable_Push(CalStable *s,const CalMean *m,CalMean *out)
 {
     unsigned i;int32_t amin,amax,bmin,bmax;int64_t a=0,b=0;
+    s->reason[0]=s->reason[1]=CAL_REJECT_NONE;
     if(!CalMean_Valid(m)){s->count=0;s->next=0;s->spread_a=s->spread_b=0;return 0;}
     s->values[s->next]=*m;s->next=(s->next+1)%3;
     if(s->count<3)++s->count;
@@ -20,7 +21,9 @@ static inline int CalStable_Push(CalStable *s,const CalMean *m,CalMean *out)
         a+=av;b+=bv;
     }
     s->spread_a=amax-amin;s->spread_b=bmax-bmin;
-    if(s->count<3 || s->spread_a>CAL_CAPTURE_WINDOW_SPAN_Q10 || s->spread_b>CAL_CAPTURE_WINDOW_SPAN_Q10)return 0;
+    if(s->count<3 || s->spread_a>CAL_CAPTURE_WINDOW_SPAN_Q10)s->reason[0]=CAL_REJECT_BLOCKS;
+    if(s->count<3 || s->spread_b>CAL_CAPTURE_WINDOW_SPAN_Q10)s->reason[1]=CAL_REJECT_BLOCKS;
+    if(s->reason[0] || s->reason[1])return 0;
     /* next is the oldest entry, not necessarily values[0]. Equal adjacent
      * means alone do not establish a strictly monotonic trend. */
     for(i=0;i<2;++i) {
@@ -28,8 +31,9 @@ static inline int CalStable_Push(CalStable *s,const CalMean *m,CalMean *out)
         int32_t middle=i?s->values[(s->next+1)%3].b:s->values[(s->next+1)%3].a;
         int32_t last=i?m->b:m->a;
         if((first<middle && middle<last && last-first>CAL_OFFSET_STABILITY) ||
-           (first>middle && middle>last && first-last>CAL_OFFSET_STABILITY))return 0;
+           (first>middle && middle>last && first-last>CAL_OFFSET_STABILITY))s->reason[i]=CAL_REJECT_BLOCKS;
     }
+    if(s->reason[0] || s->reason[1])return 0;
     out->a=(int32_t)((a+1)/3);out->b=(int32_t)((b+1)/3);out->clips=0;return 1;
 }
 
@@ -69,15 +73,15 @@ static inline unsigned CalDc_Median2(const uint16_t *bins,unsigned n)
     return lo+hi;
 }
 static inline int32_t CalDc_Abs(int32_t v){return v<0?-v:v;}
-static inline int CalDc_Estimate(const CalDcHistogram *h,int32_t *out)
+static inline int CalDc_EstimateDetailed(const CalDcHistogram *h,int32_t *out,uint8_t *reason)
 {
     unsigned k,t,n=0,median,mad=0,radius,inside=0,rails=h->bins[0]+h->bins[255];
     uint32_t sum=0,kept=0;int32_t raw,robust,lo=0,hi=0;
-    *out=0;
+    *out=0;*reason=CAL_REJECT_NONE;
     for(k=0;k<4;++k){n+=h->count[k];sum+=h->sum[k];}
     if(n)*out=(int32_t)((sum*1024u+n/2)/n);
     if(n+rails!=CAL_DC_PAIRS || rails>CAL_CAPTURE_MAX_CLIPS ||
-       h->max_run>CAL_DC_MAX_RUN || !n)return CAL_CAPTURE_CLIPPED;
+       h->max_run>CAL_DC_MAX_RUN || !n){*reason=CAL_REJECT_RAILS;return CAL_CAPTURE_CLIPPED;}
     median=CalDc_Median2(h->bins,n);
     /* MAD in half-code units, counted directly from the histogram. */
     {unsigned count=0;
@@ -90,7 +94,7 @@ static inline int CalDc_Estimate(const CalDcHistogram *h,int32_t *out)
         if(previous<(n+1)/2 && count>=(n+1)/2)mad=t;
         if(count>n/2){mad=(mad+t+1)/2;break;}
     }}
-    if(t>CAL_DC_MAX_MAD2)return CAL_CAPTURE_UNSTABLE;
+    if(t>CAL_DC_MAX_MAD2){*reason=CAL_REJECT_MAD;return CAL_CAPTURE_UNSTABLE;}
     /* mad is MAD2 (half ADC); 2*MAD2 gives a radius of 4*MAD in ADC.
      * Bias/rail guards below remain independent of this wider noise band. */
     radius=2*mad;
@@ -99,21 +103,24 @@ static inline int CalDc_Estimate(const CalDcHistogram *h,int32_t *out)
     for(k=1;k<255;++k)if((unsigned)CalDc_Abs((int32_t)(2*k)-(int32_t)median)<=2*radius) {
         inside+=h->bins[k];kept+=k*h->bins[k];
     }
-    if(!inside || n-inside>n/CAL_DC_REJECT_DIVISOR)return CAL_CAPTURE_UNSTABLE;
+    if(!inside || n-inside>n/CAL_DC_REJECT_DIVISOR){*reason=CAL_REJECT_TRIM;return CAL_CAPTURE_UNSTABLE;}
     raw=(int32_t)((sum*1024u+n/2)/n);
     robust=(int32_t)((kept*1024u+inside/2)/inside);*out=robust;
-    if(robust<10*1024 || robust>245*1024)return CAL_CAPTURE_CLIPPED;
+    if(robust<10*1024 || robust>245*1024){*reason=CAL_REJECT_CENTER;return CAL_CAPTURE_CLIPPED;}
     if(CalDc_Abs(robust-raw)>CAL_DC_MEAN_SHIFT ||
-       CalDc_Abs(raw-(int32_t)median*512)>CAL_DC_MEDIAN_SHIFT)return CAL_CAPTURE_UNSTABLE;
+       CalDc_Abs(raw-(int32_t)median*512)>CAL_DC_MEDIAN_SHIFT){*reason=CAL_REJECT_BIAS;return CAL_CAPTURE_UNSTABLE;}
     for(k=0;k<4;++k) {
         int32_t mean;
-        if(1024u-h->count[k]>CAL_DC_SLICE_RAILS)return CAL_CAPTURE_CLIPPED;
+        if(1024u-h->count[k]>CAL_DC_SLICE_RAILS){*reason=CAL_REJECT_RAILS;return CAL_CAPTURE_CLIPPED;}
         mean=(int32_t)((h->sum[k]*1024u+h->count[k]/2)/h->count[k]);
         if(!k || mean<lo)lo=mean;
         if(!k || mean>hi)hi=mean;
     }
-    return hi-lo>CAL_DC_TIME_SPAN?CAL_CAPTURE_UNSTABLE:1;
+    if(hi-lo>CAL_DC_TIME_SPAN){*reason=CAL_REJECT_TIME;return CAL_CAPTURE_UNSTABLE;}
+    return 1;
 }
+static inline int CalDc_Estimate(const CalDcHistogram *h,int32_t *out)
+{ uint8_t reason;return CalDc_EstimateDetailed(h,out,&reason); }
 /* Poll physical hold on every wizard iteration; only existing key events
  * generate changes. Releases, reverse direction and range/stage changes reset. */
 typedef struct { uint32_t started,last;unsigned direction,range,emitted; } CalRefHold;

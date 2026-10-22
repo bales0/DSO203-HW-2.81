@@ -8,6 +8,7 @@
 #include "BIOS.h"
 #include "Process.h"
 #include "UiCommon.h"
+#include "Calibrat.h"
 
 vu8  Cursor_Cnt, Key_Wait_Cnt, Key_Repeat_Cnt, Key_Buffer, Cnt_20mS, Key_Mid_Speed=0;         //                , IntCount, ModInit=0;
 vu16 Cnt_mS;
@@ -358,6 +359,7 @@ void TIM3_IRQHandler(void)
  u8 KeyCode;
 
   SpecFrameCount++;
+  if(CalibrateMode)Calibrat_SupplyTick();
   __Set(KEY_IF_RST, 0);                      //Clear TIM3 interrupt flag
   if(Cnt_mS > 0)   Cnt_mS--;
    else {

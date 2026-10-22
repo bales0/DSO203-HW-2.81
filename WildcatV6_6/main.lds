@@ -62,6 +62,7 @@ SECTIONS
           *Scope144.o(.text)
           *UnifiedCal.o(.text)
           *(.text.cal_probe)               /* Non-saving calibration error test */
+          *(.text.cal_work)                /* Calibration capture/UI; unchanged flash limits */
           *Files144.o(.text)
           *NativeWindow.o(.text)
           *Digital144.o(.text)

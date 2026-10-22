@@ -350,15 +350,16 @@ static __attribute__((noinline,optimize("Os"),section(".text.calibration"))) int
     if(s->discard){s->discard=0;s->record_time=now;s->phase=4;return 0;}
     s->block_ms=(uint32_t)(DWT_CYCLES-s->record_time)/CYCLES_MS;
     {
-        int qa=CalDc_Estimate(CalibrationHist(),&mean->a);
-        int qb=CalDc_Estimate(CalibrationHist()+1,&mean->b);
+        int qa=CalDc_EstimateDetailed(CalibrationHist(),&mean->a,&s->reason[0]);
+        int qb=CalDc_EstimateDetailed(CalibrationHist()+1,&mean->b,&s->reason[1]);
         mean->clips=qa==CAL_CAPTURE_CLIPPED || qb==CAL_CAPTURE_CLIPPED?s->clips:0;
+        s->valid_mask=(qa==1?1u:0u)|(qb==1?2u:0u);
         s->phase=5;
         if(qa==CAL_CAPTURE_CLIPPED || qb==CAL_CAPTURE_CLIPPED)return 3;
         return qa==1 && qb==1?1:2;
     }
 }
-int __attribute__((optimize("Os"))) WildcatCalibration_Capture(unsigned range,unsigned path,unsigned a,unsigned b,CalMean *mean)
+int __attribute__((optimize("Os"),section(".text.cal_work"))) WildcatCalibration_Capture(unsigned range,unsigned path,unsigned a,unsigned b,CalMean *mean)
 {
     CalPreview record;CalMean last={0,0,0};CalStable stable;
     uint32_t started;int status=0,result=0,quality=0;
@@ -385,6 +386,11 @@ int __attribute__((optimize("Os"))) WildcatCalibration_Capture(unsigned range,un
             result=CalStable_Push(&stable,status==1?&last:&invalid,mean);
             calibration_stats.window=stable.count;
             calibration_stats.spread_a=stable.spread_a;calibration_stats.spread_b=stable.spread_b;
+            {
+                unsigned ch;
+                for(ch=0;ch<2;++ch)calibration_stats.reason[ch]=record.reason[ch];
+                if(status==1)for(ch=0;ch<2;++ch)calibration_stats.reason[ch]=stable.reason[ch];
+            }
             if(result)break;
         }
     }
@@ -393,10 +399,15 @@ int __attribute__((optimize("Os"))) WildcatCalibration_Capture(unsigned range,un
 }
 int WildcatCalibration_Preview(CalPreview *s,unsigned range,unsigned a,unsigned b,CalMean *mean)
 {
+    int result=WildcatCalibration_PreviewDetailed(s,range,a,b,mean);
+    return result<0?-1:result && s->valid_mask==3?1:0;
+}
+int WildcatCalibration_PreviewDetailed(CalPreview *s,unsigned range,unsigned a,unsigned b,CalMean *mean)
+{
     int result;
     if(!s || !mean || range>=8 || a>200 || b>200)return -1;
     result=CalibrationRead(s,range,0,a,b,mean);
-    return result<0?-1:result==1?1:0;
+    return result<0?-1:result>0;
 }
 
 int __attribute__((optimize("Os"))) Wildcat144_Service(void)

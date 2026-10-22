@@ -363,7 +363,7 @@ void Display_Meter(void)                  // refresh measurements display
 }
 
 
-void Display_Value(u8 i)
+__attribute__((optimize("Os"))) void Display_Value(u8 i)
 {
   s32 Tmp = 0;
   s32 Tmp2= 0;
@@ -695,7 +695,7 @@ int NativeTriggerMenu(unsigned key)
   return 0;
 }
 
-void Display_Title(void)
+__attribute__((optimize("Os"))) void Display_Title(void)
 {
   if(Wildcat144_Active()){Menu144_NativeTitle();return;}
   UiCommon_HeaderCleanup();
@@ -1536,7 +1536,7 @@ u16 i;
    CurrentARR=tmp;
  } 
 
-void DisplaySamples(void){
+__attribute__((optimize("Os"))) void DisplaySamples(void){
 char TempStr[10];
 u32 UTmp=0;
 u8 scale,i=0,j;

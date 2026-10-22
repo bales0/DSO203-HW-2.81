@@ -14,6 +14,7 @@ extern  s16 PPM_Comp;
 extern  u8  CalibrateMode;
 
 void Calibrat(u8 Channel);
+void Calibrat_SupplyTick(void); /* completed ADC3 conversion, calibration only */
  
 
 

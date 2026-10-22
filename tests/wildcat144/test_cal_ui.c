@@ -13,6 +13,9 @@
 #include "UnifiedCal.h"
 #include "UiCommon.h"
 static unsigned uart_owner,last_ui_status;
+static unsigned supply_tick_test,supply_fault,supply_panel;
+void Calibrat_TestSupplyLatched(CalSupplySample *);
+unsigned Calibrat_TestWorkspaceBytes(void);
 extern void * __stdcall VirtualAlloc(void *,unsigned long,unsigned long,unsigned long);
 #define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"FAIL %d: %s captures=%u pos=%u/%u row=%s\n",__LINE__,#x,captures,pos,nscript,last_row);exit(1);}}while(0)
 static unsigned checks,polls,nscript,pos,captures,writes,failed_save,fail_capture,reference_lines,clock_enables;
@@ -51,12 +54,12 @@ s8 Ka1[10],Kb1[10],Ka3[10],Kb3[10],LKa1[10],LKb1[10],LKa3[10],LKb3[10],HKa1[10],
 u16 Ka2[10],Kb2[10],LKa2[10],LKb2[10],HKa2[10],HKb2[10],HiBatLevel[2],LoBatLevel[2],VDiff[2];
 menu Title[13][4];vu8 Key_Buffer,Blink,Twink;vu16 PD_Cnt;
 uint32_t native_test_demcr,native_test_dwt;
-uint32_t NativeTestCycles(void){static uint32_t cycles;return cycles+=tick_override?tick_override:(preview_case==2 || preview_case==4)?144000:72000;}
+uint32_t NativeTestCycles(void){static uint32_t cycles;return cycles+=tick_override?tick_override:(preview_case==2 || preview_case==4 || preview_case>=6)?144000:72000;}
 uint32_t Scope144_Crc(const void *data,uint32_t count)
 {CHECK(data==(void *)0x0805c800u && count==135096);return SCOPE144_IMAGE_CRC;}
 u32 __Get(u8 object)
 {
-    if(object==V_BATTERY)return 3700;
+    if(object==V_BATTERY){if(supply_tick_test)(*(volatile uint32_t *)0x40013c00u)&=~2u;return 3700;}
     if(object==KEY_STATUS) {
         preview_rendering=0;++polls;CHECK(polls<10000);Twink^=1;Blink=BLINK;
         if(pos<nscript){Key_Buffer=(u8)script[pos].key;
@@ -107,6 +110,12 @@ void __Display_Str(u16 x,u16 y,u16 color,u8 mode,char *s)
             if(x==106 && !strncmp(s,"154mV",5))++preview_smoothed;
         }
     }
+    if(strstr(s,"Supply ZERO"))supply_panel|=1;
+    if(strstr(s,"ZERO baseline:"))supply_panel|=2;
+    if(strstr(s,"REF baseline:"))supply_panel|=4;
+    if(strstr(s,"Verified/current:"))supply_panel|=8;
+    if(strstr(s,"Delta/active baseline:"))supply_panel|=16;
+    if(strstr(s,supply_fault==1?"absolute limit":supply_fault==2?"USB mode changed":"sustained drift"))supply_panel|=32;
     if(strstr(s,"NORMAL A+B ZERO"))panel_kind=1;
     if(strstr(s,"NORMAL A+B REF")){panel_kind=2;normal_ref_flags|=2;}
     if(strstr(s,"144 SHARED DAC A"))panel_kind=3;
@@ -247,7 +256,7 @@ static int FakeCapture(unsigned r,unsigned path,unsigned a,unsigned b,CalMean *m
 }
 int WildcatCalibration_Capture(unsigned r,unsigned path,unsigned a,unsigned b,CalMean *m)
 { return FakeCapture(r,path,a,b,m); }
-int WildcatCalibration_Preview(CalPreview *p,unsigned r,unsigned a,unsigned b,CalMean *m)
+int WildcatCalibration_PreviewDetailed(CalPreview *p,unsigned r,unsigned a,unsigned b,CalMean *m)
 {
     int64_t signal=positive?(int64_t)applied_reference*1024/scales[r]:0;
     CHECK(r<8 && a<=200 && b<=200);(void)p;++preview_calls;preview_rendering=1;
@@ -256,8 +265,21 @@ int WildcatCalibration_Preview(CalPreview *p,unsigned r,unsigned a,unsigned b,Ca
     if(preview_case==1 && !(preview_calls%2))m->clips=1;
     if(preview_case==2 && preview_calls>1)m->clips=1;
     if(preview_case==3 && preview_calls>1){m->a+=8*1024;m->b+=8*1024;}
-    if(preview_case>=4 && preview_calls>1)return 0;
+    p->valid_mask=m->clips?0:3;
+    if(preview_case>=4 && preview_case<=5 && preview_calls>1)return 0;
+    if(preview_case==6 && preview_calls>1)p->valid_mask=2;
+    if(preview_case==7 && preview_calls>1)p->valid_mask=1;
+    if(preview_case==8 && preview_calls>1 && preview_calls<300)p->valid_mask=2;
+    if(preview_case>=6){m->b+=8*1024;}
+    if(preview_case==8 && preview_calls>=300)m->a+=8*1024;
     return 1;
+}
+int Calibrat_TestSupplySample(CalSupplySample *v)
+{
+    static uint32_t now;now+=7200000u;
+    v->now=now;v->sequence=now/72000000u+1;v->stamp=(now/72000000u)*72000000u;
+    v->mv=supply_fault==1?2799:supply_fault==3 && captures?3499:3700;
+    v->usb=supply_fault==2 && captures;return 1;
 }
 void WildcatCalibration_Diagnostics(CalCaptureStats *stats)
 {
@@ -275,7 +297,7 @@ static void Push(unsigned key,unsigned pressed){CHECK(nscript<1024);script[nscri
 static void Press(unsigned key){Push(key,0);Push(0,0);}
 static void Init(int with144)
 {
-    unsigned i;live_check=live_captures=screen_clears=0;tick_override=reference_count=0;polls=nscript=pos=captures=writes=failed_save=fail_capture=reference_lines=clock_enables=0;
+    unsigned i;supply_fault=supply_panel=0;live_check=live_captures=screen_clears=0;tick_override=reference_count=0;polls=nscript=pos=captures=writes=failed_save=fail_capture=reference_lines=clock_enables=0;
     table_pixels=headings=dc_errors=offset_errors=clock_panels=highlight_ppm=diagnostic_lines=progress_lines=save_lines=0;fail_dc=unstable_offset=capture_status=flat_b=0;
     dac_fault=dac_94_count=dac_lines=dac_live=dac_record=0;
     normal_ref_mask=normal_ref_point=normal_ref_calls=normal_ref_flags=normal_zero_fault=normal_zero_limit=panel_kind=0;
@@ -429,6 +451,23 @@ int main(void)
     CHECK(writes==2 && HiBatLevel[0]==3700 && LoBatLevel[0]==3200);CleanupChecks();
     Init(1);fail_capture=5;Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
     CHECK(captures==5 && writes==0 && Ka1[0]==4);CleanupChecks();
+    /* Actual EOC adapter: duplicate polls cannot mint a new conversion. */
+    {CalSupplySample before,after;Init(1);supply_tick_test=1;
+     (*(volatile uint32_t *)0x40013c00u)=2;Calibrat_SupplyTick();Calibrat_TestSupplyLatched(&before);
+     CHECK(before.sequence==1 && before.mv==3700);
+     Calibrat_SupplyTick();Calibrat_TestSupplyLatched(&after);
+     CHECK(after.sequence==before.sequence && after.stamp==before.stamp);
+     tick_override=108000001u;Calibrat_SupplyTick();tick_override=0;Calibrat_TestSupplyLatched(&after);
+     CHECK(!after.sequence); /* sticky stale, even after a complete DWT wrap */
+     tick_override=UINT32_MAX-144001u;Calibrat_SupplyTick();tick_override=0;Calibrat_TestSupplyLatched(&after);
+     CHECK(!after.sequence);
+     (*(volatile uint32_t *)0x40013c00u)=2;Calibrat_SupplyTick();Calibrat_TestSupplyLatched(&after);
+     CHECK(after.sequence==2 && after.stamp!=before.stamp);supply_tick_test=0;
+    }
+    for(i=1;i<=3;++i) {
+        Init(1);supply_fault=i;Press(KEY2);Press(KEY2);Press(KEY4);Calibrat(TRACK1);
+        CHECK(supply_panel==63 && !writes);CleanupChecks();
+    }
     /* Live table refresh on idle, failed B signal remains readable, no write. */
     Init(1);Press(KEY2);Press(KEY2);
     for(i=0;i<300;++i)Push(0,0);
@@ -447,6 +486,20 @@ int main(void)
         if(i==3)CHECK(preview_smoothed && !preview_dashes);
         CleanupChecks();
     }
+    /* One ADC expires while the other continues updating from paired records. */
+    for(i=6;i<=7;++i) {
+        unsigned j;Init(1);preview_case=i;Press(KEY2);Press(KEY2);
+        for(j=0;j<800;++j)Push(0,0);
+        Press(KEY4);Calibrat(TRACK1);
+        CHECK(preview_calls>2 && preview_dashes==1 && !writes && !preview_bad_rows);
+        CHECK(!strncmp(live_text[0][i==6?0:1][2],"--",2));
+        CHECK(strncmp(live_text[0][i==6?1:0][2],"--",2));CleanupChecks();
+    }
+    Init(1);preview_case=8;Press(KEY2);Press(KEY2);
+    for(i=0;i<800;++i)Push(0,0);
+    Press(KEY4);Calibrat(TRACK1);
+    CHECK(preview_dashes==1 && !strncmp(live_text[0][0][2],"166mV",5) && !writes);
+    CleanupChecks();
     /* Retry after a failed K2 must not resurrect the old valid preview. */
     Init(1);preview_case=5;fail_capture=8u*20u+1u;Press(KEY2);Press(KEY2);
     for(i=0;i<400;++i)Push(0,0);
@@ -602,6 +655,7 @@ int main(void)
     CleanupChecks();
     LiveTests();
     printf("PASS calibration UI: %u checks; actual Calibrat, held keys, all references, battery/charger, rollback, cancel, blinking\n",checks);
+    printf("Calibration workspace %u bytes; UnifiedCal %u bytes (existing DataBuf)\n",Calibrat_TestWorkspaceBytes(),(unsigned)sizeof(UnifiedCal));
     return 0;
 }
 

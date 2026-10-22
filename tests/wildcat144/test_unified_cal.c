@@ -17,6 +17,8 @@ static int protect_normal;static unsigned last_path;
 static CalNative ground_snapshot[2];static uint16_t ground_y[8][4];
 static uint32_t battery_value=3700;
 static unsigned battery_checks,battery_change_at;static int battery_change;
+static uint64_t supply_ms;static uint32_t supply_poll_ms=1000,supply_sequence,supply_mv,supply_stamp;
+static unsigned supply_usb,supply_stop,supply_cancel,supply_transient,supply_mode,supply_freeze_after;
 static const uint32_t scale[8]={2000,4000,8000,20000,40000,80000,200000,400000};
 #define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"FAIL %d: %s stage=%u error=%u range=%u cmds=%u/%u raw=%ld/%ld\n",__LINE__,#x,state.stage,state.error,state.range,state.capture_commands[0],state.capture_commands[1],(long)state.capture_mean.a,(long)state.capture_mean.b);exit(1);}}while(0)
 static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,CalMean *m)
@@ -60,8 +62,19 @@ static int Capture(void *user,unsigned r,unsigned mode,unsigned ao,unsigned bo,C
     m->clips=captures==clip_capture;return robust_capture?RobustCapture(m):1;
 }
 static int Gen(void *user,int on){(void)user;CHECK(on==0);++generators;return 1;}
-static uint32_t Battery(void *user){(void)user;++battery_checks;
-    return battery_value+(battery_change_at && battery_checks>=battery_change_at?battery_change:0);}
+static int Battery(void *user,CalSupplySample *v)
+{
+    (void)user;supply_ms+=supply_poll_ms;++battery_checks;
+    if(!supply_stop && (!supply_freeze_after || supply_sequence<supply_freeze_after) && (uint32_t)(supply_ms/1000+1)!=supply_sequence) {
+        supply_sequence=(uint32_t)(supply_ms/1000+1);supply_stamp=(uint32_t)(supply_ms*72000);
+        supply_mv=battery_value+(battery_change_at && captures>=battery_change_at?battery_change:0);
+        if(supply_transient && supply_sequence>=supply_transient){supply_mv+=400;supply_transient=0;}
+        if(supply_mode==1 && captures)supply_mv=state.stage==CAL_GROUND?3900:3800;
+    }
+    v->mv=supply_mv;v->sequence=supply_sequence;v->stamp=supply_stamp;
+    v->now=(uint32_t)(supply_ms*72000);v->usb=supply_usb;
+    return supply_cancel?-1:1;
+}
 static int Save(void *user,UnifiedCal *s,int high)
 {
     (void)user;CHECK(s->complete==255);CHECK(s->range==8);++writes;charger=high;
@@ -70,6 +83,8 @@ static int Save(void *user,UnifiedCal *s,int high)
 static CalOps ops={&state,Capture,Gen,Battery,Save,0};
 static void Init(int interlace)
 {
+    supply_ms=0;supply_poll_ms=1000;supply_sequence=supply_mv=supply_stamp=0;
+    supply_usb=supply_stop=supply_cancel=supply_transient=supply_mode=supply_freeze_after=0;
     battery_checks=battery_change_at=0;battery_change=0;robust_capture=0;bad_upper=upper_visits=0;captures=writes=generators=fail_capture=clip_capture=save_fail=0;response_percent=100;missing_b=curve=initial_bias=unstable=0;cancel_capture=0;capture_status=flat_b=0;route_slope=route_error=route_drift=a_route_error=0;route_percent=100;route_offset=8;path_calls=normal_calls=last_path=0;protect_normal=0;battery_value=3700;
     UnifiedCal_Init(&state,54,0,scale,interlace,0);
 }
@@ -712,30 +727,114 @@ static void NoiseAcceptanceTests(void)
     for(i=0;i<4096;++i)CalDc_Add(&h,120+((i/1024)%2?3:0)+(i==4095),i);
     CHECK(CalDc_Estimate(&h,&mean)==CAL_CAPTURE_UNSTABLE);
 }
+static void ReasonTests(void)
+{
+    CalDcHistogram h;unsigned n,i;int32_t out;uint8_t reason;
+    for(n=0;n<7;++n) {
+        memset(&h,0,sizeof h);
+        for(i=0;i<4096;++i) {
+            unsigned code=120;
+            if(n==0 && i>=100 && i<104)code=255;
+            if(n==1)code=i%2?40:200;
+            if(n==2 && !(i%8))code=160;
+            if(n==3 && !(i%32))code=200;
+            if(n==4)code+=i/1024*2;
+            if(n==5)code=9;
+            CalDc_Add(&h,code,i);
+        }
+        CHECK(CalDc_EstimateDetailed(&h,&out,&reason)==(n==6?1:n==0 || n==5?CAL_CAPTURE_CLIPPED:CAL_CAPTURE_UNSTABLE));
+        CHECK(reason==(n==0?CAL_REJECT_RAILS:n==1?CAL_REJECT_MAD:n==2?CAL_REJECT_TRIM:
+            n==3?CAL_REJECT_BIAS:n==4?CAL_REJECT_TIME:n==5?CAL_REJECT_CENTER:CAL_REJECT_NONE));
+    }
+#if defined(CAL_DC_BEFORE)
+    { extern int CalDc_Before(const CalDcHistogram *,int32_t *);
+      uint32_t random=0x84154827;unsigned c;int32_t before;int a,b;
+      for(c=0;c<4096;++c) {
+        memset(&h,0,sizeof h);
+        for(i=0;i<4096;++i) {
+            random=random*1664525u+1013904223u;
+            CalDc_Add(&h,c%4==0?(random>>24):c%4==1?120+(random>>24)%9:
+                c%4==2?((i%113)?120:random>>24):10+(c%230)+(i/1024%2),i);
+        }
+        a=CalDc_Before(&h,&before);b=CalDc_EstimateDetailed(&h,&out,&reason);
+        CHECK(a==b && before==out);CHECK((a==1)==(reason==CAL_REJECT_NONE));
+      }
+      puts("PASS estimator oracle: 4096 complete histograms, exact status and Q10 mean vs HEAD 4df9eba");
+    }
+#endif
+    puts("PASS reject reasons: rails/MAD/trim/bias/time/center/valid, unchanged numerical gates");
+}
 static void SupplyTests(void)
 {
-    static const unsigned at[]={2,10,11,12,27};unsigned p,i,n,sign;
-    for(p=0;p<2;++p)for(i=0;i<5;++i)for(n=199;n<=201;++n)for(sign=0;sign<2;++sign) {
-        Init(1);battery_value=p?4300:3200;battery_change_at=at[i];battery_change=sign?-(int)n:(int)n;
-        UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    unsigned p,i,n,sign;
+    for(p=0;p<2;++p)for(i=0;i<3;++i)for(n=199;n<=201;++n)for(sign=0;sign<2;++sign) {
+        Init(1);supply_poll_ms=100;battery_value=p?4300:3200;
+        if(!i){battery_change_at=1;battery_change=sign?-(int)n:(int)n;
+            UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+        } else {
+            Ground();if(i==2)References();
+            battery_value+=sign?-(int)n:(int)n;supply_ms+=1000;
+        }
         while(state.stage==CAL_REFERENCE)UnifiedCal_Step(&state,CAL_OK,&ops);
         if(state.stage==CAL_SAVE)UnifiedCal_Step(&state,p?CAL_CHARGER:CAL_OK,&ops);
         if(n<=200) {
             CHECK(state.stage==CAL_DONE && writes==1 && charger==p);
-            CHECK(state.bank.battery[p]==(uint32_t)((int)battery_value+battery_change));
-        } else CHECK(state.stage==CAL_ERROR && state.error==14 && !writes && battery_checks==at[i]);
+            CHECK(state.bank.battery[p]==(uint32_t)((int)(p?4300:3200)+(sign?-(int)n:(int)n)));
+        } else CHECK(state.stage==CAL_ERROR && state.error==14 && !writes && state.supply.reason==CAL_SUPPLY_DRIFT);
+    }
+    for(p=0;p<2;++p) {
+        Init(1);supply_poll_ms=100;battery_value=4000;supply_mode=1;Ground();
+        CHECK(state.supply.zero_mv==4000 && state.supply.ref_mv==3900);
+        References();UnifiedCal_Step(&state,p?CAL_CHARGER:CAL_OK,&ops);
+        CHECK(state.stage==CAL_DONE && state.battery==3800 && state.bank.battery[p]==3800);
+        CHECK(state.supply.zero_mv==4000 && state.supply.ref_mv==3900 && charger==p);
     }
     for(n=0;n<4;++n) {
         static const uint32_t values[]={2799,2800,5200,5201};
-        Init(1);battery_value=values[n];UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
-        CHECK(!writes);CHECK(n==0 || n==3?state.stage==CAL_ERROR && state.error==14:state.stage==CAL_REFERENCE);
+        Init(1);supply_poll_ms=100;battery_value=values[n];
+        UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+        CHECK(!writes);CHECK(n==0 || n==3?state.stage==CAL_ERROR && state.error==14 &&
+            state.supply.reason==CAL_SUPPLY_ABSOLUTE:state.stage==CAL_REFERENCE);
     }
-
+    /* A repeated DR cannot confirm an outlier. Only the following one-second
+     * conversion may accept its recovery or establish a sustained fault. */
+    Init(1);supply_poll_ms=10;supply_transient=4;Ground();References();
+    CHECK(state.supply.rejected && !state.error);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_DONE);
+    Init(1);supply_poll_ms=100;Ground();supply_stop=1;supply_ms+=2000;
+    UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.error==14 && state.supply.reason==CAL_SUPPLY_STALE && !writes);
+    {uint32_t z=state.supply.zero_mv,r=state.supply.ref_mv;
+        supply_stop=0;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+        CHECK(state.stage==CAL_REFERENCE && state.complete==1 && state.supply.zero_mv==z && state.supply.ref_mv==r);
+    }
+    Init(1);supply_poll_ms=10;Ground();battery_value=3499;supply_freeze_after=supply_sequence+1;
+    supply_ms+=1000;UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.error==14 && state.supply.reason==CAL_SUPPLY_STALE && !writes);
+    Init(1);supply_poll_ms=100;Ground();supply_transient=supply_sequence+1;supply_ms+=1000;
+    References();CHECK(state.supply.rejected && !state.error);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_DONE);
     for(n=0;n<2;++n) {
-        Init(1);battery_value=n?5200:2800;Ground();References();battery_value=n?5201:2799;
-        UnifiedCal_Step(&state,CAL_OK,&ops);CHECK(state.stage==CAL_ERROR && state.error==14 && !writes);
+        Init(1);Ground();References();battery_value=n?5201:2799;supply_ms+=1000;
+        UnifiedCal_Step(&state,CAL_OK,&ops);
+        CHECK(state.error==14 && state.supply.reason==CAL_SUPPLY_ABSOLUTE && !writes);
     }
-    puts("PASS supply: all five drift gates, both profiles, +/-199/200 accepted, +/-201 rejected; 2800..5200 unchanged");
+    Init(1);Ground();fail_capture=captures+1;UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && state.retry==CAL_REFERENCE);fail_capture=0;battery_value=3499;
+    UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.error==14 && state.supply.ref_mv==3700 && state.supply.zero_mv==3700);
+    Init(1);Ground();supply_usb=1;UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.error==14 && state.supply.reason==CAL_SUPPLY_USB && !writes);
+    Init(1);Ground();supply_cancel=1;UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_CANCELLED && !writes);
+    Init(1);supply_ms=UINT32_MAX/72000u-2000;supply_poll_ms=100;Ground();References();
+    UnifiedCal_Step(&state,CAL_OK,&ops);CHECK(state.stage==CAL_DONE);
+    /* Failed ZERO retry cannot rebase away drift. */
+    Init(1);fail_capture=1;UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.stage==CAL_ERROR && state.supply.zero_mv==3700);fail_capture=0;battery_value=3499;
+    UnifiedCal_Step(&state,CAL_OK,&ops);UnifiedCal_Step(&state,CAL_OK,&ops);
+    CHECK(state.error==14 && state.supply.zero_mv==3700);
+    puts("PASS supply: immutable ZERO/REF, saved current, real 1s sequence, duplicate/outlier/stale/USB/Cancel/wrap and +/-200 boundaries");
 }
 int main(void)
 {
@@ -904,7 +1003,7 @@ int main(void)
     RobustWizardTests();
     ProgressTests();
     BlockWindowTests();
-    SupplyTests();
+    ReasonTests();SupplyTests();
     NoiseAcceptanceTests();
     printf("PASS unified calibration: %u checks; 8 ranges A+B+144, keys/release, no blink mutation, failures, signed gain/offset\n",checks);
     return 0;
